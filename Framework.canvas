@@ -1,0 +1,111 @@
+{
+  "nodes": [
+    {
+      "id": "sources",
+      "type": "text",
+      "x": 0,
+      "y": 0,
+      "width": 340,
+      "height": 210,
+      "text": "## Materials and evidence\n\nOriginal files, extraction, review and locators\n\n[[01_Sources/Source-Index|Open guide]]"
+    },
+    {
+      "id": "domain",
+      "type": "text",
+      "x": 400,
+      "y": 0,
+      "width": 340,
+      "height": 210,
+      "text": "## Ubiquitous Language\n\nBounded contexts, terms and mappings\n\n[[CONTEXT-MAP|Open guide]]"
+    },
+    {
+      "id": "systems",
+      "type": "text",
+      "x": 800,
+      "y": 0,
+      "width": 340,
+      "height": 210,
+      "text": "## System analysis\n\nOpenWiki, code and pinned versions\n\n[[03_Systems/OpenWiki-Integration|Open guide]]"
+    },
+    {
+      "id": "brd",
+      "type": "text",
+      "x": 0,
+      "y": 260,
+      "width": 340,
+      "height": 210,
+      "text": "## BRD: problem domain\n\nOutcomes, scope and business evidence\n\n[[80_Templates/BRD|Open guide]]"
+    },
+    {
+      "id": "prd",
+      "type": "text",
+      "x": 400,
+      "y": 260,
+      "width": 340,
+      "height": 210,
+      "text": "## PRD: solution domain\n\nBehavior, constraints and atomic requirements\n\n[[80_Templates/PRD|Open guide]]"
+    },
+    {
+      "id": "backlog",
+      "type": "text",
+      "x": 800,
+      "y": 260,
+      "width": 340,
+      "height": 210,
+      "text": "## Executable backlog\n\nAcceptance criteria, dependencies and estimates\n\n[[80_Templates/PBI|Open guide]]"
+    },
+    {
+      "id": "delivery",
+      "type": "text",
+      "x": 0,
+      "y": 520,
+      "width": 340,
+      "height": 210,
+      "text": "## Forecast and delivery\n\nCapacity, verification, release and benefits\n\n[[06_Delivery/Planning|Open guide]]"
+    }
+  ],
+  "edges": [
+    {
+      "id": "e0",
+      "fromNode": "sources",
+      "fromSide": "bottom",
+      "toNode": "brd",
+      "toSide": "top"
+    },
+    {
+      "id": "e1",
+      "fromNode": "systems",
+      "fromSide": "bottom",
+      "toNode": "prd",
+      "toSide": "top"
+    },
+    {
+      "id": "e2",
+      "fromNode": "domain",
+      "fromSide": "bottom",
+      "toNode": "brd",
+      "toSide": "top"
+    },
+    {
+      "id": "e3",
+      "fromNode": "brd",
+      "fromSide": "bottom",
+      "toNode": "prd",
+      "toSide": "top"
+    },
+    {
+      "id": "e4",
+      "fromNode": "prd",
+      "fromSide": "bottom",
+      "toNode": "backlog",
+      "toSide": "top"
+    },
+    {
+      "id": "e5",
+      "fromNode": "backlog",
+      "fromSide": "bottom",
+      "toNode": "delivery",
+      "toSide": "top"
+    }
+  ]
+}
