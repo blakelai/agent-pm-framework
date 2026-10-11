@@ -8,6 +8,8 @@ title: "Project management lifecycle"
 
 Advance by business scenario or vertical outcome. Keep distant work coarse and refine near-term work until it is understandable, estimable and testable.
 
+Every stage applies the [Evidence and clarification policy](../90_Agent/Evidence-and-Clarification-Policy.md). Ask the user to clarify unclear information or supply missing material; keep dependent outputs pending until the required answer is available. A draft, assumption label or passing structural check cannot substitute for evidence. Stage completion criteria apply only to adequately supported work; record partial independent progress separately.
+
 ```mermaid
 flowchart TD
  A[Project intent and stakeholders] --> B[Sources and current-state evidence]

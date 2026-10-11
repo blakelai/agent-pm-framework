@@ -37,6 +37,8 @@ flowchart LR
 
 Use the [workflow](00_Governance/Workflow.md) for stage criteria and ownership. Evidence, baseline decisions and acceptance results remain separate records. Agent drafts and structural validation do not constitute business approval or a team commitment.
 
+Agents must ask for clarification or relevant material whenever task information is unclear or missing. Unsupported inference is prohibited, including filling a gap with an agent-created assumption. Dependent conclusions stay pending while supported independent work continues. See [Evidence and clarification policy](90_Agent/Evidence-and-Clarification-Policy.md).
+
 ## Local tools
 
 Python 3.10+ and Git are required. Tools run locally without calling a model or executing registered repository code.

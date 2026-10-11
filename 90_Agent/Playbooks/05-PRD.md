@@ -6,6 +6,8 @@ title: "Product requirements"
 
 # Product requirements
 
+Apply [Evidence and Clarification Policy](../Evidence-and-Clarification-Policy.md) whenever information is unclear, missing or conflicting. Ask the user for clarification or relevant material; keep dependent conclusions pending and continue only supported independent work. This condition also applies to the completion criteria below.
+
 1. Read Settings and Language Policy, then BRD, SYS, EVD and relevant glossaries. Model user scenarios and the target workflow; compare process changes, existing configuration and custom integration options.
 2. Keep the overall behavior and context in PRD. Give each independently verifiable assertion a REQ of kind FR, NFR, INT, DATA or TR, linked to its PRD and evidence.
 3. Cover normal, rejected, timeout, duplicate, partial-success, compensation and manual handling. Support thresholds with evidence or keep them pending. Link detailed design and interface contracts.

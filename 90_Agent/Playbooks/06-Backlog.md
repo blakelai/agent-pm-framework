@@ -6,6 +6,8 @@ title: "Backlog and acceptance"
 
 # Backlog and acceptance
 
+Apply [Evidence and Clarification Policy](../Evidence-and-Clarification-Policy.md) whenever information is unclear, missing or conflicting. Ask the user for clarification or relevant material; keep dependent conclusions pending and continue only supported independent work. This condition also applies to the completion criteria below.
+
 1. Read Settings and Language Policy. Split vertically by verifiable outcomes, including the integration, authorization and testing necessary for each outcome. Have the team confirm near-term items fit a Sprint.
 2. Set work_type. Feature/migration uses PRD parents and satisfies REQs; bug/enabler/spike uses the origins allowed by Schema. Technical work need not invent business requirements.
 3. Use stable AC IDs with normal and exception cases. A Spike has a research question, timebox and observable learning outcome. Record dependencies and external readiness dates.

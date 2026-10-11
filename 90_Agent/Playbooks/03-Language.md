@@ -6,6 +6,8 @@ title: "Ubiquitous Language"
 
 # Ubiquitous Language
 
+Apply [Evidence and Clarification Policy](../Evidence-and-Clarification-Policy.md) whenever information is unclear, missing or conflicting. Ask the user for clarification or relevant material; keep dependent conclusions pending and continue only supported independent work. This condition also applies to the completion criteria below.
+
 1. Read Settings, Language Policy, CONTEXT-MAP and applicable contexts. Compare meanings with concrete examples; distinguish synonyms from terms with different meanings in different contexts.
 2. Add candidate terms as draft. Keep canonical terms, brief definitions, Avoid entries and stable block IDs in CONTEXT; put code/data-field mappings in Code-Mappings.
 3. Author definitions in document_language; preserve original aliases, quoted text and code identifiers. Apply terms by context, not by global substitution. Formal consensus requires an actual decision record.
