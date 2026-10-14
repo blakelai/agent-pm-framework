@@ -266,6 +266,12 @@ pub async fn run_pm(
             .any(|x| x.starts_with("--vault") || x.contains('\0')),
         "Cannot override the active workspace"
     );
+    if command == "plan" {
+        let workspace = workspace.clone();
+        let args = args.to_vec();
+        return tokio::task::spawn_blocking(move || crate::planning::run(&workspace, &args))
+            .await?;
+    }
     // All mutations share the same process lock in main. Reject symlink targets before invoking helpers.
     for folder in [
         "00_Governance",

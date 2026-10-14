@@ -10,7 +10,7 @@ A working first implementation of the local Rust terminal agent. It browses the 
 
 ## Build and start
 
-Run from the framework repository root. Rust 1.96+ and a C toolchain are required. The application and SQLite are compiled into the binary. Built-in PM operations currently use the existing Python 3.10+ implementation embedded in the binary; they are not yet a native Rust port.
+Run from the framework repository root. Rust 1.96+ and a C toolchain are required. The application and SQLite are compiled into the binary. Planning calculations and report generation run natively in Rust. Other built-in PM operations currently use the existing Python 3.10+ implementation embedded in the binary.
 
 ```sh
 python3 -m venv .venv
@@ -82,7 +82,9 @@ Stages are `workflow`, `intake`, `system`, `language`, `brd`, `prd`, `backlog`, 
 
 ## Built-in project operations
 
-The Rust application embeds the reviewed Python helper files at build time. It extracts them to a temporary directory and invokes a configured Python executable with an argument vector, without a shell. It does not execute a project's replacement `tools/pm.py` or registered repository code. Language catalogs still come from the project's `tools/locales` directory so reviewed project translations remain usable.
+`/pm plan` and CLI `pm plan` calculate and write the forecast in Rust, without Python or a model. The result includes structured capacity and item data alongside the Markdown report. It uses the existing three-point estimates, remaining availability, cross-project FTE checks, dependency rules and explicit unknown values. An invalid planning input writes a blocked report. An unavailable or invalid language catalog leaves the prior report intact and returns an error; it never silently publishes an English fallback.
+
+For other operations, the application embeds the reviewed Python helper files at build time, extracts them to a temporary directory and invokes a configured Python executable with an argument vector, without a shell. It does not execute a project's replacement `tools/pm.py` or registered repository code. Language catalogs still come from the project's `tools/locales` directory so reviewed project translations remain usable; native planning validates catalog keys and placeholders against the compiled English contract.
 
 ```sh
 agent/target/debug/pm-agent --vault . pm --python .venv/bin/python validate

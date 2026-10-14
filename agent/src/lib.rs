@@ -1,5 +1,6 @@
 pub mod config;
 pub mod mcp;
+pub mod planning;
 pub mod provider;
 pub mod runtime;
 pub mod store;
