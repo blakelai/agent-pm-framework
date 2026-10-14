@@ -4,6 +4,9 @@ okf_version: "0.2"
 
 # Framework knowledge
 
+- [PM Agent application](agent/README.md) - Reference
+- [PM Agent implementation milestones](agent/Implementation.md) - Reference
+
 - [Baselines and change](00_Governance/Baselines-and-Changes.md) - Reference
 - [Discovery and prioritization](00_Governance/Discovery-and-Prioritization.md) - Reference
 - [Project document language](00_Governance/Language-Settings.md) - Reference

@@ -63,4 +63,6 @@ The [OKF profile](90_Agent/OKF-Profile.md) applies to authored knowledge. Native
 
 ## Development
 
+The [Rust PM Agent](agent/README.md) adds a terminal workbench, model adapters, a durable Agent runtime and MCP connections to this framework. See its [implementation milestones](agent/Implementation.md) for the current executable increment and remaining work.
+
 Tests create synthetic records in temporary directories and remove them afterward. They cover source preservation, planning, baseline integrity, traceability, language settings, exports and clean-workspace behavior. They do not certify agent reasoning or business readiness. Use the [evaluation method](90_Agent/Evals/Evaluation-Method.md) for actual agent outcomes.
