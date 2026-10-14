@@ -72,10 +72,12 @@ impl App {
     pub fn visible(&self) -> Vec<&Document> {
         self.docs
             .iter()
+            .filter(|d| self.tab == 0 || !d.path.starts_with("80_Templates/"))
             .filter(|d| match self.tab {
-                1 => d.path.starts_with("04_Requirements/BRD"),
+                1 => d.kind == "brd" || d.path.starts_with("04_Requirements/BRD"),
                 2 => {
-                    d.path.starts_with("04_Requirements/PRD")
+                    matches!(d.kind.as_str(), "prd" | "requirement")
+                        || d.path.starts_with("04_Requirements/PRD")
                         || d.path.starts_with("04_Requirements/Items")
                 }
                 3 => d.path.starts_with("02_Domain") || d.path == "CONTEXT-MAP.md",
@@ -503,6 +505,41 @@ fn dispatch(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn project_views_follow_types_and_exclude_templates() {
+        let doc = |path: &str, kind: &str| Document {
+            path: path.into(),
+            title: path.into(),
+            kind: kind.into(),
+            id: None,
+            hash: String::new(),
+            metadata: serde_json::json!({"type": kind}),
+            body: String::new(),
+        };
+        let mut app = App::new(vec![
+            doc("04_Requirements/discovery/Business.md", "brd"),
+            doc("04_Requirements/discovery/Product.md", "prd"),
+            doc("04_Requirements/REQ-LOOKUP.md", "requirement"),
+            doc("07_Decisions/QUESTION-1.md", "question"),
+            doc("80_Templates/Question.md", "question"),
+            doc("80_Templates/Requirement.md", "requirement"),
+        ]);
+        assert_eq!(app.visible().len(), 6);
+        app.tab = 1;
+        assert_eq!(app.visible()[0].kind, "brd");
+        assert_eq!(app.visible().len(), 1);
+        app.tab = 2;
+        assert_eq!(app.visible().len(), 2);
+        assert!(
+            app.visible()
+                .iter()
+                .any(|d| d.path.ends_with("REQ-LOOKUP.md"))
+        );
+        app.tab = 5;
+        assert_eq!(app.visible().len(), 1);
+        assert_eq!(app.visible()[0].path, "07_Decisions/QUESTION-1.md");
+    }
+
     #[test]
     fn renders_empty_and_small_terminals_without_panicking() {
         for (width, height) in [(140, 40), (80, 24), (30, 8)] {

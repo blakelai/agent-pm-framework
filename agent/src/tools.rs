@@ -47,13 +47,28 @@ pub fn specs() -> Vec<ToolSpec> {
         ),
         spec(
             "pm",
-            "Execute a deterministic built-in project-management operation. Read tools/README via the provided system context for arguments. Non-report operations require confirmation of the exact call. Unknown scheduling inputs remain unknown.",
+            "Execute a deterministic built-in project-management operation. Read tools/README.md for arguments. Local reports, work packets, registered snapshots, evidence and baseline candidates run directly. New external sources, language changes and exports require exact-call confirmation. Unknown scheduling inputs remain unknown.",
             json!({"command":{"type":"string","enum":["validate","coverage","plan","status","impact","fingerprint","settings","ingest","repo-add","sync","evidence","prepare","baseline","okf-export","okf-check"]},"args":{"type":"array","items":{"type":"string"}}}),
             &["command", "args"],
         ),
     ]
 }
 pub fn requires_approval(name: &str, args: &Value) -> bool {
+    if name == "pm" && args["args"] == json!(["--help"]) {
+        return false;
+    }
+    if name == "pm"
+        && args["command"] == "ingest"
+        && let Some(values) = args["args"].as_array()
+        && values.len() == 1
+        && let Some(path) = values[0].as_str()
+        && path.starts_with("01_Sources/Assets/")
+        && std::path::Path::new(path)
+            .components()
+            .all(|c| matches!(c, std::path::Component::Normal(_)))
+    {
+        return false;
+    }
     name.starts_with("mcp_")
         || name == "pm"
             && !matches!(
@@ -66,6 +81,10 @@ pub fn requires_approval(name: &str, args: &Value) -> bool {
                         | "impact"
                         | "fingerprint"
                         | "okf-check"
+                        | "prepare"
+                        | "sync"
+                        | "evidence"
+                        | "baseline"
                 )
             )
             && !(args["command"] == "settings"
@@ -332,6 +351,22 @@ mod tests {
         assert!(!requires_approval(
             "pm",
             &json!({"command":"plan","args":[]})
+        ));
+        assert!(!requires_approval(
+            "pm",
+            &json!({"command":"prepare","args":["--help"]})
+        ));
+        assert!(!requires_approval(
+            "pm",
+            &json!({"command":"prepare","args":["estimate"]})
+        ));
+        assert!(!requires_approval(
+            "pm",
+            &json!({"command":"ingest","args":["01_Sources/Assets/USER-test.txt"]})
+        ));
+        assert!(requires_approval(
+            "pm",
+            &json!({"command":"ingest","args":["01_Sources/Assets/../../../outside.txt"]})
         ));
     }
 }

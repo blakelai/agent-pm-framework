@@ -71,7 +71,7 @@ fn python() -> String {
     "python3".into()
 }
 fn steps() -> usize {
-    24
+    32
 }
 
 impl Config {

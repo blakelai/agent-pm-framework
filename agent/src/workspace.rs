@@ -111,6 +111,7 @@ impl Workspace {
                         | "README.md"
                         | "HOME.md"
                         | "References.md"
+                        | "tools/README.md"
                         | "CONTEXT-MAP.md"
                         | "index.md"
                         | "log.md"

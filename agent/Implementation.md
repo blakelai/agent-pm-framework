@@ -29,14 +29,14 @@ The code is an initial executable increment. Existing workflow procedures cover 
 |---|---|---|
 | 0. Contracts and technical integration | Protocol fixture implementation complete; live provider certification pending | Both adapters and both MCP transports exercise actual request/result cycles; real endpoints validated separately |
 | 1. Local workbench | Implemented | Browse real Vault records without a model; persist/restore conversations; preserve source/baseline boundaries |
-| 2. Grounded analysis MVP | Initial vertical flow implemented | Sources -> explicit questions -> sufficient answers -> sourced draft -> deterministic validation; real-model behavior evaluation still required |
+| 2. Grounded analysis MVP | Initial vertical flows implemented and exercised with one live model | Sources -> explicit questions -> sufficient answers -> sourced draft -> deterministic validation; broader real-project evaluation pending |
 | 3. Full delivery controls | Existing helper procedures accessible; native Rust port and richer UI pending | Baseline/change gates, resource calendars, remaining forecasts, risks, UAT/release and benefits operated through typed commands and views |
 | 4. Materials and reliability | Original helper ingestion accessible; visual review/OCR and advanced conflict handling pending | PDF/slides/images reviewed with locators; missing extraction never presented as complete; backup/restore and migrations exercised |
 | 5. Pilot and release | Pending | Real internal-system project, live provider matrix, semantic/clarification evaluations, platform packaging and operational documentation |
 
 ## Next engineering work
 
-1. Use a user-specified endpoint/model for the first live provider acceptance run. Do not infer installed model names or inspect unrelated secrets.
+1. Expand the live provider matrix beyond the tested CLIProxyAPI route, using user-specified endpoints/models. Do not infer installed model names or inspect unrelated secrets.
 2. Exercise a real repository/OpenWiki snapshot and user-supplied source through BRD/PRD/REQ/PBI. Evaluate actual citations and question quality, not only tool schemas.
 3. Add native Rust planning and traceability modules against the Python fixtures. Retain exact handling of unknown values, remaining effort, cross-project allocations and immutable baseline pins.
 4. Add typed editing for staffing, iterations, risks and decisions, with workflow-specific state transitions and reviewable changes.
@@ -45,7 +45,14 @@ The code is an initial executable increment. Existing workflow procedures cover 
 
 ## Validation boundary
 
-On 2026-10-14, local checks passed 22 Rust tests, 73 framework tests, formatting, Clippy and the 58-document OKF authoring profile. A real terminal session exercised document browsing, search, view switching and clean exit. Protocol tests used disposable loopback services and both MCP transports. The user-supplied local gateway responded to a model-list request with HTTP 401 (missing API key); live model validation requires the key environment-variable name and model ID. No live model output has been accepted as evidence.
+On 2026-10-14, local checks passed 23 Rust tests, 73 framework tests, formatting, Clippy and the 58-document OKF authoring profile. A real terminal session exercised document browsing, search, view switching and clean exit. Protocol tests used disposable loopback services and both MCP transports. GitHub CI passed on macOS and Linux for the first implementation commit.
+
+The user-selected CLIProxyAPI gateway and `gemini-3.8-flash-high` passed two live synthetic scenarios in a separate disposable workspace:
+
+- Planning: document tools inspected missing inputs, `ask_clarification` persisted and surfaced a question, an explicit fixture answer supplied capacity and estimates, and `resolve_clarification` recorded the resolution. The PM tool produced a 3.00 person-day forecast with Backend/QA capacities of 7.20/3.60 person-days. Assertions checked the completed session and report.
+- Draft chain: the model ingested the supplied fixture text, captured evidence, and created glossary, BRD, PRD, REQ and PBI drafts with two acceptance criteria. Assertions checked source hashes, upstream links, requirement satisfaction, draft/proposed states and unspecified effort/dates. Validation found no errors in the new chain and correctly reported a missing context in an unrelated planning fixture. Source/evidence review and unapproved-draft warnings remain expected; coverage also reported missing test execution and release evidence. No project approval was claimed.
+
+These scenarios validate only the selected route and supplied inputs. They do not certify other providers or general model reasoning. Live runs led to fixes for redundant local-tool authorization, reading the tool manual, bounded multi-step continuation and requirement views that follow document types even outside conventional subfolders. Templates remain available in All but are excluded from project-specific views. The synthetic records and local credentials are excluded from the framework distribution.
 
 Automated tests use synthetic temporary data and local protocol servers. They exercise model protocol handling and runtime behavior, not the quality of a real model's reasoning. A local `doctor` result is not a provider certification. Structural OKF checks do not prove language quality or truth of claims. The current UI renders Markdown text and properties; diagrams and original media open through desktop tools.
 

@@ -37,7 +37,7 @@ Edit `.pm-agent/config.toml` locally. Select the provider profile, its actual mo
 | OpenAI | Responses | `https://api.openai.com/v1` | Protocol fixture tested; live account/model pending |
 | Ollama | Chat Completions | `http://127.0.0.1:11434/v1` | Protocol fixture tested; installed model pending |
 | vLLM | Chat Completions | `http://127.0.0.1:8000/v1` | Protocol fixture tested; model/parser configuration pending |
-| CLIProxyAPI | Chat Completions | configurable local gateway | Protocol fixture tested; actual gateway pending |
+| CLIProxyAPI | Chat Completions | configurable local gateway | Live `gemini-3.8-flash-high` route: streaming, tools, clarification/resume, draft chain and synthetic forecast tested |
 | OpenRouter | Chat Completions | `https://openrouter.ai/api/v1` | Protocol fixture tested; selected route/model pending |
 
 The example local ports are editable configuration examples, not discovered services. Both adapters stream output and preserve function-call/result context. Responses uses local history and requests encrypted reasoning for stateless continuation. Compatible implementations that reject an optional Responses field should use their tested Chat Completions profile; there is no automatic protocol fallback. `tools = true` enables function declarations but does not certify a model's tool capability. Set it to false for text-only assistance.
@@ -64,7 +64,7 @@ agent/target/debug/pm-agent --vault . chat --stage prd "Review the supplied sour
 | o | Open selected document in a desktop application |
 | q / Ctrl-C | Exit when idle; Ctrl-C requests cancellation when busy |
 
-Views include BRD, PRD/REQ, domain knowledge, systems, questions, people/schedules, backlog, progress/risks, verification and Agent runs. They show real Markdown records and metadata. Empty views remain empty; no progress, people or risk scores are synthesized for presentation.
+Views include BRD, PRD/REQ, domain knowledge, systems, questions, people/schedules, backlog, progress/risks, verification and Agent runs. They show real Markdown records and metadata. Requirement views recognize document types even outside conventional subfolders. Templates appear in All, not project-specific views. Empty views remain empty; no progress, people or risk scores are synthesized for presentation.
 
 | Command | Purpose |
 |---|---|
@@ -92,6 +92,8 @@ agent/target/debug/pm-agent --vault . pm --python .venv/bin/python ingest /absol
 ```
 
 Supported operations: settings, ingestion, repository registration/snapshot, evidence capture, work packets, validation, coverage, planning, status, impact, fingerprint, immutable baseline candidates and OKF export/check. See [the tool manual](../tools/README.md) for their contracts. PDF extraction needs the optional PDF dependencies. Images and incomplete PDF/slide extraction retain the original and require reviewed descriptions; this version does not claim full visual understanding or OCR.
+
+The Agent can create reversible reports, work packets, evidence and baseline candidates, refresh registered repositories, and ingest existing workspace assets without another authorization prompt. Adding external material/repository scopes, changing the document language, exporting outside the workspace and invoking MCP tools requires an exact-call decision. A baseline candidate is never an approval.
 
 O/M/P effort, availability and dates must be supplied. Unknown capacity is not zero. Imported Wiki descriptions, static code observations, actual test results and requested future behavior remain distinct evidence. A source hash check establishes version identity, not semantic correctness.
 
