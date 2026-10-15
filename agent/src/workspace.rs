@@ -51,6 +51,7 @@ pub fn parse_note(text: &str) -> Result<(Value, String)> {
         .context("Knowledge document requires YAML frontmatter")?;
     let (head, body) = rest
         .split_once("\n---\n")
+        .or_else(|| rest.strip_suffix("\n---").map(|head| (head, "")))
         .context("Unclosed YAML frontmatter")?;
     let yaml: serde_yaml::Value =
         serde_yaml::from_str(head).context("Invalid or duplicate YAML properties")?;

@@ -12,6 +12,14 @@ pub fn latest_results(
     cases: &[Document],
     requirements: &[Document],
 ) -> Result<BTreeMap<String, Document>> {
+    latest_results_from(records, cases, requirements, &records.active)
+}
+pub fn latest_results_from(
+    records: &Records,
+    cases: &[Document],
+    requirements: &[Document],
+    runs: &[Document],
+) -> Result<BTreeMap<String, Document>> {
     let mut tokens = BTreeMap::new();
     for req in requirements {
         positive_version(&req.metadata)?;
@@ -29,7 +37,7 @@ pub fn latest_results(
         );
     }
     let mut latest: BTreeMap<String, ((DateTime<FixedOffset>, bool), Document)> = BTreeMap::new();
-    for d in &records.active {
+    for d in runs {
         let m = &d.metadata;
         if d.kind != "test_run"
             || truth(&m["simulation"])

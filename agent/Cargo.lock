@@ -1496,6 +1496,7 @@ dependencies = [
  "futures-util",
  "jsonschema",
  "ratatui",
+ "regex",
  "reqwest",
  "rmcp",
  "rusqlite",

@@ -10,7 +10,7 @@ A working first implementation of the local Rust terminal agent. It browses the 
 
 ## Build and start
 
-Run from the framework repository root. Rust 1.96+ and a C toolchain are required. The application and SQLite are compiled into the binary. Planning, coverage, status, change impact, baseline capture/fingerprints, settings and work packets run natively in Rust. Import, validation and OKF operations still require the embedded Python 3.10+ implementation while migration continues.
+Run from the framework repository root. Rust 1.96+ and a C toolchain are required. The application and SQLite are compiled into the binary. Planning, validation, coverage, status, change impact, baseline capture/fingerprints, settings and work packets run natively in Rust. Import and OKF export/bundle operations still require the embedded Python 3.10+ implementation while migration continues.
 
 ```sh
 python3 -m venv .venv
@@ -86,8 +86,8 @@ The production migration target is no Python runtime, bundled Python toolkit or 
 
 | Engine | Commands |
 |---|---|
-| Native Rust, no interpreter required | `plan`, `coverage`, `status`, `impact`, `baseline`, `fingerprint`, `settings`, `prepare` |
-| Python bridge, still pending migration | `validate`, `ingest`, `repo-add`, `sync`, `evidence`, `okf-export`, `okf-check` |
+| Native Rust, no interpreter required | `plan`, `validate`, `coverage`, `status`, `impact`, `baseline`, `fingerprint`, `settings`, `prepare` |
+| Python bridge, still pending migration | `ingest`, `repo-add`, `sync`, `evidence`, `okf-export`, `okf-check` |
 
 This table describes the Rust application. Invoking the original `tools/pm.py` directly still runs the legacy implementation. Python is also used by migration tests as an independent comparison implementation; this does not make the native commands depend on it at runtime.
 
@@ -95,10 +95,12 @@ This table describes the Rust application. Invoking the original `tools/pm.py` d
 
 Native coverage requires current requirement version/hash tokens, execution metadata and evidence. Simulations never qualify; a later failed result supersedes an earlier pass, and a simultaneous nonpassing result wins conservatively. Baseline capture reserves a new ID, copies exact bytes and publishes its manifest last; interrupted incomplete candidates cannot qualify for approval. Approval remains a separate recorded decision matching the manifest hash. Native fingerprints preserve the legacy sorted-JSON hash and flat Properties interpretation, including Unicode, float precision and workflow annotation exclusions, so old baselines remain readable.
 
+Native `validate` writes an English quality report and returns structured findings with severity, code, path and explanation. It checks language settings, links, terminology, document/delivery state, traceability, readiness records, current source hashes, snapshot integrity, approved baselines and the local OKF authoring profile. Completed feature/migration work must cite passing test runs for its pinned requirement versions; unrelated passing runs do not satisfy acceptance. Malformed records are reported while independent checks continue. Return code 1 indicates errors, or warnings with `--strict`; 2 indicates an operation could not complete. Validation never invents missing evidence, approves work or proves semantic completeness. Source files are hashed as a stream; linked files and paths outside registered source roots are rejected.
+
 For the remaining legacy operations, the application embeds the reviewed Python helper files at build time, extracts them to a temporary directory and invokes a configured Python executable with an argument vector, without a shell. It does not execute a project's replacement `tools/pm.py` or registered repository code. Language catalogs still come from the project's `tools/locales` directory so reviewed project translations remain usable; native planning validates catalog keys and placeholders against the compiled English contract.
 
 ```sh
-agent/target/debug/pm-agent --vault . pm --python .venv/bin/python validate
+agent/target/debug/pm-agent --vault . pm validate
 agent/target/debug/pm-agent --vault . pm --python .venv/bin/python repo-add --id service --path /absolute/repository --wiki openwiki --code-root src
 agent/target/debug/pm-agent --vault . pm --python .venv/bin/python sync --repo service
 agent/target/debug/pm-agent --vault . pm --python .venv/bin/python ingest /absolute/material.pdf

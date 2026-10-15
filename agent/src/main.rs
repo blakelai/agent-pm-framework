@@ -135,7 +135,7 @@ async fn main() -> Result<()> {
                 .await?;
             ensure!(
                 output.status.success(),
-                "Python 3.10+ is required for the remaining legacy import, validation and OKF tools"
+                "Python 3.10+ is required for the remaining legacy import and OKF tools"
             );
             println!("Python: {}", String::from_utf8_lossy(&output.stdout).trim());
             println!(

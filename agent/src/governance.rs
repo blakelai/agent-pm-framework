@@ -11,6 +11,7 @@ use serde_json::{Value, json};
 use std::collections::BTreeMap;
 
 const COMMANDS: &[&str] = &[
+    "validate",
     "coverage",
     "status",
     "impact",
@@ -29,6 +30,10 @@ struct Cli {
 }
 #[derive(Subcommand)]
 enum Command {
+    Validate {
+        #[arg(long)]
+        strict: bool,
+    },
     Coverage,
     Status,
     Impact {
@@ -215,6 +220,9 @@ fn prepare(records: &Records, stage: &str, focus: &[String]) -> Result<Value> {
     Ok(json!({"report":{"path":path,"sha256":hash(content.as_bytes()),"content":content}}))
 }
 fn execute(workspace: &Workspace, command: Command) -> Result<Value> {
+    if let Command::Validate { strict } = command {
+        return crate::validation::run(workspace, strict);
+    }
     if let Command::Settings { document_language } = command {
         let data = settings(workspace, document_language.as_deref())?;
         return Ok(
@@ -249,6 +257,7 @@ fn execute(workspace: &Workspace, command: Command) -> Result<Value> {
         }
         Command::Prepare { stage, focus } => prepare(&records, &stage, &focus),
         Command::Settings { .. } => unreachable!(),
+        Command::Validate { .. } => unreachable!(),
     }
 }
 pub fn run(workspace: &Workspace, command: &str, args: &[String]) -> Result<Value> {
@@ -292,10 +301,11 @@ pub fn run(workspace: &Workspace, command: &str, args: &[String]) -> Result<Valu
         "reports".into(),
         json!(report.into_iter().collect::<Vec<_>>()),
     );
+    let exit_code = object.get("exit_code").and_then(Value::as_i64).unwrap_or(0);
     object.extend([
         ("engine".into(), json!("rust")),
-        ("exit_code".into(), json!(0)),
-        ("successful".into(), json!(true)),
+        ("exit_code".into(), json!(exit_code)),
+        ("successful".into(), json!(exit_code == 0)),
         ("stderr".into(), json!("")),
     ]);
     Ok(result)

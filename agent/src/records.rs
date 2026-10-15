@@ -158,7 +158,7 @@ fn scalar(text: &str) -> Result<Value> {
 pub struct Records {
     pub workspace: Workspace,
     pub active: Vec<Document>,
-    all: Vec<Document>,
+    all: Vec<String>,
 }
 impl Records {
     pub fn load(workspace: &Workspace) -> Result<Self> {
@@ -202,16 +202,34 @@ impl Records {
         Ok(Self {
             workspace: workspace.clone(),
             active,
-            all,
+            all: all.into_iter().map(|d| d.path).collect(),
         })
     }
     pub fn by_id(&self, id: &str) -> Result<&Document> {
-        self.active
+        let found: Vec<_> = self
+            .active
             .iter()
-            .find(|d| d.id.as_deref() == Some(id))
-            .with_context(|| format!("Expected exactly one note with ID {id}"))
+            .filter(|d| d.id.as_deref() == Some(id))
+            .collect();
+        ensure!(
+            found.len() == 1,
+            "Expected exactly one note with ID {id}, got {}",
+            found.len()
+        );
+        Ok(found[0])
     }
-    pub fn resolve(&self, reference: &str) -> Result<Document> {
+    pub(crate) fn for_validation(
+        workspace: &Workspace,
+        active: Vec<Document>,
+        paths: Vec<String>,
+    ) -> Self {
+        Self {
+            workspace: workspace.clone(),
+            active,
+            all: paths,
+        }
+    }
+    pub fn resolve_path(&self, reference: &str) -> Result<String> {
         let path = reference.strip_prefix("[[").unwrap_or(reference);
         let path = path
             .strip_suffix("]]")
@@ -221,22 +239,29 @@ impl Records {
             .unwrap_or("");
         let direct = self.workspace.path(path)?;
         if direct.is_file() {
-            return read(&self.workspace, path);
+            return Ok(path.into());
         }
         if !path.ends_with(".md") && self.workspace.path(&format!("{path}.md"))?.is_file() {
-            return read(&self.workspace, &format!("{path}.md"));
+            return Ok(format!("{path}.md"));
         }
         let name = format!("{path}.md");
         let matches: Vec<_> = self
             .all
             .iter()
-            .filter(|d| !path.contains('/') && d.path.rsplit('/').next() == Some(name.as_str()))
+            .filter(|d| !path.contains('/') && d.rsplit('/').next() == Some(name.as_str()))
             .collect();
         ensure!(
             matches.len() == 1,
             "Unresolved or ambiguous link: {reference}"
         );
-        read(&self.workspace, &matches[0].path)
+        ensure!(
+            self.workspace.path(matches[0])?.is_file(),
+            "Link target is not a file: {reference}"
+        );
+        Ok(matches[0].clone())
+    }
+    pub fn resolve(&self, reference: &str) -> Result<Document> {
+        read(&self.workspace, &self.resolve_path(reference)?)
     }
     pub fn targets(&self, refs: Option<&Value>, expected: &[&str]) -> Result<Vec<Document>> {
         let Some(refs) = refs else {
@@ -376,10 +401,4 @@ pub fn positive_version(meta: &Value) -> Result<i64> {
         .context("Positive integer document version required")?;
     ensure!(version > 0, "Positive integer document version required");
     Ok(version)
-}
-pub fn require_no_args(args: &[String]) -> Result<()> {
-    if !args.is_empty() {
-        bail!("This operation accepts no arguments");
-    }
-    Ok(())
 }
