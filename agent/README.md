@@ -10,7 +10,7 @@ A working first implementation of the local Rust terminal agent. It browses the 
 
 ## Build and start
 
-Run from the framework repository root. Rust 1.96+ and a C toolchain are required. The application and SQLite are compiled into the binary. Planning calculations and report generation run natively in Rust. Other built-in PM operations currently use the existing Python 3.10+ implementation embedded in the binary.
+Run from the framework repository root. Rust 1.96+ and a C toolchain are required. The application and SQLite are compiled into the binary. Planning, coverage, status, change impact, baseline capture/fingerprints, settings and work packets run natively in Rust. Import, validation and OKF operations still require the embedded Python 3.10+ implementation while migration continues.
 
 ```sh
 python3 -m venv .venv
@@ -82,9 +82,20 @@ Stages are `workflow`, `intake`, `system`, `language`, `brd`, `prd`, `backlog`, 
 
 ## Built-in project operations
 
+The production migration target is no Python runtime, bundled Python toolkit or Python configuration. Current command dispatch is explicit:
+
+| Engine | Commands |
+|---|---|
+| Native Rust, no interpreter required | `plan`, `coverage`, `status`, `impact`, `baseline`, `fingerprint`, `settings`, `prepare` |
+| Python bridge, still pending migration | `validate`, `ingest`, `repo-add`, `sync`, `evidence`, `okf-export`, `okf-check` |
+
+This table describes the Rust application. Invoking the original `tools/pm.py` directly still runs the legacy implementation. Python is also used by migration tests as an independent comparison implementation; this does not make the native commands depend on it at runtime.
+
 `/pm plan` and CLI `pm plan` calculate and write the forecast in Rust, without Python or a model. The result includes structured capacity and item data alongside the Markdown report. It uses the existing three-point estimates, remaining availability, cross-project FTE checks, dependency rules and explicit unknown values. An invalid planning input writes a blocked report. An unavailable or invalid language catalog leaves the prior report intact and returns an error; it never silently publishes an English fallback.
 
-For other operations, the application embeds the reviewed Python helper files at build time, extracts them to a temporary directory and invokes a configured Python executable with an argument vector, without a shell. It does not execute a project's replacement `tools/pm.py` or registered repository code. Language catalogs still come from the project's `tools/locales` directory so reviewed project translations remain usable; native planning validates catalog keys and placeholders against the compiled English contract.
+Native coverage requires current requirement version/hash tokens, execution metadata and evidence. Simulations never qualify; a later failed result supersedes an earlier pass, and a simultaneous nonpassing result wins conservatively. Baseline capture reserves a new ID, copies exact bytes and publishes its manifest last; interrupted incomplete candidates cannot qualify for approval. Approval remains a separate recorded decision matching the manifest hash. Native fingerprints preserve the legacy sorted-JSON hash and flat Properties interpretation, including Unicode, float precision and workflow annotation exclusions, so old baselines remain readable.
+
+For the remaining legacy operations, the application embeds the reviewed Python helper files at build time, extracts them to a temporary directory and invokes a configured Python executable with an argument vector, without a shell. It does not execute a project's replacement `tools/pm.py` or registered repository code. Language catalogs still come from the project's `tools/locales` directory so reviewed project translations remain usable; native planning validates catalog keys and placeholders against the compiled English contract.
 
 ```sh
 agent/target/debug/pm-agent --vault . pm --python .venv/bin/python validate

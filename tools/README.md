@@ -6,6 +6,8 @@ title: "Local tools"
 
 # Local tools
 
+The Rust application accepts the same PM command arguments through `pm-agent --vault /path/to/vault pm COMMAND ...` or the Agent's `pm` tool. `plan`, `coverage`, `status`, `impact`, `baseline`, `fingerprint`, `settings` and `prepare` now execute natively. The remaining commands use the legacy Python bridge. See the [command migration table](../agent/README.md#built-in-project-operations). The Python commands below remain the original compatibility interface during migration.
+
 Use Python 3.10+ with requirements.txt (PyYAML for OKF validation). PDF extraction also needs requirements-pdf.txt; the PDF test fixture uses reportlab. Tools do not call a model or execute source-repository code.
 
 Run from the Vault root, or specify `--vault /path/to/vault` before the subcommand.

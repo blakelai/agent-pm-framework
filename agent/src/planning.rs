@@ -7,8 +7,7 @@ use serde::Serialize;
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
-mod locale;
-use locale::Catalog;
+use crate::locale::Catalog;
 
 const REPORT: &str = "06_Delivery/Plan-Report.md";
 const MANAGED: &[&str] = &[

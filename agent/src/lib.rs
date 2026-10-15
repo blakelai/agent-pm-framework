@@ -1,9 +1,14 @@
+pub mod baselines;
 pub mod config;
+pub mod governance;
+mod locale;
 pub mod mcp;
 pub mod planning;
 pub mod provider;
+pub mod records;
 pub mod runtime;
 pub mod store;
 pub mod tools;
+pub mod traceability;
 pub mod tui;
 pub mod workspace;

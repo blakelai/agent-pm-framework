@@ -57,7 +57,7 @@ fn fields(parts: &[Part]) -> Vec<&str> {
     fields.sort();
     fields
 }
-fn language_tag(raw: &str) -> Result<String> {
+pub(crate) fn language_tag(raw: &str) -> Result<String> {
     let mut parts = raw.split('-');
     let first = parts.next().unwrap_or("");
     ensure!(
@@ -82,7 +82,7 @@ fn language_tag(raw: &str) -> Result<String> {
     }
     Ok(tag)
 }
-pub(super) struct Catalog {
+pub(crate) struct Catalog {
     pub language: String,
     templates: BTreeMap<String, Vec<Part>>,
 }
@@ -104,7 +104,7 @@ impl Catalog {
             "Language catalog exceeds text limit"
         );
         let base: BTreeMap<String, String> =
-            serde_json::from_str(include_str!("../../../tools/locales/en.json"))?;
+            serde_json::from_str(include_str!("../../tools/locales/en.json"))?;
         let data: BTreeMap<String, String> =
             serde_json::from_str(&std::fs::read_to_string(&path)?)?;
         ensure!(

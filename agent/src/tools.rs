@@ -272,6 +272,15 @@ pub async fn run_pm(
         return tokio::task::spawn_blocking(move || crate::planning::run(&workspace, &args))
             .await?;
     }
+    if crate::governance::handles(command) {
+        let workspace = workspace.clone();
+        let command = command.to_owned();
+        let args = args.to_vec();
+        return tokio::task::spawn_blocking(move || {
+            crate::governance::run(&workspace, &command, &args)
+        })
+        .await?;
+    }
     // All mutations share the same process lock in main. Reject symlink targets before invoking helpers.
     for folder in [
         "00_Governance",

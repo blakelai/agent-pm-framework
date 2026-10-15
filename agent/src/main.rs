@@ -36,7 +36,7 @@ enum Command {
     Scan,
     /// Show durable Agent sessions.
     Sessions,
-    /// Execute a deterministic PM command (Python 3.10+ required).
+    /// Execute a deterministic PM command (some legacy operations still require Python).
     Pm {
         #[arg(long, default_value = "python3")]
         python: String,
@@ -135,7 +135,7 @@ async fn main() -> Result<()> {
                 .await?;
             ensure!(
                 output.status.success(),
-                "Python 3.10+ is required for built-in PM tools"
+                "Python 3.10+ is required for the remaining legacy import, validation and OKF tools"
             );
             println!("Python: {}", String::from_utf8_lossy(&output.stdout).trim());
             println!(

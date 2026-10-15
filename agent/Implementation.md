@@ -17,12 +17,13 @@ The approved direction is a local Rust TUI for macOS/Linux, sharing project docu
 | Provider | Responses and Chat Completions SSE adapters, fragmented UTF-8 and function arguments, local conversation replay, error/cancellation handling |
 | Agent runtime | Selected existing Skill/Playbook, tool loop, persisted questions, user answers with provenance, explicit resolution, sourced draft writes |
 | Planning | Native Rust estimates/capacity/dependencies, localized Markdown reports and structured forecast data; no interpreter required |
-| Other built-in tools | Framework Python behavior reused through a compiled-in toolkit and shell-free subprocess adapter |
+| Traceability and governance commands | Native coverage/status/impact, baseline capture and pinned fingerprints, settings and work packets; compatible legacy content hashes |
+| Remaining legacy tools | Import, repository snapshots, evidence capture, validation and OKF still use the compiled-in Python toolkit |
 | MCP | Official Rust SDK, stdio/Streamable HTTP, configured tool allowlist, schema validation, exact-call authorization |
 | Store | SQLite sessions, tool ledger and document projection; unknown outcomes require reconciliation |
 | Distribution | Cargo lockfile, local configuration example, operating guide and macOS/Linux CI jobs |
 
-The code is an executable workbench with native planning. Existing workflow procedures cover intake through operations, but the complete product roadmap is not finished. Native traceability and governance, rich task/resource editors, an interactive schedule and visual artifact review are still pending.
+The code is an executable workbench with eight native PM commands. Existing workflow procedures cover intake through operations, but the complete product roadmap is not finished. Seven PM commands still use Python. Native validation/import/OKF, rich task/resource editors, an interactive schedule and visual artifact review are still pending. Migration is complete only when production execution and packaging no longer require Python or its embedded toolkit.
 
 ## Delivery sequence and acceptance
 
@@ -31,22 +32,25 @@ The code is an executable workbench with native planning. Existing workflow proc
 | 0. Contracts and technical integration | Protocol fixture implementation complete; live provider certification pending | Both adapters and both MCP transports exercise actual request/result cycles; real endpoints validated separately |
 | 1. Local workbench | Implemented | Browse real Vault records without a model; persist/restore conversations; preserve source/baseline boundaries |
 | 2. Grounded analysis MVP | Initial vertical flows implemented and exercised with one live model | Sources -> explicit questions -> sufficient answers -> sourced draft -> deterministic validation; broader real-project evaluation pending |
-| 3. Full delivery controls | Native Rust planning implemented; other helper procedures accessible; richer UI pending | Baseline/change gates, resource calendars, remaining forecasts, risks, UAT/release and benefits operated through typed commands and views |
+| 3. Full delivery controls | Native planning, coverage/status/impact and baseline operations implemented; validation and richer UI pending | Baseline/change gates, resource calendars, remaining forecasts, risks, UAT/release and benefits operated through typed commands and views |
 | 4. Materials and reliability | Original helper ingestion accessible; visual review/OCR and advanced conflict handling pending | PDF/slides/images reviewed with locators; missing extraction never presented as complete; backup/restore and migrations exercised |
 | 5. Pilot and release | Pending | Real internal-system project, live provider matrix, semantic/clarification evaluations, platform packaging and operational documentation |
 
 ## Next engineering work
 
-1. Expand the live provider matrix beyond the tested CLIProxyAPI route, using user-specified endpoints/models. Do not infer installed model names or inspect unrelated secrets.
-2. Exercise a real repository/OpenWiki snapshot and user-supplied source through BRD/PRD/REQ/PBI. Evaluate actual citations and question quality, not only tool schemas.
-3. Add native Rust traceability and governance against the Python fixtures. Preserve immutable baseline pins, current requirement versions, actual execution evidence and explicit approval events. Planning parity is now covered separately.
+1. Port `validate` using the native record, semantic-hash, baseline and traceability modules. Preserve readiness, actual acceptance evidence, terminology and source-freshness checks.
+2. Port `ingest`, `repo-add`, `sync` and `evidence`, then `okf-export` and `okf-check`. Retain source locators, snapshot integrity, language behavior and private-file exclusions.
+3. Remove the Python dispatch, embedded toolkit, runtime configuration and installation requirement after those operations pass acceptance. Retire legacy operational scripts without discarding regression coverage.
 4. Add typed editing for staffing, iterations, risks and decisions, with workflow-specific state transitions and reviewable changes.
 5. Add dependency-scoped clarification gates, automatic file watching, source impact views, document diffs and richer evidence navigation.
 6. Add explicit provider capability probes, budget/usage reporting, tested retry policies for proven idempotent reads, MCP OAuth, and reviewed visual extraction.
+7. Expand the live provider matrix using user-specified endpoints/models and evaluate a real repository/OpenWiki/source workflow. Installed model names, business sources and semantic decisions must not be inferred.
 
 ## Validation boundary
 
-On 2026-10-15, local checks passed 25 Rust tests, 73 framework tests, formatting, Clippy and the 58-document OKF authoring profile. The Rust suite includes a differential test covering 41 planning cases against the existing Python implementation: arithmetic, unknown estimates, remaining work, calendars, cross-project FTE, dependencies, external waits, blocked inputs and localized reports. Test dispatch deliberately supplies a nonexistent Python executable to prove planning is native. Additional checks cover rejected translations, preserving prior reports and rejecting linked planning inputs. A real terminal session exercised document browsing, search, view switching and clean exit. Protocol tests used disposable loopback services and both MCP transports. GitHub CI passed on macOS and Linux for the workbench implementation and its first live-test refinements.
+On 2026-10-15, local checks passed 29 Rust tests, 73 framework tests, formatting, Clippy and the 58-document OKF authoring profile. The Rust suite includes a differential test covering 41 planning cases against the existing Python implementation: arithmetic, unknown estimates, remaining work, calendars, cross-project FTE, dependencies, external waits, blocked inputs and localized reports. Test dispatch deliberately supplies a nonexistent Python executable to prove planning is native. Additional checks cover rejected translations, preserving prior reports and rejecting linked planning inputs. A real terminal session exercised document browsing, search, view switching and clean exit. Protocol tests used disposable loopback services and both MCP transports. GitHub CI passed on macOS and Linux for the workbench implementation and its first live-test refinements.
+
+Native governance adds 34 differential scenarios covering coverage, status, downstream impact, candidate/approved/rescinded baselines, current and historical fingerprints, simulations and conflicting test results. Semantic-hash parity covers 262 numeric/Unicode cases and six legacy scalar/list representations. Rust-created baselines are readable by the original Python implementation. Native dispatch tests use a nonexistent interpreter, and settings/work-packet tests confirm that language changes do not translate existing records or create approvals. Duplicate IDs, linked active records and escaping snapshot paths are rejected.
 
 The user-selected CLIProxyAPI gateway and `gemini-3.8-flash-high` passed two live synthetic scenarios in a separate disposable workspace:
 
