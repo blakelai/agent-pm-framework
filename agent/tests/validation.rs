@@ -29,14 +29,7 @@ async fn run(workspace: &Workspace, strict: bool) -> Value {
     } else {
         vec![]
     };
-    let result = tools::run_pm(
-        workspace,
-        "/no-python-for-native-validation",
-        "validate",
-        &args,
-    )
-    .await
-    .unwrap();
+    let result = tools::run_pm(workspace, "validate", &args).await.unwrap();
     assert_eq!(result["engine"], "rust");
     result
 }
@@ -210,12 +203,7 @@ fn cli_validation_reports_invalid_settings_without_starting_python() {
     let output = Command::new(env!("CARGO_BIN_EXE_pm-agent"))
         .arg("--vault")
         .arg(&workspace.root)
-        .args([
-            "pm",
-            "--python",
-            "/no-python-for-native-validation",
-            "validate",
-        ])
+        .args(["pm", "validate"])
         .output()
         .unwrap();
     assert_eq!(

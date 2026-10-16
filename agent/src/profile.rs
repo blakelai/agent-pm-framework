@@ -92,6 +92,50 @@ pub fn inspect_authored(workspace: &Workspace) -> Result<Profile> {
     inspect_paths(workspace, &paths)
 }
 pub(crate) fn inspect_paths(workspace: &Workspace, paths: &[String]) -> Result<Profile> {
+    check_paths(
+        workspace,
+        &paths
+            .iter()
+            .filter(|p| authored(p))
+            .cloned()
+            .collect::<Vec<_>>(),
+        true,
+    )
+}
+pub(crate) fn authored(path: &str) -> bool {
+    path.ends_with(".md")
+        && !RAW.iter().any(|r| path.starts_with(r))
+        && !Path::new(path)
+            .components()
+            .any(|c| c.as_os_str() == ".agents")
+}
+pub fn check_bundle(root: &Path) -> Result<Profile> {
+    ensure!(root.is_dir(), "OKF bundle must be a directory");
+    let workspace = Workspace {
+        root: root.canonicalize()?,
+    };
+    let mut paths = vec![];
+    for entry in walkdir::WalkDir::new(&workspace.root).follow_links(false) {
+        let entry = entry?;
+        ensure!(
+            !entry.file_type().is_symlink(),
+            "OKF bundles cannot contain symlinks"
+        );
+        if entry.file_type().is_file() && entry.path().extension().is_some_and(|e| e == "md") {
+            paths.push(
+                entry
+                    .path()
+                    .strip_prefix(&workspace.root)?
+                    .to_str()
+                    .context("Bundle paths must be UTF-8")?
+                    .to_owned(),
+            );
+        }
+    }
+    paths.sort();
+    check_paths(&workspace, &paths, false)
+}
+fn check_paths(workspace: &Workspace, paths: &[String], strict: bool) -> Result<Profile> {
     let heading = Regex::new(r"(?m)^#{1,6} .+")?;
     let links = Regex::new(r"(?m)^[-*] \[[^\]]+\]\([^)]+\)")?;
     let dates = Regex::new(r"(?m)^## (.+)$")?;
@@ -102,15 +146,13 @@ pub(crate) fn inspect_paths(workspace: &Workspace, paths: &[String]) -> Result<P
         errors: vec![],
         warnings: vec![],
         conformant: false,
-        scope: "project profile",
+        scope: if strict {
+            "project profile"
+        } else {
+            "bundle structure"
+        },
     };
-    for path in paths.iter().filter(|p| {
-        p.ends_with(".md")
-            && !RAW.iter().any(|r| p.starts_with(r))
-            && !Path::new(p)
-                .components()
-                .any(|c| c.as_os_str() == ".agents")
-    }) {
+    for path in paths {
         output.documents_checked += 1;
         let checked = (|| -> Result<()> {
             let (meta, body) = yaml(&read_text(workspace, path)?)?;
@@ -152,7 +194,7 @@ pub(crate) fn inspect_paths(workspace: &Workspace, paths: &[String]) -> Result<P
                         "Concept needs YAML frontmatter with a nonempty string type"
                     );
                     ensure!(
-                        meta["title"].as_str().is_some(),
+                        !strict || meta["title"].as_str().is_some(),
                         "This project profile requires a title"
                     );
                     let map = meta.as_mapping().unwrap();

@@ -7,7 +7,7 @@ from pathlib import Path
 from urllib.parse import unquote, urlsplit
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT/'tools'))
+sys.path.insert(0, str(ROOT/'tests/legacy'))
 from pmkit import governance, okf, planning, quality, settings
 from pmkit.vault import read_note, resolve_link, save_note
 from support import copy_starter

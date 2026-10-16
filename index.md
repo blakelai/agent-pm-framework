@@ -61,3 +61,7 @@ okf_version: "0.2"
 - [Design references](References.md) - Reference
 - [Local tools](tools/README.md) - Reference
 - [Evidence and clarification policy](90_Agent/Evidence-and-Clarification-Policy.md) - Reference
+
+## Development verification
+
+- [Development tests and legacy oracle](tests/README.md) - Native runtime verification and test-only comparison setup

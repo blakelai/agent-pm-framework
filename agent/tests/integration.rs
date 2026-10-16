@@ -60,7 +60,6 @@ fn call(index: usize, id: &str, name: &str, args: Value) -> Value {
 fn config(url: String, protocol: Protocol) -> Config {
     Config {
         provider: "fixture".into(),
-        python: std::env::var("PM_TEST_PYTHON").unwrap_or("python3".into()),
         max_steps: 12,
         mcp: BTreeMap::new(),
         providers: BTreeMap::from([(
@@ -391,13 +390,12 @@ fn invalid_tool_arguments_and_remote_schema_references_are_rejected() {
 #[tokio::test]
 async fn bundled_pm_tools_preserve_unknown_planning_inputs() {
     let (_dir, w) = fixture();
-    let python = std::env::var("PM_TEST_PYTHON").unwrap_or("python3".into());
-    let result = tools::run_pm(&w, &python, "plan", &[]).await.unwrap();
+    let result = tools::run_pm(&w, "plan", &[]).await.unwrap();
     assert_eq!(result["successful"], false);
     let report = w.read("06_Delivery/Plan-Report.md").unwrap();
     assert!(report.contains("blocked"));
     assert!(!report.contains("Scheduled remaining effort"));
-    let status = tools::run_pm(&w, &python, "status", &[]).await.unwrap();
+    let status = tools::run_pm(&w, "status", &[]).await.unwrap();
     assert_eq!(status["successful"], true);
 }
 
@@ -500,7 +498,6 @@ async fn rust_tools_capture_repository_and_openwiki_evidence() {
         "# Fixture wiki\n\nThe handler returns true.\n",
     )
     .unwrap();
-    let python = std::env::var("PM_TEST_PYTHON").unwrap_or("python3".into());
     let args = vec![
         "--id".into(),
         "fixture-service".into(),
@@ -512,18 +509,13 @@ async fn rust_tools_capture_repository_and_openwiki_evidence() {
         "src".into(),
     ];
     assert_eq!(
-        tools::run_pm(&w, &python, "repo-add", &args).await.unwrap()["successful"],
+        tools::run_pm(&w, "repo-add", &args).await.unwrap()["successful"],
         true
     );
     assert_eq!(
-        tools::run_pm(
-            &w,
-            &python,
-            "sync",
-            &["--repo".into(), "fixture-service".into()]
-        )
-        .await
-        .unwrap()["successful"],
+        tools::run_pm(&w, "sync", &["--repo".into(), "fixture-service".into()])
+            .await
+            .unwrap()["successful"],
         true
     );
     let args = [
@@ -541,7 +533,7 @@ async fn rust_tools_capture_repository_and_openwiki_evidence() {
         "1",
     ]
     .map(String::from);
-    let result = tools::run_pm(&w, &python, "evidence", &args).await.unwrap();
+    let result = tools::run_pm(&w, "evidence", &args).await.unwrap();
     assert_eq!(result["successful"], true, "{result}");
     let evidence = w.read("01_Sources/Evidence/EVD-TEST.md").unwrap();
     assert!(evidence.contains("handler.rs"));

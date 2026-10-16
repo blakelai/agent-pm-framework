@@ -59,16 +59,11 @@ impl McpConfig {
 #[serde(deny_unknown_fields)]
 pub struct Config {
     pub provider: String,
-    #[serde(default = "python")]
-    pub python: String,
     #[serde(default = "steps")]
     pub max_steps: usize,
     pub providers: BTreeMap<String, ProviderConfig>,
     #[serde(default)]
     pub mcp: BTreeMap<String, McpConfig>,
-}
-fn python() -> String {
-    "python3".into()
 }
 fn steps() -> usize {
     32

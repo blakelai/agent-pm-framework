@@ -41,17 +41,16 @@ Agents must ask for clarification or relevant material whenever task information
 
 ## Local tools
 
-Python 3.10+ and Git are required. Tools run locally without calling a model or executing registered repository code.
+Build the Rust application on macOS or Linux with Rust 1.96+ and a C toolchain. All deterministic tools run locally without a model or Python. Git enables repository revision and dirty-state capture; registered source code is read, not executed.
 
 ```sh
-python3 -m venv .venv
-.venv/bin/python -m pip install -r requirements.txt
-.venv/bin/python tools/pm.py settings
-.venv/bin/python tools/pm.py validate
-.venv/bin/python -m unittest discover -s tests -v
+cargo build --manifest-path agent/Cargo.toml --locked
+agent/target/debug/pm-agent --vault . pm settings
+agent/target/debug/pm-agent --vault . pm validate
+agent/target/debug/pm-agent --vault . tui
 ```
 
-On Windows, use `.venv\Scripts\python.exe` in place of `.venv/bin/python`. PDF extraction additionally requires `requirements-pdf.txt`. See [the tool manual](tools/README.md) for commands and exit codes.
+See [application setup](agent/README.md) for model configuration, [the tool manual](tools/README.md) for commands and exit codes, and [test setup](tests/README.md) for development-only dependencies.
 
 A fresh workspace reports `PROJECT_SETUP` until the charter is configured. Forecasting is blocked until the forecast date, iterations and allocations are supplied. Generated reports and imported project data belong to the project copy; they are not framework release artifacts.
 

@@ -19,6 +19,12 @@ const COMMANDS: &[&str] = &[
     "fingerprint",
     "settings",
     "prepare",
+    "ingest",
+    "repo-add",
+    "sync",
+    "evidence",
+    "okf-export",
+    "okf-check",
 ];
 pub fn handles(command: &str) -> bool {
     COMMANDS.contains(&command)
@@ -30,6 +36,48 @@ struct Cli {
 }
 #[derive(Subcommand)]
 enum Command {
+    Ingest {
+        file: String,
+    },
+    RepoAdd {
+        #[arg(long)]
+        id: String,
+        #[arg(long)]
+        path: String,
+        #[arg(long, default_value = "openwiki")]
+        wiki: String,
+        #[arg(long)]
+        code_root: Vec<String>,
+    },
+    Sync {
+        #[arg(long)]
+        repo: String,
+    },
+    Evidence {
+        #[arg(long)]
+        id: String,
+        #[arg(long)]
+        claim: String,
+        #[arg(long, required_unless_present = "repo", conflicts_with = "repo")]
+        source: Option<String>,
+        #[arg(long)]
+        locator: Option<String>,
+        #[arg(long, required_unless_present = "source")]
+        repo: Option<String>,
+        #[arg(long)]
+        path: Option<String>,
+        #[arg(long)]
+        start: Option<usize>,
+        #[arg(long)]
+        end: Option<usize>,
+    },
+    OkfExport {
+        #[arg(long)]
+        output: String,
+    },
+    OkfCheck {
+        path: String,
+    },
     Validate {
         #[arg(long)]
         strict: bool,
@@ -220,6 +268,19 @@ fn prepare(records: &Records, stage: &str, focus: &[String]) -> Result<Value> {
     Ok(json!({"report":{"path":path,"sha256":hash(content.as_bytes()),"content":content}}))
 }
 fn execute(workspace: &Workspace, command: Command) -> Result<Value> {
+    if let Command::OkfExport { output } = &command {
+        let data = crate::okf::export(workspace, output)?;
+        return Ok(
+            json!({"stdout":format!("{}\n",serde_json::to_string_pretty(&data)?),"validation":data}),
+        );
+    }
+    if let Command::OkfCheck { path } = &command {
+        let root = crate::sources::input_path(workspace, path)?;
+        let data = crate::profile::check_bundle(&root)?;
+        return Ok(
+            json!({"exit_code":if data.conformant {0} else {1},"stdout":format!("{}\n",serde_json::to_string_pretty(&data)?),"validation":data}),
+        );
+    }
     if let Command::Validate { strict } = command {
         return crate::validation::run(workspace, strict);
     }
@@ -230,8 +291,47 @@ fn execute(workspace: &Workspace, command: Command) -> Result<Value> {
         );
     }
     settings(workspace, None)?;
+    if let Command::Ingest { file } = &command {
+        return crate::sources::ingest(workspace, file);
+    }
+    if let Command::RepoAdd {
+        id,
+        path,
+        wiki,
+        code_root,
+    } = &command
+    {
+        return crate::sources::add_repo(workspace, id, path, wiki, code_root);
+    }
     let records = Records::load(workspace)?;
     match command {
+        Command::Sync { repo } => crate::sources::sync(&records, &repo),
+        Command::Evidence {
+            id,
+            claim,
+            source,
+            locator,
+            repo,
+            path,
+            start,
+            end,
+        } => crate::sources::evidence(
+            &records,
+            crate::sources::Evidence {
+                id: &id,
+                claim: &claim,
+                source: source.as_deref(),
+                locator: locator.as_deref(),
+                repo: repo.as_deref(),
+                path: path.as_deref(),
+                start,
+                end,
+            },
+        ),
+        Command::Ingest { .. }
+        | Command::RepoAdd { .. }
+        | Command::OkfExport { .. }
+        | Command::OkfCheck { .. } => unreachable!(),
         Command::Coverage => traceability::report(&records),
         Command::Status => status(&records),
         Command::Impact { id } => baselines::impact(&records, &id),

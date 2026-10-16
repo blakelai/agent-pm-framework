@@ -5,7 +5,7 @@ import shutil
 import sys
 
 repo = Path(__file__).resolve().parents[2]
-sys.path[:0] = [str(repo / "tools"), str(repo / "tests")]
+sys.path[:0] = [str(repo / "tests/legacy"), str(repo / "tests")]
 from support import build_fixture
 from pmkit import planning, settings
 from pmkit.vault import by_id, read_note, save_note

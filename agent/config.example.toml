@@ -1,6 +1,5 @@
 # Copy outside Git or to the ignored .pm-agent/config.toml. Select an explicit model.
 provider = "ollama"
-python = "python3"
 max_steps = 32
 
 [providers.openai]

@@ -37,9 +37,7 @@ async fn native_forecasts_match_existing_python_contract_and_run_without_python(
         let name = case["name"].as_str().unwrap();
         let workspace = Workspace::open(&dir.path().join(name)).unwrap();
         // A nonexistent interpreter proves that the production tool dispatch is native.
-        let result = tools::run_pm(&workspace, "/no-python-for-this-operation", "plan", &[])
-            .await
-            .unwrap();
+        let result = tools::run_pm(&workspace, "plan", &[]).await.unwrap();
         assert_eq!(result["engine"], "rust", "{name}");
         let report = workspace.read("06_Delivery/Plan-Report.md").unwrap();
         let (meta, body) = parse_note(&report).unwrap();

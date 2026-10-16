@@ -10,11 +10,9 @@ A working first implementation of the local Rust terminal agent. It browses the 
 
 ## Build and start
 
-Run from the framework repository root. Rust 1.96+ and a C toolchain are required. The application and SQLite are compiled into the binary. Planning, validation, coverage, status, change impact, baseline capture/fingerprints, settings and work packets run natively in Rust. Import and OKF export/bundle operations still require the embedded Python 3.10+ implementation while migration continues.
+Run from the framework repository root. Rust 1.96+ and a C toolchain are required. The application and SQLite are compiled into the binary. All 15 PM operations run natively in Rust, including PDF/Office text extraction and OKF export. No Python installation is required to build or run the application. Git records repository revision/dirty state when available; unavailable Git produces an explicit unversioned snapshot.
 
 ```sh
-python3 -m venv .venv
-.venv/bin/python -m pip install -r requirements.txt -r requirements-pdf.txt
 cargo build --manifest-path agent/Cargo.toml --locked
 agent/target/debug/pm-agent --vault . tui
 ```
@@ -30,7 +28,7 @@ mkdir -p .pm-agent
 cp agent/config.example.toml .pm-agent/config.toml
 ```
 
-Edit `.pm-agent/config.toml` locally. Select the provider profile, its actual model ID and endpoint. Set `python` to the absolute path of the virtual environment's Python executable. Model IDs are deliberately empty in the distributed configuration. Keys are read from named environment variables; do not put key values into the config, project documents or chat. Start the application from a shell that has those variables set.
+Edit `.pm-agent/config.toml` locally. Select the provider profile, its actual model ID and endpoint. When upgrading an older configuration, remove its obsolete top-level `python` field; `pm --python` has also been retired. Model IDs are deliberately empty in the distributed configuration. Keys are read from named environment variables; do not put key values into the config, project documents or chat. Start the application from a shell that has those variables set.
 
 | Profile | Default protocol | Endpoint convention | Verification status |
 |---|---|---|---|
@@ -47,7 +45,7 @@ agent/target/debug/pm-agent --vault . doctor
 agent/target/debug/pm-agent --vault . chat --stage prd "Review the supplied sources and ask about missing requirements."
 ```
 
-`doctor` checks local configuration, key presence and Python version. It does not send a live model request. Endpoint authentication, route availability, model quality, tool support and usage accounting still require live acceptance tests. HTTPS is required for remote endpoints; HTTP is allowed on loopback.
+`doctor` checks local configuration and key presence. It does not send a live model request. Endpoint authentication, route availability, model quality, tool support and usage accounting still require live acceptance tests. HTTPS is required for remote endpoints; HTTP is allowed on loopback.
 
 ## Use the terminal workbench
 
@@ -82,14 +80,15 @@ Stages are `workflow`, `intake`, `system`, `language`, `brd`, `prd`, `backlog`, 
 
 ## Built-in project operations
 
-The production migration target is no Python runtime, bundled Python toolkit or Python configuration. Current command dispatch is explicit:
+Every PM operation uses the compiled Rust implementation. There is no Python dispatch, embedded Python toolkit or interpreter configuration.
 
-| Engine | Commands |
+| Capability | Commands |
 |---|---|
-| Native Rust, no interpreter required | `plan`, `validate`, `coverage`, `status`, `impact`, `baseline`, `fingerprint`, `settings`, `prepare` |
-| Python bridge, still pending migration | `ingest`, `repo-add`, `sync`, `evidence`, `okf-export`, `okf-check` |
+| Analysis sources | `ingest`, `repo-add`, `sync`, `evidence` |
+| Planning and governance | `plan`, `validate`, `coverage`, `status`, `impact`, `baseline`, `fingerprint`, `settings`, `prepare` |
+| Knowledge exchange | `okf-export`, `okf-check` |
 
-This table describes the Rust application. Invoking the original `tools/pm.py` directly still runs the legacy implementation. Python is also used by migration tests as an independent comparison implementation; this does not make the native commands depend on it at runtime.
+The original implementation now lives only in `tests/legacy` as an independent regression oracle. Python is a development-test dependency, documented in [test setup](../tests/README.md); the binary does not embed or invoke those files.
 
 `/pm plan` and CLI `pm plan` calculate and write the forecast in Rust, without Python or a model. The result includes structured capacity and item data alongside the Markdown report. It uses the existing three-point estimates, remaining availability, cross-project FTE checks, dependency rules and explicit unknown values. An invalid planning input writes a blocked report. An unavailable or invalid language catalog leaves the prior report intact and returns an error; it never silently publishes an English fallback.
 
@@ -97,16 +96,18 @@ Native coverage requires current requirement version/hash tokens, execution meta
 
 Native `validate` writes an English quality report and returns structured findings with severity, code, path and explanation. It checks language settings, links, terminology, document/delivery state, traceability, readiness records, current source hashes, snapshot integrity, approved baselines and the local OKF authoring profile. Completed feature/migration work must cite passing test runs for its pinned requirement versions; unrelated passing runs do not satisfy acceptance. Malformed records are reported while independent checks continue. Return code 1 indicates errors, or warnings with `--strict`; 2 indicates an operation could not complete. Validation never invents missing evidence, approves work or proves semantic completeness. Source files are hashed as a stream; linked files and paths outside registered source roots are rejected.
 
-For the remaining legacy operations, the application embeds the reviewed Python helper files at build time, extracts them to a temporary directory and invokes a configured Python executable with an argument vector, without a shell. It does not execute a project's replacement `tools/pm.py` or registered repository code. Language catalogs still come from the project's `tools/locales` directory so reviewed project translations remain usable; native planning validates catalog keys and placeholders against the compiled English contract.
+Native source ingestion preserves original bytes and generates project-language wrappers. PDF pages, slide numbers and document text remain linked to the original; encryption, malformed input and extraction failures remain visible. Snapshot synchronization reads only registered roots, preserves OpenWiki Claims files without claiming official validation, and verifies immutable snapshot hashes before reuse or evidence capture. Language catalogs remain in the project's `tools/locales` directory and are checked against the compiled English key/placeholder contract.
+
+OKF export stages a fresh external bundle and validates it before publication. Raw Markdown attachments keep exact bytes with a `.txt` suffix; native Skills become typed knowledge concepts. Bundle checks apply core OKF rules to every Markdown file, while authoring checks apply this project's stricter profile and raw/private exclusions.
 
 ```sh
 agent/target/debug/pm-agent --vault . pm validate
-agent/target/debug/pm-agent --vault . pm --python .venv/bin/python repo-add --id service --path /absolute/repository --wiki openwiki --code-root src
-agent/target/debug/pm-agent --vault . pm --python .venv/bin/python sync --repo service
-agent/target/debug/pm-agent --vault . pm --python .venv/bin/python ingest /absolute/material.pdf
+agent/target/debug/pm-agent --vault . pm repo-add --id service --path /absolute/repository --wiki openwiki --code-root src
+agent/target/debug/pm-agent --vault . pm sync --repo service
+agent/target/debug/pm-agent --vault . pm ingest /absolute/material.pdf
 ```
 
-Supported operations: settings, ingestion, repository registration/snapshot, evidence capture, work packets, validation, coverage, planning, status, impact, fingerprint, immutable baseline candidates and OKF export/check. See [the tool manual](../tools/README.md) for their contracts. PDF extraction needs the optional PDF dependencies. Images and incomplete PDF/slide extraction retain the original and require reviewed descriptions; this version does not claim full visual understanding or OCR.
+Supported operations: settings, ingestion, repository registration/snapshot, evidence capture, work packets, validation, coverage, planning, status, impact, fingerprint, immutable baseline candidates and OKF export/check. See [the tool manual](../tools/README.md) for their contracts. PDF and Office text extraction are compiled into the binary. Images and incomplete PDF/slide extraction retain the original and require reviewed descriptions; this version does not claim full visual understanding or OCR.
 
 The Agent can create reversible reports, work packets, evidence and baseline candidates, refresh registered repositories, and ingest existing workspace assets without another authorization prompt. Adding external material/repository scopes, changing the document language, exporting outside the workspace and invoking MCP tools requires an exact-call decision. A baseline candidate is never an approval.
 
@@ -131,6 +132,8 @@ An interrupted tool has an unknown outcome until reconciled. Restarting does not
 ## Verification and references
 
 ```sh
+python3 -m venv .venv
+.venv/bin/python -m pip install -r tests/requirements.txt
 cargo fmt --manifest-path agent/Cargo.toml --check
 cargo clippy --manifest-path agent/Cargo.toml --all-targets --locked -- -D warnings
 PM_TEST_PYTHON="$PWD/.venv/bin/python" cargo test --manifest-path agent/Cargo.toml --locked
@@ -139,4 +142,4 @@ PM_TEST_PYTHON="$PWD/.venv/bin/python" cargo test --manifest-path agent/Cargo.to
 
 Protocol fixtures bind to loopback and require permission to create local listening sockets. They do not call paid model services. Test-only records are created in temporary directories.
 
-Implementation references: [OpenAI function calling](https://developers.openai.com/api/docs/guides/function-calling), [Responses streaming](https://developers.openai.com/api/docs/guides/streaming-responses), [Rust MCP SDK](https://github.com/modelcontextprotocol/rust-sdk), [Ratatui backends](https://ratatui.rs/concepts/backends/), [OpenWiki](https://github.com/langchain-ai/openwiki), and the existing [OKF profile](../90_Agent/OKF-Profile.md).
+Implementation references: [OpenAI function calling](https://developers.openai.com/api/docs/guides/function-calling), [Responses streaming](https://developers.openai.com/api/docs/guides/streaming-responses), [Rust MCP SDK](https://github.com/modelcontextprotocol/rust-sdk), [Ratatui backends](https://ratatui.rs/concepts/backends/), [OpenWiki](https://github.com/langchain-ai/openwiki), [lopdf PDF extraction](https://docs.rs/lopdf/0.45.0/lopdf/struct.Document.html), [ZIP package reader](https://docs.rs/zip/9.0.4/zip/read/struct.ZipArchive.html), [XML parser](https://docs.rs/roxmltree/0.21.1/roxmltree/struct.Document.html), and the existing [OKF profile](../90_Agent/OKF-Profile.md).

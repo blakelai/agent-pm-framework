@@ -340,8 +340,7 @@ impl Runtime {
                     } else if call.name.starts_with("mcp_") {
                         self.mcp.call(&call.name, args.clone()).await
                     } else {
-                        tools::execute(&self.workspace, &self.config.python, &call.name, &args)
-                            .await
+                        tools::execute(&self.workspace, &call.name, &args).await
                     }
                 };
                 let result = tokio::select! {_=cancel.cancelled()=>{s.status=Status::NeedsReconciliation;bail!("Cancelled during a tool call; inspect its outcome before continuing");},r=operation=>r};

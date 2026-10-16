@@ -6,38 +6,38 @@ title: "Local tools"
 
 # Local tools
 
-The Rust application accepts the same PM command arguments through `pm-agent --vault /path/to/vault pm COMMAND ...` or the Agent's `pm` tool. `plan`, `validate`, `coverage`, `status`, `impact`, `baseline`, `fingerprint`, `settings` and `prepare` now execute natively. The remaining commands use the legacy Python bridge. See the [command migration table](../agent/README.md#built-in-project-operations). The Python commands below remain the original compatibility interface during migration.
+All 15 operations run in the Rust application through `pm-agent --vault /path/to/vault pm COMMAND ...` or the Agent's `pm` tool. Install or build the binary using [application setup](../agent/README.md). No Python runtime or model is needed for deterministic operations.
 
-Use Python 3.10+ with requirements.txt (PyYAML for OKF validation). PDF extraction also needs requirements-pdf.txt; the PDF test fixture uses reportlab. Tools do not call a model or execute source-repository code.
-
-Run from the Vault root, or specify `--vault /path/to/vault` before the subcommand.
+The examples assume `pm-agent` is on PATH. Otherwise substitute `agent/target/debug/pm-agent` from the framework root. `--vault` precedes `pm`; relative source paths are resolved against that Vault.
 
 ```sh
-python3 tools/pm.py settings
-python3 tools/pm.py settings --document-language en
-python3 tools/pm.py ingest /path/to/interview.pdf
-python3 tools/pm.py repo-add --id billing --path /path/to/billing --wiki openwiki --code-root src --code-root tests
-python3 tools/pm.py sync --repo billing
-python3 tools/pm.py evidence --id EVD-101 --source SRC-ID --locator page-3 --claim "A claim in the configured project language"
-python3 tools/pm.py evidence --id EVD-102 --repo billing --path src/posting.py --start 1 --end 10 --claim "Static implementation observation"
-python3 tools/pm.py prepare prd --focus BRD-001
-python3 tools/pm.py validate
-python3 tools/pm.py validate --strict
-python3 tools/pm.py coverage
-python3 tools/pm.py plan
-python3 tools/pm.py status
-python3 tools/pm.py impact REQ-001
-python3 tools/pm.py fingerprint REQ-001
-python3 tools/pm.py baseline --id BASE-001 --include BRD-001 --include PRD-001 --include REQ-001 --include LANG-CONTEXT
-python3 tools/pm.py okf-export --output /path/outside-vault/new-bundle
-python3 tools/pm.py okf-check /path/to/bundle
-python3 -m unittest discover -s tests -v
+pm-agent --vault . pm settings
+pm-agent --vault . pm settings --document-language en
+pm-agent --vault . pm ingest /path/to/interview.pdf
+pm-agent --vault . pm repo-add --id billing --path /path/to/billing --wiki openwiki --code-root src --code-root tests
+pm-agent --vault . pm sync --repo billing
+pm-agent --vault . pm evidence --id EVD-101 --source SRC-ID --locator page-3 --claim "A claim in the configured project language"
+pm-agent --vault . pm evidence --id EVD-102 --repo billing --path src/posting.py --start 1 --end 10 --claim "Static implementation observation"
+pm-agent --vault . pm prepare prd --focus BRD-001
+pm-agent --vault . pm validate
+pm-agent --vault . pm validate --strict
+pm-agent --vault . pm coverage
+pm-agent --vault . pm plan
+pm-agent --vault . pm status
+pm-agent --vault . pm impact REQ-001
+pm-agent --vault . pm fingerprint REQ-001
+pm-agent --vault . pm baseline --id BASE-001 --include BRD-001 --include PRD-001 --include REQ-001 --include LANG-CONTEXT
+pm-agent --vault . pm okf-export --output /path/outside-vault/new-bundle
+pm-agent --vault . pm okf-check /path/to/bundle
 ```
 
 Commands containing paths and IDs are interface examples; replace them with actual project inputs. The baseline command is not a complete scope. Include every applicable PRD, REQ and glossary. It prints a candidate manifest and hash, never approval. `fingerprint REQ-ID --baseline BASE-ID` reads the approved historical requirement; it requires an actual matching decision.
 
 | Command | Result and boundary |
 |---|---|
+| ingest | Exact source asset plus localized draft note and extraction status; repeated import preserves edits and verifies attachment hash |
+| repo-add / sync | Explicit read scope and immutable snapshot; SHA256/revision/dirty state pinned, Claims validation not performed |
+| evidence | Draft material locator or line excerpt from verified snapshot bytes; never business approval |
 | settings | Read/change only the project language default; no bulk translation |
 | prepare | English prepared work packet; semantic work remains to be executed |
 | validate | Project structure, evidence, baseline, language metadata and local OKF authoring profile |
@@ -49,6 +49,10 @@ Commands containing paths and IDs are interface examples; replace them with actu
 | okf-check | All Markdown files in the supplied bundle; core structure and optional-field warnings |
 
 Return code 0 means the command completed (or normal validate has no errors); 1 means validation errors, or warnings under strict mode; 2 means invalid inputs or a processing failure. A report's completion does not imply business readiness. Failed forecasts replace old output with a blocked report when a renderer is available; a missing language renderer leaves old output untouched and returns an error.
+
+Source inputs are limited to 50 MB. UTF-8 text is extracted directly; native PDF extraction preserves page locators and Office XML extraction preserves slide/document locators. Office expanded packages are limited to 200 MB and 20,000 entries, PDF pages to 10,000 with 20 MB decompressed page content, and extracted text to 50 MB. These limits do not certify arbitrary input as safe or semantically complete. Extraction failures retain the source with an explicit status.
+
+Repository snapshots allow up to 2,000 eligible UTF-8 files, 1 MB per file and 200 MB total. Narrow scope when these limits are exceeded. Built-in secret/build-directory exclusions and simple `.openwikiignore` exclusion globs apply; complex rules require an explicitly scoped export. Linked paths are rejected or skipped without reading their targets. Source assets and snapshot files are hash-checked before evidence is created. Published bundles exclude private state and build directories; path collisions fail instead of overwriting attachments.
 
 Sources preserve original bytes and locators. Image/scanned-PDF/chart meaning requires visual review. Multi-context terminology receives passage-level review hints, not global replacement. Missing catalogs never silently publish English project output. Settings/metadata checks cannot certify actual prose language.
 

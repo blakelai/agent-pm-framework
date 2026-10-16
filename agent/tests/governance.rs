@@ -30,9 +30,7 @@ fn python(path: &Path, mode: Option<&str>) {
 }
 async fn run(w: &Workspace, command: &str, args: &[&str]) -> Value {
     let args: Vec<_> = args.iter().map(|s| s.to_string()).collect();
-    let result = tools::run_pm(w, "/no-python-for-native-tools", command, &args)
-        .await
-        .unwrap();
+    let result = tools::run_pm(w, command, &args).await.unwrap();
     assert_eq!(result["engine"], "rust");
     result
 }

@@ -4,7 +4,6 @@ use crate::{
 };
 use anyhow::{Context, Result, bail, ensure};
 use serde_json::{Value, json};
-use std::{path::Path, time::Duration};
 
 fn spec(name: &str, description: &str, properties: Value, required: &[&str]) -> ToolSpec {
     ToolSpec {
@@ -124,12 +123,7 @@ pub fn validate_arguments(schema: &Value, args: &Value) -> Result<()> {
     }
     Ok(())
 }
-pub async fn execute(
-    workspace: &Workspace,
-    python: &str,
-    name: &str,
-    args: &Value,
-) -> Result<Value> {
+pub async fn execute(workspace: &Workspace, name: &str, args: &Value) -> Result<Value> {
     match name {
         "list_documents" => Ok(json!(
             workspace
@@ -178,67 +172,13 @@ pub async fn execute(
                 .iter()
                 .map(|v| v.as_str().map(String::from).context("args must be strings"))
                 .collect::<Result<Vec<_>>>()?;
-            run_pm(workspace, python, command, &arguments).await
+            run_pm(workspace, command, &arguments).await
         }
         _ => bail!("Unknown built-in tool: {name}"),
     }
 }
 
-// These are compiled, reviewed framework helpers, not code supplied by the project or model.
-const TOOLKIT: &[(&str, &[u8])] = &[
-    ("pm.py", include_bytes!("../../tools/pm.py")),
-    (
-        "pmkit/__init__.py",
-        include_bytes!("../../tools/pmkit/__init__.py"),
-    ),
-    (
-        "pmkit/baselines.py",
-        include_bytes!("../../tools/pmkit/baselines.py"),
-    ),
-    (
-        "pmkit/governance.py",
-        include_bytes!("../../tools/pmkit/governance.py"),
-    ),
-    ("pmkit/okf.py", include_bytes!("../../tools/pmkit/okf.py")),
-    (
-        "pmkit/planning.py",
-        include_bytes!("../../tools/pmkit/planning.py"),
-    ),
-    (
-        "pmkit/quality.py",
-        include_bytes!("../../tools/pmkit/quality.py"),
-    ),
-    (
-        "pmkit/settings.py",
-        include_bytes!("../../tools/pmkit/settings.py"),
-    ),
-    (
-        "pmkit/sources.py",
-        include_bytes!("../../tools/pmkit/sources.py"),
-    ),
-    (
-        "pmkit/traceability.py",
-        include_bytes!("../../tools/pmkit/traceability.py"),
-    ),
-    (
-        "pmkit/vault.py",
-        include_bytes!("../../tools/pmkit/vault.py"),
-    ),
-    (
-        "locales/en.json",
-        include_bytes!("../../tools/locales/en.json"),
-    ),
-    (
-        "locales/zh-TW.json",
-        include_bytes!("../../tools/locales/zh-TW.json"),
-    ),
-];
-pub async fn run_pm(
-    workspace: &Workspace,
-    python: &str,
-    command: &str,
-    args: &[String],
-) -> Result<Value> {
+pub async fn run_pm(workspace: &Workspace, command: &str, args: &[String]) -> Result<Value> {
     ensure!(
         [
             "validate",
@@ -266,87 +206,22 @@ pub async fn run_pm(
             .any(|x| x.starts_with("--vault") || x.contains('\0')),
         "Cannot override the active workspace"
     );
-    if command == "plan" {
-        let workspace = workspace.clone();
-        let args = args.to_vec();
-        return tokio::task::spawn_blocking(move || crate::planning::run(&workspace, &args))
-            .await?;
-    }
-    if crate::governance::handles(command) {
-        let workspace = workspace.clone();
-        let command = command.to_owned();
-        let args = args.to_vec();
-        return tokio::task::spawn_blocking(move || {
+    let workspace = workspace.clone();
+    let command = command.to_owned();
+    let args = args.to_vec();
+    tokio::task::spawn_blocking(move || {
+        // Hold the permit inside the worker even if its caller stops awaiting it.
+        static MUTATIONS: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        let _permit = MUTATIONS.lock().map_err(|_| {
+            anyhow::anyhow!("PM worker lock poisoned; inspect workspace before retrying")
+        })?;
+        if command == "plan" {
+            crate::planning::run(&workspace, &args)
+        } else {
             crate::governance::run(&workspace, &command, &args)
-        })
-        .await?;
-    }
-    // All mutations share the same process lock in main. Reject symlink targets before invoking helpers.
-    for folder in [
-        "00_Governance",
-        "01_Sources",
-        "03_Systems",
-        "06_Delivery",
-        "90_Agent",
-    ] {
-        for entry in walkdir::WalkDir::new(workspace.path(folder)?).follow_links(false) {
-            let e = entry?;
-            ensure!(
-                !e.file_type().is_symlink(),
-                "PM helpers cannot operate on symlinked project data"
-            );
         }
-    }
-    let dir = tempfile::tempdir()?;
-    for (path, bytes) in TOOLKIT {
-        let target = dir.path().join(path);
-        std::fs::create_dir_all(target.parent().unwrap())?;
-        std::fs::write(target, bytes)?;
-    }
-    let mut process = tokio::process::Command::new(python);
-    process
-        .arg("-B")
-        .arg(dir.path().join("pm.py"))
-        .arg("--vault")
-        .arg(&workspace.root)
-        .arg(command)
-        .args(args)
-        .current_dir(&workspace.root)
-        .kill_on_drop(true)
-        .env_clear();
-    for key in ["PATH", "LANG", "LC_ALL", "TMPDIR", "SYSTEMROOT"] {
-        if let Ok(value) = std::env::var(key) {
-            process.env(key, value);
-        }
-    }
-    let output = tokio::time::timeout(Duration::from_secs(120), process.output())
-        .await
-        .context("PM operation timed out; inspect workspace before retry")?
-        .context("Cannot run PM helper; configure Python 3.10+")?;
-    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-    ensure!(
-        stdout.len() + stderr.len() < 4 * 1024 * 1024,
-        "PM output exceeds limit"
-    );
-    let mut reports = vec![];
-    for line in stdout.lines() {
-        let p = Path::new(line);
-        if p.is_absolute()
-            && p.extension().is_some_and(|x| x == "md")
-            && let Ok(relative) = p.strip_prefix(&workspace.root)
-        {
-            let relative = relative.to_string_lossy();
-            if let Ok(content) = workspace.read(&relative) {
-                reports.push(
-                    json!({"path":relative,"content":content,"sha256":hash(content.as_bytes())}),
-                );
-            }
-        }
-    }
-    Ok(
-        json!({"exit_code":output.status.code(),"stdout":stdout,"stderr":stderr,"reports":reports,"successful":output.status.success()}),
-    )
+    })
+    .await?
 }
 
 #[cfg(test)]

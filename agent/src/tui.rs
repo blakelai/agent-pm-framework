@@ -426,17 +426,12 @@ fn dispatch(
         let command = parts.first().context("Missing PM command")?.clone();
         // More complex file paths/arguments use the CLI, which preserves shell quoting.
         let args = parts[1..].to_vec();
-        let python = if config_path.exists() {
-            Config::read(config_path)?.python
-        } else {
-            "python3".into()
-        };
         let workspace = workspace.clone();
         let done = done.clone();
         let cancel = CancellationToken::new();
         let signal = cancel.clone();
         tokio::spawn(async move {
-            let result = tokio::select! {_=signal.cancelled()=>Err(anyhow::anyhow!("PM operation cancelled; inspect any generated files before repeating it")),r=tools::run_pm(&workspace,&python,&command,&args)=>r};
+            let result = tokio::select! {_=signal.cancelled()=>Err(anyhow::anyhow!("PM operation cancelled; inspect any generated files before repeating it")),r=tools::run_pm(&workspace,&command,&args)=>r};
             let _ = done.send(match result {
                 Ok(v) => Outcome::Pm(serde_json::to_string_pretty(&v).unwrap_or_default()),
                 Err(e) => Outcome::Error(e.to_string()),

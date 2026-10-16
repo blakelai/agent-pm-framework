@@ -7,7 +7,7 @@ import unittest
 from pathlib import Path
 
 ROOT=Path(__file__).resolve().parents[1]
-sys.path.insert(0,str(ROOT/'tools'))
+sys.path.insert(0,str(ROOT/'tests/legacy'))
 from pmkit import baselines, quality, planning, traceability
 from pmkit.vault import read_note, save_note, by_id, catalog, content_hash, digest
 

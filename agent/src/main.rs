@@ -36,10 +36,9 @@ enum Command {
     Scan,
     /// Show durable Agent sessions.
     Sessions,
-    /// Execute a deterministic PM command (some legacy operations still require Python).
+    /// Execute a deterministic native PM command without contacting a model.
+    #[command(disable_help_flag = true)]
     Pm {
-        #[arg(long, default_value = "python3")]
-        python: String,
         command: String,
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
@@ -98,12 +97,8 @@ async fn main() -> Result<()> {
                 println!("{id}\t{date}");
             }
         }
-        Command::Pm {
-            python,
-            command,
-            args,
-        } => {
-            let result = tools::run_pm(&workspace, &python, &command, &args).await?;
+        Command::Pm { command, args } => {
+            let result = tools::run_pm(&workspace, &command, &args).await?;
             println!("{}", serde_json::to_string_pretty(&result)?);
             if result["successful"] != true {
                 std::process::exit(result["exit_code"].as_i64().unwrap_or(2) as i32);
@@ -126,18 +121,7 @@ async fn main() -> Result<()> {
                 );
                 println!("API key environment variable: present (value hidden)");
             }
-            let output = tokio::process::Command::new(&c.python)
-                .args([
-                    "-c",
-                    "import sys; assert sys.version_info >= (3,10); print(sys.version.split()[0])",
-                ])
-                .output()
-                .await?;
-            ensure!(
-                output.status.success(),
-                "Python 3.10+ is required for the remaining legacy import and OKF tools"
-            );
-            println!("Python: {}", String::from_utf8_lossy(&output.stdout).trim());
+            println!("PM operations: native Rust (15 commands)");
             println!(
                 "Local configuration passed. Provider/MCP live compatibility has NOT been tested."
             );
