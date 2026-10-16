@@ -8,7 +8,7 @@ import subprocess
 from pathlib import Path
 
 ROOT=Path(__file__).resolve().parents[1]
-sys.path.insert(0,str(ROOT/'tools'))
+sys.path.insert(0,str(ROOT/'tests/legacy'))
 from pmkit import settings, planning, sources, quality, okf
 from pmkit.vault import read_note, save_note, digest, resolve_link
 
@@ -37,7 +37,7 @@ class LanguageAndOKFTests(unittest.TestCase):
     def test_status_command_updates_status_report_without_recalculating_plan(self):
         plan=self.root/'06_Delivery/Plan-Report.md';before=plan.read_bytes()
         status=self.root/'90_Agent/Reports/Status-Report.md';status.unlink()
-        result=subprocess.run([sys.executable,str(self.root/'tools/pm.py'),'status'],capture_output=True,text=True)
+        result=subprocess.run([sys.executable,str(self.root/'tests/legacy/pm.py'),'status'],capture_output=True,text=True)
         self.assertEqual(result.returncode,0,result.stderr)
         meta,body=read_note(status)
         self.assertEqual(meta['id'],'REPORT-STATUS')
@@ -66,7 +66,7 @@ class LanguageAndOKFTests(unittest.TestCase):
 
     def test_prepared_packet_carries_non_default_language_without_renderer(self):
         settings.update(self.root,'ja-JP')
-        spec=importlib.util.spec_from_file_location('pm_language_test',ROOT/'tools/pm.py')
+        spec=importlib.util.spec_from_file_location('pm_language_test',ROOT/'tests/legacy/pm.py')
         module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
         meta,body=read_note(module.prepare(self.root,'prd',['BRD-001']))
         self.assertEqual(meta['workflow_status'],'prepared')

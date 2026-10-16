@@ -1,0 +1,51 @@
+# Copy outside Git or to the ignored .pm-agent/config.toml. Select an explicit model.
+provider = "ollama"
+max_steps = 32
+
+[providers.openai]
+protocol = "responses"
+base_url = "https://api.openai.com/v1"
+model = ""
+api_key_env = "OPENAI_API_KEY"
+tools = true
+
+[providers.ollama]
+protocol = "chat_completions"
+base_url = "http://127.0.0.1:11434/v1"
+model = ""
+tools = true
+
+[providers.vllm]
+protocol = "chat_completions"
+base_url = "http://127.0.0.1:8000/v1"
+model = ""
+tools = true
+
+[providers.cliproxyapi]
+protocol = "chat_completions"
+base_url = "http://127.0.0.1:8317/v1"
+model = ""
+api_key_env = "CLIPROXY_API_KEY"
+tools = true
+
+[providers.openrouter]
+protocol = "chat_completions"
+base_url = "https://openrouter.ai/api/v1"
+model = ""
+api_key_env = "OPENROUTER_API_KEY"
+tools = true
+
+# MCP servers are started only from this operator-selected config.
+# Every MCP call requires confirmation of the exact tool and arguments in the TUI.
+# An empty allowed_tools list exposes no tools (discovery remains available).
+# [mcp.knowledge]
+# transport = "stdio"
+# command = "/absolute/path/to/server"
+# args = []
+# env_names = ["KNOWLEDGE_TOKEN"]
+# allowed_tools = ["search", "read"]
+# [mcp.remote]
+# transport = "http"
+# url = "https://your-server.example/mcp"
+# bearer_token_env = "MCP_TOKEN"
+# allowed_tools = ["search"]

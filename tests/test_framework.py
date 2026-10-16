@@ -12,7 +12,7 @@ import zipfile
 from pathlib import Path
 
 VAULT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(VAULT/'tools'))
+sys.path.insert(0, str(VAULT/'tests/legacy'))
 import pm
 from pmkit import sources, quality, planning
 from pmkit.vault import digest, read_note, save_note

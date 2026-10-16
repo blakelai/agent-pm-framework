@@ -4,6 +4,9 @@ okf_version: "0.2"
 
 # Framework knowledge
 
+- [PM Agent application](agent/README.md) - Reference
+- [PM Agent implementation milestones](agent/Implementation.md) - Reference
+
 - [Baselines and change](00_Governance/Baselines-and-Changes.md) - Reference
 - [Discovery and prioritization](00_Governance/Discovery-and-Prioritization.md) - Reference
 - [Project document language](00_Governance/Language-Settings.md) - Reference
@@ -58,3 +61,7 @@ okf_version: "0.2"
 - [Design references](References.md) - Reference
 - [Local tools](tools/README.md) - Reference
 - [Evidence and clarification policy](90_Agent/Evidence-and-Clarification-Policy.md) - Reference
+
+## Development verification
+
+- [Development tests and legacy oracle](tests/README.md) - Native runtime verification and test-only comparison setup

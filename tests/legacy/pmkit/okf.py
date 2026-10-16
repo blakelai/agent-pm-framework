@@ -14,6 +14,17 @@ from .vault import read_note, save_note, resolve_link, stamp
 SPEC = 'https://github.com/GoogleCloudPlatform/knowledge-catalog/blob/main/okf/SPEC.md'
 RAW_PREFIXES = ('01_Sources/Assets/', '01_Sources/Extracted/',
                 '03_Systems/Snapshots/', '00_Governance/Baselines/')
+PRIVATE_PARTS = {'.git', '.obsidian', '__pycache__', 'exports', 'target', '.pm-agent', '.venv'}
+
+
+def distribution_files(root):
+    # Prune runtime/build trees before walking; never export sessions or credentials.
+    for directory, folders, files in os.walk(root):
+        folders[:] = sorted(d for d in folders if d not in PRIVATE_PARTS)
+        for name in sorted(files):
+            if name == '.env' or name.startswith('.env.') and name != '.env.example':
+                continue
+            yield Path(directory) / name
 
 
 def is_raw(relative):
@@ -21,9 +32,10 @@ def is_raw(relative):
 
 
 def authored_notes(root):
-    for path in sorted(root.rglob('*.md')):
+    for path in distribution_files(root):
+        if path.suffix != '.md': continue
         rel = path.relative_to(root)
-        if is_raw(rel) or any(p in {'.agents','.git','.obsidian','__pycache__','exports'} for p in rel.parts):
+        if is_raw(rel) or any(p in {'.agents','.git','.obsidian','__pycache__','exports','target','.pm-agent'} for p in rel.parts):
             continue
         yield path
 
@@ -111,10 +123,10 @@ def export(root, output):
     mapping.update({p.relative_to(root).as_posix():'90_Agent/Skills/'+p.parent.name+'.md' for p in skills})
     output.mkdir(parents=True)
     # Preserve raw/source Markdown as exact-byte attachments, not rewritten concepts.
-    for p in sorted(root.rglob('*')):
+    for p in distribution_files(root):
         if not p.is_file(): continue
         rel=p.relative_to(root); text=rel.as_posix()
-        if any(x in {'.git','.obsidian','__pycache__','exports'} for x in rel.parts) or p.suffix=='.pyc':continue
+        if any(x in {'.git','.obsidian','__pycache__','exports','target','.pm-agent'} for x in rel.parts) or p.suffix=='.pyc':continue
         if text in mapping:continue
         if text.startswith('.agents/'):continue
         dest_rel=text+'.txt' if p.suffix=='.md' else text
