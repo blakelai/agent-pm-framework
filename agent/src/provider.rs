@@ -11,6 +11,32 @@ use tokio_util::sync::CancellationToken;
 pub enum Event {
     Text(String),
     Notice(String),
+    Usage(Option<Usage>),
+}
+/// Values reported by the service for one request. Missing never means zero.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+pub struct Usage {
+    pub input_tokens: Option<u64>,
+    pub output_tokens: Option<u64>,
+    pub total_tokens: Option<u64>,
+}
+impl Usage {
+    fn reported(v: &Value) -> Option<Self> {
+        if !v.is_object() {
+            return None;
+        }
+        let usage = Self {
+            input_tokens: v["input_tokens"].as_u64().or(v["prompt_tokens"].as_u64()),
+            output_tokens: v["output_tokens"]
+                .as_u64()
+                .or(v["completion_tokens"].as_u64()),
+            total_tokens: v["total_tokens"].as_u64(),
+        };
+        (usage.input_tokens.is_some()
+            || usage.output_tokens.is_some()
+            || usage.total_tokens.is_some())
+        .then_some(usage)
+    }
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ToolSpec {
@@ -29,6 +55,7 @@ pub struct Completion {
     pub text: String,
     pub calls: Vec<Call>,
     pub items: Vec<Value>,
+    pub usage: Option<Usage>,
 }
 
 pub struct Provider {
@@ -52,7 +79,12 @@ impl Provider {
             Protocol::ChatCompletions => {
                 let mut messages = vec![json!({"role":"system","content":system})];
                 messages.extend_from_slice(history);
-                json!({"model":self.config.model,"messages":messages,"stream":true})
+                let mut request =
+                    json!({"model":self.config.model,"messages":messages,"stream":true});
+                if self.config.request_usage {
+                    request["stream_options"] = json!({"include_usage":true});
+                }
+                request
             }
         };
         if self.config.tools && !tools.is_empty() {
@@ -94,6 +126,7 @@ impl Provider {
         events: &UnboundedSender<Event>,
         cancel: &CancellationToken,
     ) -> Result<Completion> {
+        let _ = events.send(Event::Usage(None));
         let endpoint = match self.config.protocol {
             Protocol::Responses => "responses",
             Protocol::ChatCompletions => "chat/completions",
@@ -154,6 +187,7 @@ impl Provider {
             self.config.tools || completion.calls.is_empty(),
             "Provider emitted tool calls while tools are disabled"
         );
+        let _ = events.send(Event::Usage(completion.usage.clone()));
         Ok(completion)
     }
 }
@@ -205,6 +239,7 @@ pub struct Decoder {
     items: Vec<Value>,
     finished: bool,
     finish_reason: Option<String>,
+    usage: Option<Usage>,
 }
 impl Decoder {
     pub fn new(protocol: Protocol) -> Self {
@@ -215,6 +250,7 @@ impl Decoder {
             items: vec![],
             finished: false,
             finish_reason: None,
+            usage: None,
         }
     }
     pub fn accept(&mut self, data: &str) -> Result<String> {
@@ -238,6 +274,7 @@ impl Decoder {
                     delta = event["delta"].as_str().unwrap_or("").into();
                 }
                 "response.completed" => {
+                    self.usage = Usage::reported(&event["response"]["usage"]);
                     ensure!(
                         event["response"]["status"] == "completed",
                         "Response did not complete"
@@ -272,6 +309,9 @@ impl Decoder {
                 _ => {}
             },
             Protocol::ChatCompletions => {
+                if let Some(usage) = Usage::reported(&event["usage"]) {
+                    self.usage = Some(usage);
+                }
                 if let Some(choice) = event["choices"].as_array().and_then(|a| a.first()) {
                     delta = choice["delta"]["content"].as_str().unwrap_or("").into();
                     if let Some(reason) = choice["finish_reason"].as_str() {
@@ -326,6 +366,7 @@ impl Decoder {
             text: self.text,
             calls,
             items: self.items,
+            usage: self.usage,
         })
     }
 }
@@ -333,6 +374,30 @@ impl Decoder {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn usage_uses_only_reported_fields_for_both_protocols() {
+        let mut d = Decoder::new(Protocol::ChatCompletions);
+        d.accept(r#"{"choices":[{"delta":{"content":"done"},"finish_reason":"stop"}]}"#)
+            .unwrap();
+        d.accept(r#"{"choices":[],"usage":{"prompt_tokens":17,"completion_tokens":4}}"#)
+            .unwrap();
+        d.accept("[DONE]").unwrap();
+        assert_eq!(
+            d.finish().unwrap().usage,
+            Some(Usage {
+                input_tokens: Some(17),
+                output_tokens: Some(4),
+                total_tokens: None
+            })
+        );
+        let mut d = Decoder::new(Protocol::Responses);
+        d.accept(r#"{"type":"response.completed","response":{"status":"completed","output":[],"usage":{"input_tokens":0,"output_tokens":2,"total_tokens":2}}}"#).unwrap();
+        assert_eq!(d.finish().unwrap().usage.unwrap().input_tokens, Some(0));
+        assert_eq!(Usage::reported(&json!({"input_tokens":-1})), None);
+        assert_eq!(Usage::reported(&Value::Null), None);
+    }
+
     #[test]
     fn sse_handles_byte_fragmentation_and_crlf() {
         let mut s = Sse::default();

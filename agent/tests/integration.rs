@@ -16,6 +16,135 @@ use std::{
 use tokio_util::sync::CancellationToken;
 
 type Queue = Arc<Mutex<VecDeque<String>>>;
+
+#[tokio::test]
+async fn explicit_custom_skill_is_injected_audited_and_usage_is_service_reported() {
+    let (_dir, w) = fixture();
+    let skill = ".agents/skills/risk-review/SKILL.md";
+    let reference = ".agents/skills/risk-review/references/check.md";
+    pm_agent::workspace::atomic_write(&w.path(skill).unwrap(),b"---\nname: risk-review\ndescription: Review supplied risk evidence\npm_agent:\n  version: '1.0'\n  references: [references/check.md]\n---\n# Risk review\nCUSTOM_SKILL_SENTINEL. Ask for absent evidence.").unwrap();
+    pm_agent::workspace::atomic_write(&w.path(reference).unwrap(), b"REFERENCE_SENTINEL").unwrap();
+    let response=concat!(
+        "data: {\"choices\":[{\"delta\":{\"content\":\"Inspected.\"},\"finish_reason\":\"stop\"}]}\n\n",
+        "data: {\"choices\":[],\"usage\":{\"prompt_tokens\":44,\"completion_tokens\":5,\"total_tokens\":49}}\n\n",
+        "data: [DONE]\n\n"
+    ).to_string();
+    let (url, _, requests, server) =
+        server(vec![response, chat("No usage supplied.", vec![])]).await;
+    let cfg = config(url, Protocol::ChatCompletions);
+    let runtime = Runtime::open(w.clone(), cfg.clone()).await.unwrap();
+    let mut s = Session::new(&cfg, "prd").unwrap();
+    runtime
+        .input(&mut s, "$risk-review Review the supplied risks.")
+        .unwrap();
+    let (tx, _) = events();
+    runtime
+        .run(&mut s, None, &tx, &CancellationToken::new())
+        .await
+        .unwrap();
+    assert_eq!(s.status, Status::Completed);
+    let request = requests.lock().unwrap()[0].clone();
+    assert_eq!(request["stream_options"]["include_usage"], true);
+    assert!(
+        request["messages"][0]["content"]
+            .as_str()
+            .unwrap()
+            .contains("CUSTOM_SKILL_SENTINEL")
+    );
+    assert!(
+        request["messages"][0]["content"]
+            .as_str()
+            .unwrap()
+            .contains("REFERENCE_SENTINEL")
+    );
+    assert_eq!(s.usage.as_ref().unwrap().input_tokens, Some(44));
+    assert_eq!(s.selected_skills, ["risk-review"]);
+    let loaded: Session = runtime.store.load(&s.id).unwrap();
+    let stamp = loaded.skill_history[0]
+        .skills
+        .iter()
+        .find(|skill| skill.name == "risk-review")
+        .unwrap();
+    assert_eq!(stamp.version.as_deref(), Some("1.0"));
+    assert_eq!(stamp.files[1].sha256, hash(b"REFERENCE_SENTINEL"));
+    assert!(
+        w.read(&format!("90_Agent/Runs/RUN-{}.md", s.id))
+            .unwrap()
+            .contains(&stamp.files[1].sha256)
+    );
+    runtime
+        .input(&mut s, "Continue with evidence only.")
+        .unwrap();
+    runtime
+        .run(&mut s, None, &tx, &CancellationToken::new())
+        .await
+        .unwrap();
+    assert_eq!(s.usage, None);
+    server.abort();
+}
+
+#[tokio::test]
+async fn changed_skill_blocks_pending_tool_and_missing_skill_sends_no_request() {
+    let (_dir, w) = fixture();
+    let (url, _, requests, server) = server(vec![chat(
+        "",
+        vec![call(
+            0,
+            "import",
+            "pm",
+            json!({"command":"repo-add","args":["--help","unexpected"]}),
+        )],
+    )])
+    .await;
+    let cfg = config(url, Protocol::ChatCompletions);
+    let runtime = Runtime::open(w.clone(), cfg.clone()).await.unwrap();
+    let mut s = Session::new(&cfg, "prd").unwrap();
+    assert!(runtime.input(&mut s, "$does-not-exist Review").is_err());
+    assert!(requests.lock().unwrap().is_empty());
+    runtime
+        .input(&mut s, "Inspect the current project.")
+        .unwrap();
+    let (tx, _) = events();
+    runtime
+        .run(&mut s, None, &tx, &CancellationToken::new())
+        .await
+        .unwrap();
+    assert_eq!(s.status, Status::WaitingApproval);
+    let path = ".agents/skills/pm-prd/SKILL.md";
+    let mut text = w.read(path).unwrap();
+    text.push_str("\nChanged instructions.\n");
+    pm_agent::workspace::atomic_write(&w.path(path).unwrap(), text.as_bytes()).unwrap();
+    let approved = s.pending[0].id.clone();
+    runtime.decision(&mut s, true).unwrap();
+    runtime
+        .run(&mut s, Some(approved), &tx, &CancellationToken::new())
+        .await
+        .unwrap();
+    assert_eq!(s.status, Status::Failed);
+    assert!(s.error.as_ref().unwrap().contains("Skills changed"));
+    assert_eq!(requests.lock().unwrap().len(), 1);
+    server.abort();
+}
+
+#[test]
+fn invalid_skill_is_visible_without_breaking_document_browsing() {
+    let (_dir, w) = fixture();
+    pm_agent::workspace::atomic_write(
+        &w.path(".agents/skills/broken/SKILL.md").unwrap(),
+        b"missing metadata",
+    )
+    .unwrap();
+    assert!(
+        w.documents()
+            .unwrap()
+            .iter()
+            .any(|d| d.kind == "Invalid Skill")
+    );
+    let c = pm_agent::skills::Catalog::discover(&w).unwrap();
+    assert!(c.errors.contains_key("broken"));
+    assert!(c.resolve(&["pm-brd".into()]).is_ok());
+}
+
 type Requests = Arc<Mutex<Vec<Value>>>;
 async fn server(responses: Vec<String>) -> (String, Queue, Requests, tokio::task::JoinHandle<()>) {
     let queue = Arc::new(Mutex::new(VecDeque::from(responses)));
@@ -70,6 +199,7 @@ fn config(url: String, protocol: Protocol) -> Config {
                 model: "fixture-model".into(),
                 api_key_env: None,
                 tools: true,
+                request_usage: true,
                 timeout_seconds: 5,
             },
         )]),

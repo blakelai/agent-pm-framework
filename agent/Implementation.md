@@ -13,9 +13,9 @@ The approved direction is a local Rust TUI for macOS/Linux, sharing project docu
 | Module | Implemented behavior |
 |---|---|
 | Workspace | Obsidian-compatible document scan/read/search, source hashes, draft state and language checks, stale-write rejection, path/symlink restrictions |
-| TUI | Eleven document views, content and properties, streaming conversation, command input, local PM commands, resume/approval/reconciliation controls |
+| TUI | Separate Browse/Chat modes, eleven document categories, shared Markdown rendering, mouse/scrollbars, collapsible/maximized reading, multiline input and focus-aware cancellation |
 | Provider | Responses and Chat Completions SSE adapters, fragmented UTF-8 and function arguments, local conversation replay, error/cancellation handling |
-| Agent runtime | Selected existing Skill/Playbook, tool loop, persisted questions, user answers with provenance, explicit resolution, sourced draft writes |
+| Agent runtime | Stage Skill/Playbook plus explicit custom Skills, dependency/reference validation and activation fingerprints; tool loop, persisted questions and sourced draft writes |
 | Planning | Native Rust estimates/capacity/dependencies, localized Markdown reports and structured forecast data; no interpreter required |
 | Traceability and governance commands | Native coverage/status/impact, baseline capture and pinned fingerprints, settings and work packets; compatible legacy content hashes |
 | Validation | Native language, terminology, traceability, readiness/acceptance, source and baseline integrity, local OKF authoring checks; structured findings and strict-mode exit status |
@@ -42,7 +42,7 @@ The executable workbench now has 15 native PM commands. Production execution and
 
 1. Add typed editing for staffing, iterations, risks and decisions, with workflow-specific state transitions and reviewable changes.
 2. Add dependency-scoped clarification gates, automatic file watching, source impact views, document diffs and richer evidence navigation.
-3. Add explicit provider capability probes, budget/usage reporting, tested retry policies for proven idempotent reads, MCP OAuth, and reviewed visual extraction.
+3. Add explicit provider capability probes, provider capacity and budget controls beyond reported token counts, tested retry policies for proven idempotent reads, MCP OAuth, and reviewed visual extraction.
 4. Expand the live provider matrix using user-specified endpoints/models and evaluate a real repository/OpenWiki/source workflow. Installed model names, business sources and semantic decisions must not be inferred.
 
 ## Validation boundary
@@ -64,6 +64,10 @@ These scenarios validate only the selected route and supplied inputs. They do no
 
 On 2026-10-15, a further live invocation used the native Rust planner. The saved tool ledger confirmed `engine: rust`, successful completion, 3.00 scheduled person-days, one unestimated item and capacities of 7.20/3.60 person-days. The model reported those actual results without changing fixture inputs.
 
-Automated tests use synthetic temporary data and local protocol servers. They exercise model protocol handling and runtime behavior, not the quality of a real model's reasoning. A local `doctor` result is not a provider certification. Structural OKF checks do not prove language quality or truth of claims. The current UI renders Markdown text and properties; diagrams and original media open through desktop tools.
+Automated tests use synthetic temporary data and local protocol servers. They exercise model protocol handling and runtime behavior, not the quality of a real model's reasoning. A local `doctor` result is not a provider certification. Structural OKF checks do not prove language quality or truth of claims. The UI renders terminal Markdown and exposes properties separately; diagrams and original media open through desktop tools.
 
 See [application usage](README.md), [framework workflow](../00_Governance/Workflow.md) and [evaluation method](../90_Agent/Evals/Evaluation-Method.md).
+
+## TUI and custom Skill iteration
+
+The agreed interface and loading behavior are documented in [Interaction](Interaction.md) and [Custom Skills](Skills.md). Both protocol adapters retain service-reported usage; absent values are not estimated. Skills are explicitly selected, validated and recorded with content hashes. Changed Skill instructions cannot silently govern a pending tool operation. Automated event, rendering and local-provider tests accompany this iteration; real terminal and provider coverage remain bounded by the recorded checks.

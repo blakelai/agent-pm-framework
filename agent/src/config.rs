@@ -18,11 +18,16 @@ pub struct ProviderConfig {
     pub api_key_env: Option<String>,
     #[serde(default = "yes")]
     pub tools: bool,
+    #[serde(default = "yes", skip_serializing_if = "enabled")]
+    pub request_usage: bool,
     #[serde(default = "timeout")]
     pub timeout_seconds: u64,
 }
 fn yes() -> bool {
     true
+}
+fn enabled(value: &bool) -> bool {
+    *value
 }
 fn timeout() -> u64 {
     120

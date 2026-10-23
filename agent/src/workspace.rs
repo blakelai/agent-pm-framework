@@ -164,7 +164,14 @@ impl Workspace {
             {
                 (json!({"type":"Navigation","title":relative}), text.clone())
             } else {
-                parse_note(&text).with_context(|| relative.clone())?
+                match parse_note(&text) {
+                    Ok(note) => note,
+                    Err(error) if relative.starts_with(".agents/skills/") => (
+                        json!({"type":"Invalid Skill","title":relative,"error":error.to_string()}),
+                        text.clone(),
+                    ),
+                    Err(error) => return Err(error).with_context(|| relative.clone()),
+                }
             };
             documents.push(Document {
                 title: metadata["title"]

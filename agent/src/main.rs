@@ -36,6 +36,8 @@ enum Command {
     Scan,
     /// Show durable Agent sessions.
     Sessions,
+    /// Discover project Skills and report invalid dependencies without contacting a model.
+    Skills,
     /// Execute a deterministic native PM command without contacting a model.
     #[command(disable_help_flag = true)]
     Pm {
@@ -48,6 +50,8 @@ enum Command {
         prompt: Option<String>,
         #[arg(long, default_value = "workflow")]
         stage: String,
+        #[arg(long = "skill")]
+        skills: Vec<String>,
         #[arg(long)]
         session: Option<String>,
         #[arg(long, conflicts_with = "deny")]
@@ -97,6 +101,14 @@ async fn main() -> Result<()> {
                 println!("{id}\t{date}");
             }
         }
+        Command::Skills => {
+            let catalog = pm_agent::skills::Catalog::discover(&workspace)?;
+            println!("{}", serde_json::to_string_pretty(&catalog)?);
+            ensure!(
+                catalog.errors.is_empty(),
+                "Some Skills are invalid; see the reported errors"
+            );
+        }
         Command::Pm { command, args } => {
             let result = tools::run_pm(&workspace, &command, &args).await?;
             println!("{}", serde_json::to_string_pretty(&result)?);
@@ -129,6 +141,7 @@ async fn main() -> Result<()> {
         Command::Chat {
             prompt,
             stage,
+            skills,
             session,
             approve,
             deny,
@@ -141,6 +154,18 @@ async fn main() -> Result<()> {
                 None => Session::new(&runtime.config, &stage)?,
             };
             let mut approved = None;
+            if !skills.is_empty() {
+                ensure!(
+                    s.pending.is_empty(),
+                    "Cannot change Skills while a tool is pending"
+                );
+                pm_agent::skills::Catalog::discover(&runtime.workspace)?.resolve(&skills)?;
+                for name in skills {
+                    if !s.selected_skills.contains(&name) {
+                        s.selected_skills.push(name);
+                    }
+                }
+            }
             if approve || deny {
                 if approve {
                     approved = s.pending.first().map(|c| c.id.clone());
@@ -173,6 +198,7 @@ async fn main() -> Result<()> {
                             let _ = std::io::stdout().flush();
                         }
                         Event::Notice(text) => eprintln!("\n{text}"),
+                        Event::Usage(_) => {}
                     }
                 }
             });

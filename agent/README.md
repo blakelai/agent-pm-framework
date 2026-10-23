@@ -51,21 +51,32 @@ agent/target/debug/pm-agent --vault . chat --stage prd "Review the supplied sour
 
 | Control | Action |
 |---|---|
-| Tab / Shift-Tab | Change project view |
-| Up / Down, j / k | Select a document |
-| PgUp / PgDn | Scroll document text |
-| F2 | Switch scrolling to Agent output; Home/End jump to its beginning/end |
-| i or : | Enter a message or command |
-| Enter | Submit input |
-| Esc | Leave input mode; cancel an active operation |
-| r | Refresh documents from disk |
-| o | Open selected document in a desktop application |
-| q / Ctrl-C | Exit when idle; Ctrl-C requests cancellation when busy |
+| F2 / click mode label | Switch Browse and Agent Chat, preserving drafts and reading state |
+| Alt+1–9 / Alt+0 | Select the first nine categories / open all eleven categories |
+| Alt+Left / Alt+Right | Previous / next category |
+| Enter in document list / Esc in document | Focus document / return to the list |
+| F3 / F4 / F6 | Collapse list / maximize document / toggle emoji |
+| Wheel / scrollbar drag | Scroll the pointed pane or its rendered content |
+| Right-click / L / P | Context actions / document links / properties |
+| O / R in Browse | Open original / refresh documents |
+| Enter in Chat | Send the draft when idle; input is ready without pressing i |
+| Alt+Enter / supported Shift+Enter / Ctrl+J | Insert a newline; multiline paste never sends |
+| Esc in transcript | Latest output, resume following, return input focus |
+| Esc in composer | Request cancellation when running; retain the draft |
+| Ctrl+C in Chat | Clear only the input; do not cancel or exit |
+| Ctrl+Q / q in Browse / /quit in Chat | Exit when idle |
+| F1 | Show help |
+
+The transcript and composer are borderless; the input has a gray background and supports multiple lines, cursor movement and Unicode grapheme deletion. The browser and conversation render Markdown. The status line shows the model, state, short session ID and service-reported input usage; click it or use `/status` for full details. Missing usage remains unavailable, with no estimates or inferred percentages.
+
+See the [interaction contract](Interaction.md) for focus priority, terminal compatibility, link handling and cancellation semantics.
 
 Views include BRD, PRD/REQ, domain knowledge, systems, questions, people/schedules, backlog, progress/risks, verification and Agent runs. They show real Markdown records and metadata. Requirement views recognize document types even outside conventional subfolders. Templates appear in All, not project-specific views. Empty views remain empty; no progress, people or risk scores are synthesized for presentation.
 
 | Command | Purpose |
 |---|---|
+| `/skills`, `/skills clear` | Select project Skills / clear additional selections |
+| `/status` | Full session, active selection and service-reported usage details |
 | `/search text` | Literal search, including Chinese and code identifiers; `/search` clears it |
 | `/stage prd` | Select a workflow capability before starting a session |
 | `/pm plan` | Recalculate a staffing forecast from recorded inputs |
@@ -76,7 +87,7 @@ Views include BRD, PRD/REQ, domain knowledge, systems, questions, people/schedul
 | `/reconcile actual outcome` | Record what happened to an interrupted operation without repeating it |
 | `/new` | Start a separate session, retaining the previous one |
 
-Stages are `workflow`, `intake`, `system`, `language`, `brd`, `prd`, `backlog`, `estimate` and `review`. The runtime loads the corresponding existing Skill and Playbook. Slash PM arguments currently split on whitespace; use the CLI for paths containing spaces or more complex arguments. Do not send secrets through either interface.
+Stages are `workflow`, `intake`, `system`, `language`, `brd`, `prd`, `backlog`, `estimate` and `review`. The runtime loads the corresponding existing Skill and Playbook. Additional [custom project Skills](Skills.md) can be explicitly selected with a leading `$skill-name` or CLI `chat --skill NAME`; use `pm-agent --vault . skills` to inspect the catalog. Slash PM arguments currently split on whitespace; use the CLI for paths containing spaces or more complex arguments. Do not send secrets through either interface.
 
 ## Built-in project operations
 

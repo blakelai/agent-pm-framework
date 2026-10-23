@@ -1,4 +1,7 @@
 # Copy outside Git or to the ignored .pm-agent/config.toml. Select an explicit model.
+# Chat Completions profiles request service usage by default. Add request_usage = false
+# inside a provider profile only when its gateway rejects stream_options.include_usage.
+# Missing usage stays unavailable; no token or context estimation is performed.
 provider = "ollama"
 max_steps = 32
 
