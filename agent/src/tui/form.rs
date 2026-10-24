@@ -34,6 +34,11 @@ pub struct Form {
     review_scroll: usize,
 }
 impl Form {
+    pub fn proposed(edit: Edit) -> Self {
+        let mut form = Self::new(edit);
+        form.dirty = true;
+        form
+    }
     pub fn new(edit: Edit) -> Self {
         let mut form = Self {
             edit,
@@ -362,6 +367,16 @@ impl Form {
                 ));
             }
             lines.push(Line::default());
+            if !preview.planning_changes.is_empty() {
+                lines.push(Line::styled(
+                    "Planning impact",
+                    Style::default().fg(Color::Cyan),
+                ));
+                for change in &preview.planning_changes {
+                    lines.extend(change.lines().map(|s| Line::from(s.to_owned())));
+                }
+                lines.push(Line::default());
+            }
             for change in &preview.changes {
                 for line in change.lines() {
                     lines.push(Line::styled(
@@ -529,7 +544,7 @@ mod tests {
         }
         e.apply(&Target::Body, "# Synthetic risk\n\nFixture content.")
             .unwrap();
-        let mut f = Form::new(e);
+        let mut f = Form::proposed(e);
         let mut terminal =
             ratatui::Terminal::new(ratatui::backend::TestBackend::new(120, 30)).unwrap();
         terminal.draw(|frame| f.draw(frame)).unwrap();
@@ -550,6 +565,9 @@ mod tests {
         assert!(!w.path("07_Decisions/RISK-TEST.md").unwrap().exists());
         key(&mut f, KeyCode::Esc);
         assert!(f.preview.is_none());
+        control(&mut f, 'd');
+        assert!(f.discard);
+        key(&mut f, KeyCode::Char('n'));
         for (width, height) in [(1, 1), (20, 6), (80, 24)] {
             let mut terminal =
                 ratatui::Terminal::new(ratatui::backend::TestBackend::new(width, height)).unwrap();

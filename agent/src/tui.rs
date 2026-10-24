@@ -1,6 +1,7 @@
 mod editor;
 mod form;
 mod markdown;
+mod planner;
 mod view;
 use crate::{
     config::Config,
@@ -111,9 +112,27 @@ pub async fn run(workspace: Workspace, config_path: PathBuf) -> Result<()> {
                         if let Err(e)=result {app.status=format!("Open failed: {e}");}
                     },
                     Command::Skills=>match Catalog::discover(&workspace) {Ok(c)=>app.skills_menu(c),Err(e)=>app.notice(&e.to_string())},
+                    Command::Planning=>{
+                        let snapshot=crate::schedule::Snapshot::load(&workspace);
+                        if let Some(planner)=&mut app.planner {planner.replace(snapshot);} else {app.planner=Some(planner::Planner::new(snapshot));}
+                    },
+                    Command::ClosePlanning=>app.planner=None,
+                    Command::Read(path)=>{refresh(&workspace,&mut app,&mut store);app.read_document(&path);},
+                    Command::Schedule{path,hash,sprint}=>match crate::schedule::propose(&workspace,&path,&hash,sprint) {
+                        Ok(edit)=>{
+                            let reviewed=edit.preview(&workspace);
+                            let mut form=form::Form::proposed(edit);
+                            match reviewed {Ok(p)=>form.preview=Some(p),Err(e)=>form.message=format!("{e:#}")};
+                            app.form=Some(form);
+                        },
+                        Err(e)=>if let Some(planner)=&mut app.planner {planner.message=format!("{e:#}");},
+                    },
                     Command::Edit(path)=>match crate::editing::Edit::load(&workspace,&path) {
                         Ok(edit)=>app.form=Some(form::Form::new(edit)),
-                        Err(e)=>app.status=format!("Edit unavailable: {e}"),
+                        Err(e)=>{
+                            app.status=format!("Edit unavailable: {e}");
+                            if let Some(planner)=&mut app.planner {planner.message=app.status.clone();}
+                        },
                     },
                     Command::New(kind)=>match crate::editing::Edit::create(&workspace,&kind) {
                         Ok(edit)=>app.form=Some(form::Form::new(edit)),
@@ -135,6 +154,7 @@ pub async fn run(workspace: Workspace, config_path: PathBuf) -> Result<()> {
                                 if !app.visible().iter().any(|d|d.path==saved.path) {app.tab=0;app.filter.clear();}
                                 app.selected=app.visible().iter().position(|d|d.path==saved.path).unwrap_or(0);
                                 app.scroll=0;
+                                if let Some(planner)=&mut app.planner {planner.replace(crate::schedule::Snapshot::load(&workspace));planner.message=app.status.clone();}
                             },
                             Some(Err(e))=>if let Some(form)=&mut app.form {form.preview=None;form.message=format!("{e:#}");},
                             None=>{},

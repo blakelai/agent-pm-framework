@@ -113,6 +113,7 @@ pub struct Preview {
     pub content: String,
     pub changes: Vec<String>,
     pub warnings: Vec<String>,
+    pub planning_changes: Vec<String>,
     context: String,
     before: Option<String>,
 }
@@ -273,6 +274,11 @@ fn editable(path: &str, m: &Value) -> Result<()> {
     Ok(())
 }
 impl Edit {
+    pub(crate) fn source_hash(&self) -> Option<String> {
+        self.original
+            .as_ref()
+            .map(|s| workspace::hash(s.as_bytes()))
+    }
     pub fn load(w: &Workspace, path: &str) -> Result<Self> {
         let original = w.read(path)?;
         let (metadata, body) = records::parse_project_note(&original)?;
@@ -512,6 +518,7 @@ impl Edit {
         let (d, content) = self.candidate(w)?;
         unchanged(w, &d.path, self.original.as_deref())?;
         let mut warnings = vec![];
+        let mut planning_changes = vec![];
         validate_tables(&self.tables)?;
         if let Some(original) = &self.original {
             let (old, _) = records::parse_project_note(original)?;
@@ -603,7 +610,10 @@ impl Edit {
         if d.path.starts_with("06_Delivery/") || d.kind == "pbi" {
             check_period_references(w, &d)?;
             match planning::preview(w, &d.path, &content) {
-                Ok(plan) => warnings.extend(plan.messages),
+                Ok(plan) => {
+                    planning_changes = crate::schedule::impact(planning::calculate(w), &plan);
+                    warnings.extend(plan.messages);
+                }
                 Err(e) if e.downcast_ref::<planning::Incomplete>().is_some() => {
                     warnings.push(format!("Forecast unavailable: {e}"))
                 }
@@ -617,6 +627,7 @@ impl Edit {
             content,
             changes,
             warnings,
+            planning_changes,
             context: context(w)?,
             before: self.original.clone(),
         })
@@ -627,7 +638,8 @@ impl Edit {
             current.context == reviewed.context
                 && current.content == reviewed.content
                 && current.path == reviewed.path
-                && current.warnings == reviewed.warnings,
+                && current.warnings == reviewed.warnings
+                && current.planning_changes == reviewed.planning_changes,
             "Project inputs changed after preview; review the updated changes before saving"
         );
         unchanged(w, &current.path, current.before.as_deref())?;
@@ -645,7 +657,13 @@ impl Edit {
                 .unwrap_or_else(|| "new document".into()),
             workspace::hash(current.content.as_bytes()),
             current.changes.join("\n\n"),
-            current.warnings.join("\n\n")
+            current
+                .warnings
+                .iter()
+                .chain(&current.planning_changes)
+                .cloned()
+                .collect::<Vec<_>>()
+                .join("\n\n")
         );
         let result = workspace::note(json!({"type":"agent_run","title":"Project edit record","language":"en","workflow_status":"completed"}),&body).and_then(|s|workspace::atomic_write(&w.path(&audit_path)?,s.as_bytes()));
         Ok(match result {

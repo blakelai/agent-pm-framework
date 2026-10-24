@@ -3,6 +3,7 @@ use pm_agent::{
     editing::{Edit, Target},
     planning,
     records::{self, Records},
+    schedule,
     workspace::{self, Workspace},
 };
 use serde_json::{Value, json};
@@ -391,4 +392,188 @@ fn stale_document_or_evidence_changes_invalidate_review_and_cannot_overwrite() {
         .unwrap();
         assert!(Edit::load(&w, "05_Backlog/LINK.md").is_err());
     }
+}
+
+#[test]
+fn scheduling_reviews_capacity_and_deadline_changes_before_any_write() {
+    let (_d, w) = fixture();
+    let mut periods = Edit::load(&w, schedule::ITERATIONS).unwrap();
+    row(
+        &mut periods,
+        0,
+        &["2", "2026-11-16", "2026-11-27", "Synthetic next iteration"],
+    );
+    save(&w, &periods);
+    let mut people = Edit::load(&w, schedule::PEOPLE).unwrap();
+    row(
+        &mut people,
+        0,
+        &[
+            "Fixture person",
+            "Backend",
+            "2",
+            "PROJECT-TEST",
+            "0.1",
+            "10",
+            "0",
+            "0.8",
+            "0.1",
+        ],
+    );
+    save(&w, &people);
+    let mut pbi = Edit::load(&w, "05_Backlog/PBI-1.md").unwrap();
+    row(&mut pbi, 0, &["Backend", "1", "2", "3"]);
+    set(&mut pbi, "sprint", "1");
+    set(&mut pbi, "due_date", "2026-11-13");
+    save(&w, &pbi);
+    let snapshot = schedule::Snapshot::load(&w);
+    let doc = &snapshot.items[0];
+    let original = w.read(&doc.path).unwrap();
+    let proposal = schedule::propose(&w, &doc.path, &doc.hash, Some(2)).unwrap();
+    let preview = proposal.preview(&w).unwrap();
+    assert_eq!(w.read(&doc.path).unwrap(), original);
+    assert!(!w.path("06_Delivery/Plan-Report.md").unwrap().exists());
+    assert!(preview.planning_changes.iter().any(|s| s.contains(
+        "capacity 0.72, demand 0.00, balance 0.72 → capacity 0.72, demand 2.00, balance -1.28"
+    )));
+    assert!(
+        preview
+            .planning_changes
+            .iter()
+            .any(|s| s.contains("Over capacity: Sprint 2 / Backend by 1.28"))
+    );
+    assert!(preview.warnings.iter().any(|s| s.contains("PBI-1")));
+    let saved = proposal.save(&w, &preview).unwrap();
+    assert!(
+        w.read(saved.audit_path.as_deref().unwrap())
+            .unwrap()
+            .contains("Over capacity: Sprint 2")
+    );
+    let updated = schedule::Snapshot::load(&w);
+    assert_eq!(updated.forecast.as_ref().unwrap().items[0].sprint, Some(2));
+    assert!(
+        updated
+            .signals()
+            .iter()
+            .any(|s| s.contains("exceeds capacity"))
+    );
+    let doc = &updated.items[0];
+    let unscheduled = schedule::propose(&w, &doc.path, &doc.hash, None).unwrap();
+    let preview = unscheduled.preview(&w).unwrap();
+    assert!(preview.content.contains("sprint: null"));
+    assert!(preview.planning_changes.iter().any(|s| {
+        s.contains("demand 2.00, balance -1.28 → capacity 0.72, demand 0.00, balance 0.72")
+    }));
+    assert_eq!(planning::calculate(&w).unwrap().items[0].sprint, Some(2));
+}
+
+#[test]
+fn scheduling_rejects_stale_items_missing_estimates_and_unrecorded_targets() {
+    let (_d, w) = fixture();
+    let snapshot = schedule::Snapshot::load(&w);
+    let d = &snapshot.items[0];
+    assert!(schedule::propose(&w, &d.path, &d.hash, Some(99)).is_err());
+    let proposal = schedule::propose(&w, &d.path, &d.hash, Some(1)).unwrap();
+    assert!(proposal.preview(&w).is_err());
+    assert!(w.read(&d.path).unwrap().contains("sprint: null"));
+    let text = w.read(&d.path).unwrap();
+    workspace::atomic_write(
+        &w.path(&d.path).unwrap(),
+        format!("{text}\nExternal change.").as_bytes(),
+    )
+    .unwrap();
+    assert!(
+        schedule::propose(&w, &d.path, &d.hash, Some(1))
+            .unwrap_err()
+            .to_string()
+            .contains("changed since")
+    );
+    let mut closed = Edit::load(&w, &d.path).unwrap();
+    set(&mut closed, "delivery_status", "cancelled");
+    save(&w, &closed);
+    let snapshot = schedule::Snapshot::load(&w);
+    let d = &snapshot.items[0];
+    assert!(
+        schedule::propose(&w, &d.path, &d.hash, None)
+            .unwrap_err()
+            .to_string()
+            .contains("historical")
+    );
+}
+
+#[test]
+fn planning_snapshot_preserves_unknowns_and_never_reads_a_historical_report_as_current() {
+    let (_d, w) = fixture();
+    put(
+        &w,
+        "80_Templates/PBI.md",
+        json!({"type":"pbi","title":"Template","language":"en"}),
+        "# Template",
+    );
+    let before = w
+        .documents()
+        .unwrap()
+        .into_iter()
+        .map(|d| (d.path, d.hash))
+        .collect::<Vec<_>>();
+    let snapshot = schedule::Snapshot::load(&w);
+    assert_eq!(snapshot.items.len(), 1);
+    assert_eq!(snapshot.forecast.as_ref().unwrap().items[0].remaining, None);
+    assert!(
+        snapshot
+            .signals()
+            .iter()
+            .any(|s| s.contains("effort unavailable"))
+    );
+    assert_eq!(
+        before,
+        w.documents()
+            .unwrap()
+            .into_iter()
+            .map(|d| (d.path, d.hash))
+            .collect::<Vec<_>>()
+    );
+    let mut config = Edit::load(&w, schedule::PLANNING).unwrap();
+    set(&mut config, "as_of", "");
+    save(&w, &config);
+    put(
+        &w,
+        "06_Delivery/Plan-Report.md",
+        json!({"type":"report","title":"Old synthetic forecast","language":"en"}),
+        "# Old synthetic forecast\n\nCapacity: 999.",
+    );
+    let snapshot = schedule::Snapshot::load(&w);
+    assert!(snapshot.forecast.is_none());
+    assert_eq!(snapshot.people.len(), 1);
+    assert_eq!(snapshot.periods.len(), 1);
+    assert_eq!(snapshot.items.len(), 1);
+    assert!(snapshot.problems.iter().any(|s| s.contains("as_of")));
+    assert!(!snapshot.signals().iter().any(|s| s.contains("999")));
+}
+
+#[test]
+fn schedule_preview_exposes_dependency_checks_and_rechecks_changed_capacity() {
+    let (_d, w) = fixture();
+    let original = w.read("05_Backlog/PBI-1.md").unwrap();
+    let (mut meta, body) = records::parse_project_note(&original).unwrap();
+    meta["id"] = json!("PBI-2");
+    put(&w, "05_Backlog/PBI-2.md", meta, &body);
+    let mut e = Edit::load(&w, "05_Backlog/PBI-1.md").unwrap();
+    set(&mut e, "depends_on", "[[05_Backlog/PBI-2]]");
+    row(&mut e, 0, &["Backend", "1", "1", "1"]);
+    save(&w, &e);
+    let snapshot = schedule::Snapshot::load(&w);
+    let d = snapshot
+        .items
+        .iter()
+        .find(|d| d.id.as_deref() == Some("PBI-1"))
+        .unwrap();
+    let proposal = schedule::propose(&w, &d.path, &d.hash, Some(1)).unwrap();
+    let preview = proposal.preview(&w).unwrap();
+    assert!(preview.warnings.iter().any(|s| s.contains("PBI-2")));
+    let mut allocation = Edit::load(&w, schedule::PEOPLE).unwrap();
+    allocation.apply(&Target::Cell(0, 0, 4), "0.5").unwrap();
+    save(&w, &allocation);
+    assert!(proposal.save(&w, &preview).is_err());
+    assert!(w.read(&d.path).unwrap().contains("sprint: null"));
 }

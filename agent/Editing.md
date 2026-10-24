@@ -14,6 +14,8 @@ The field list and input pane support keyboard and mouse selection. Enter or Tab
 
 Ctrl+S validates the proposal and displays property changes and the changed body lines. Nothing has been written at this point. Inspect the destination, differences and validation notes, then press Ctrl+S again to save. Clicking the corresponding footer buttons performs the same actions. Esc returns from preview to the form; in an active field, Esc reverts that field's uncommitted input. Ctrl+D closes the editor and asks before discarding unsaved changes. Other form edits and the unfinished chat draft remain intact.
 
+Planning-related edits also show affected role capacity, demand and balance before and after the proposal when calculable. Missing prior or proposed forecasts remain explicitly unavailable. A move from the [planning view](Planning-View.md) opens this preview directly; Ctrl+S still performs a separate save. The audit records the same reviewed planning impact.
+
 Existing IDs, document types, language metadata, unexposed properties and surrounding prose are preserved. Editable tables keep their parser-consumed English headers. Saving normalizes frontmatter to the framework's existing flat Properties format. New documents use the configured project language; their title, body, business inputs and stable ID come from the user. The editor does not translate or invent missing content.
 
 ## Supported inputs
@@ -45,4 +47,4 @@ The editor compares the original document before preview and again before save. 
 
 A successful save creates an English record under 90_Agent/Runs with before/after hashes, reviewed changes and validation notes. It records local TUI initiation without inventing a human identity. If the document saves but its audit write fails, the UI explicitly reports that partial result and does not present the document save as unexecuted.
 
-See [interaction controls](Interaction.md), [project schema](../00_Governance/Schema.md) and [planning rules](../06_Delivery/Planning.md). Interactive scheduling, richer delivery-specific screens and backup/migration tooling remain separate milestones.
+See [interaction controls](Interaction.md), [project schema](../00_Governance/Schema.md) and [planning rules](../06_Delivery/Planning.md). Richer delivery-specific screens and backup/migration tooling remain separate milestones.
