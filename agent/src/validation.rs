@@ -906,6 +906,32 @@ pub fn inspect(workspace: &Workspace) -> Result<Vec<Finding>> {
     baseline_checks(&records, &paths, &mut findings);
     Ok(findings.0)
 }
+/// Apply the same record/readiness checks to an unsaved editor candidate.
+pub(crate) fn inspect_candidate(
+    workspace: &Workspace,
+    candidate: &Document,
+) -> Result<Vec<Finding>> {
+    let mut records = Records::load(workspace)?;
+    records.active.retain(|d| d.path != candidate.path);
+    if let Some(id) = &candidate.id {
+        ensure!(
+            !records.active.iter().any(|d| d.id.as_ref() == Some(id)),
+            "Duplicate document ID: {id}"
+        );
+        records.active.push(candidate.clone());
+    }
+    let mut findings = Findings::default();
+    check_links(&records, candidate, &mut findings);
+    let contexts = glossaries(&records);
+    inspect_record(
+        &records,
+        candidate,
+        Some(&workspace.language()?),
+        &contexts,
+        &mut findings,
+    );
+    Ok(findings.0)
+}
 pub fn run(workspace: &Workspace, strict: bool) -> Result<Value> {
     let findings = inspect(workspace)?;
     let errors = findings.iter().filter(|f| f.level == "ERROR").count();

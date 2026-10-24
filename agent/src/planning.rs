@@ -10,6 +10,14 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use crate::locale::Catalog;
 
 const REPORT: &str = "06_Delivery/Plan-Report.md";
+#[derive(Debug)]
+pub(crate) struct Incomplete(pub &'static str);
+impl std::fmt::Display for Incomplete {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.0)
+    }
+}
+impl std::error::Error for Incomplete {}
 const MANAGED: &[&str] = &[
     "00_Governance",
     "01_Sources/Notes",
@@ -58,7 +66,7 @@ pub struct Forecast {
     pub messages: Vec<String>,
 }
 
-fn table(body: &str, columns: &[&str]) -> Result<Vec<Vec<String>>> {
+pub(crate) fn table(body: &str, columns: &[&str]) -> Result<Vec<Vec<String>>> {
     let mut header: Option<Vec<String>> = None;
     let mut current = vec![];
     let mut matches = vec![];
@@ -99,7 +107,7 @@ fn table(body: &str, columns: &[&str]) -> Result<Vec<Vec<String>>> {
     );
     Ok(matches.pop().unwrap())
 }
-fn date(s: &str) -> Result<NaiveDate> {
+pub(crate) fn date(s: &str) -> Result<NaiveDate> {
     let value = NaiveDate::parse_from_str(s, "%Y-%m-%d").context("Use an ISO date YYYY-MM-DD")?;
     ensure!(
         value.format("%Y-%m-%d").to_string() == s,
@@ -187,9 +195,24 @@ fn dependency<'a>(reference: &str, docs: &'a [Document]) -> Result<&'a str> {
 
 /// Read and validate the current inputs without changing project records.
 pub fn calculate(workspace: &Workspace) -> Result<Forecast> {
-    calculate_with(workspace, &Catalog::load(workspace)?)
+    calculate_with(workspace, &Catalog::load(workspace)?, None)
 }
-fn calculate_with(workspace: &Workspace, t: &Catalog) -> Result<Forecast> {
+/// Evaluate a single proposed document without writing it or a report.
+pub(crate) fn preview(workspace: &Workspace, path: &str, content: &str) -> Result<Forecast> {
+    calculate_with(workspace, &Catalog::load(workspace)?, Some((path, content)))
+}
+fn calculate_with(
+    workspace: &Workspace,
+    t: &Catalog,
+    replacement: Option<(&str, &str)>,
+) -> Result<Forecast> {
+    let read_input = |path: &str| {
+        if let Some((target, content)) = replacement.filter(|(target, _)| *target == path) {
+            parse_note(content).with_context(|| target.to_owned())
+        } else {
+            read(workspace, path)
+        }
+    };
     // Do not silently omit linked PBI files from a capacity calculation.
     for folder in MANAGED {
         let path = workspace.path(folder)?;
@@ -203,7 +226,7 @@ fn calculate_with(workspace: &Workspace, t: &Catalog) -> Result<Forecast> {
             );
         }
     }
-    let (_, body) = read(workspace, "06_Delivery/Iterations.md")?;
+    let (_, body) = read_input("06_Delivery/Iterations.md")?;
     let mut periods = BTreeMap::new();
     for row in table(&body, &["Sprint", "Start", "End", "Goal"])? {
         let sprint: i64 = row[0].parse().context("Sprint must be an integer")?;
@@ -219,25 +242,27 @@ fn calculate_with(workspace: &Workspace, t: &Catalog) -> Result<Forecast> {
         );
         periods.insert(sprint, period);
     }
-    ensure!(
-        !periods.is_empty(),
-        "Planning is not configured: add periods to 06_Delivery/Iterations.md"
-    );
+    if periods.is_empty() {
+        return Err(Incomplete(
+            "Planning is not configured: add periods to 06_Delivery/Iterations.md",
+        )
+        .into());
+    }
     let mut ordered: Vec<_> = periods.values().collect();
     ordered.sort_by_key(|p| p.start);
     ensure!(
         ordered.windows(2).all(|p| p[1].start > p[0].end),
         "Duplicate, inverted or overlapping iterations"
     );
-    let (config, _) = read(workspace, "06_Delivery/Planning.md")?;
-    let as_of = optional_date(&config, "as_of")?.context(
+    let (config, _) = read_input("06_Delivery/Planning.md")?;
+    let as_of = optional_date(&config, "as_of")?.ok_or(Incomplete(
         "Planning is not configured: set as_of in 06_Delivery/Planning.md to YYYY-MM-DD",
-    )?;
-    let (project, _) = read(workspace, "00_Governance/Project.md")?;
+    ))?;
+    let (project, _) = read_input("00_Governance/Project.md")?;
     let project = project["id"]
         .as_str()
         .context("Project needs a stable id")?;
-    let (_, body) = read(workspace, "06_Delivery/People.md")?;
+    let (_, body) = read_input("06_Delivery/People.md")?;
     let mut caps: BTreeMap<(i64, String), Capacity> = BTreeMap::new();
     let mut allocation: BTreeMap<(String, i64), f64> = BTreeMap::new();
     let mut calendars = BTreeMap::new();
@@ -310,9 +335,24 @@ fn calculate_with(workspace: &Workspace, t: &Catalog) -> Result<Forecast> {
             cap.capacity = finite(cap.capacity + (fte * days - absence) * focus * (1. - reserve))?;
         }
     }
-    ensure!(!caps.is_empty(), "No allocations for current project");
-    let docs: Vec<_> = workspace
-        .documents()?
+    if caps.is_empty() {
+        return Err(Incomplete("No allocations for current project").into());
+    }
+    let mut documents = workspace.documents()?;
+    if let Some((path, content)) = replacement {
+        let (metadata, body) = parse_note(content)?;
+        documents.retain(|d| d.path != path);
+        documents.push(Document {
+            path: path.into(),
+            title: metadata["title"].as_str().unwrap_or(path).into(),
+            kind: metadata["type"].as_str().unwrap_or("").into(),
+            id: metadata["id"].as_str().map(String::from),
+            hash: hash(content.as_bytes()),
+            metadata,
+            body,
+        });
+    }
+    let docs: Vec<_> = documents
         .into_iter()
         .filter(|d| managed(d) && d.kind == "pbi" && d.id.is_some())
         .collect();
@@ -595,8 +635,8 @@ pub fn run(workspace: &Workspace, args: &[String]) -> Result<Value> {
     // Invalid or unavailable translations leave the previous report intact.
     let catalog = Catalog::load(workspace)?;
     let title = catalog.text("plan_title")?;
-    let result =
-        calculate_with(workspace, &catalog).and_then(|plan| Ok((render(&plan, &catalog)?, plan)));
+    let result = calculate_with(workspace, &catalog, None)
+        .and_then(|plan| Ok((render(&plan, &catalog)?, plan)));
     let (body, status, error, forecast) = match result {
         Ok((body, plan)) => (body, "forecast", String::new(), Some(plan)),
         Err(e) => {

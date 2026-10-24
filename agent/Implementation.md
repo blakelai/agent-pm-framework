@@ -14,6 +14,7 @@ The approved direction is a local Rust TUI for macOS/Linux, sharing project docu
 |---|---|
 | Workspace | Obsidian-compatible document scan/read/search, source hashes, draft state and language checks, stale-write rejection, path/symlink restrictions |
 | TUI | Separate Browse/Chat modes, eleven document categories, shared Markdown rendering, mouse/scrollbars, collapsible/maximized reading, multiline input and focus-aware cancellation |
+| Structured editing | Human-operated forms for allocations, iterations, forecast dates, PBIs, risks and draft decisions; reviewed diffs, existing readiness/planning checks, optimistic conflict checks and edit records |
 | Provider | Responses and Chat Completions SSE adapters, fragmented UTF-8 and function arguments, local conversation replay, error/cancellation handling |
 | Agent runtime | Stage Skill/Playbook plus explicit custom Skills, dependency/reference validation and activation fingerprints; tool loop, persisted questions and sourced draft writes |
 | Planning | Native Rust estimates/capacity/dependencies, localized Markdown reports and structured forecast data; no interpreter required |
@@ -25,7 +26,7 @@ The approved direction is a local Rust TUI for macOS/Linux, sharing project docu
 | Store | SQLite sessions, tool ledger and document projection; unknown outcomes require reconciliation |
 | Distribution | Cargo lockfile, local configuration example, operating guide and macOS/Linux CI jobs |
 
-The executable workbench now has 15 native PM commands. Production execution and packaging no longer use Python, an embedded toolkit or an interpreter setting. Existing workflow procedures cover intake through operations; rich task/resource editors, an interactive schedule, visual artifact review and broader live-project evaluation remain on the product roadmap.
+The executable workbench now has 15 native PM commands. Production execution and packaging no longer use Python, an embedded toolkit or an interpreter setting. Existing workflow procedures cover intake through operations. Initial structured editors are implemented; interactive scheduling, richer delivery-specific screens, visual artifact review and broader live-project evaluation remain on the product roadmap.
 
 ## Delivery sequence and acceptance
 
@@ -40,7 +41,7 @@ The executable workbench now has 15 native PM commands. Production execution and
 
 ## Next engineering work
 
-1. Add typed editing for staffing, iterations, risks and decisions, with workflow-specific state transitions and reviewable changes.
+1. Extend the initial structured editors with interactive scheduling/resource views and dedicated change, UAT, release and benefits workflows. Existing forms and state evidence checks are described in [Editing](Editing.md).
 2. Add dependency-scoped clarification gates, automatic file watching, source impact views, document diffs and richer evidence navigation.
 3. Add explicit provider capability probes, provider capacity and budget controls beyond reported token counts, tested retry policies for proven idempotent reads, MCP OAuth, and reviewed visual extraction.
 4. Expand the live provider matrix using user-specified endpoints/models and evaluate a real repository/OpenWiki/source workflow. Installed model names, business sources and semantic decisions must not be inferred.

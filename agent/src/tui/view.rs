@@ -31,7 +31,7 @@ pub const TABS: &[(&str, &str)] = &[
     ("✅", "Verification"),
     ("🤖", "Agent Runs"),
 ];
-pub const HELP: &str = "# PM Agent\n\nF2 switches Browse / Chat. F1 opens help. Ctrl+Q exits when idle.\n\n## Browse\nAlt+1…9 selects a category; Alt+0 lists all categories. Alt+Left/Right cycles categories.\nEnter opens the selected document; Esc returns to the list. F3 collapses the list; F4 maximizes the document. F6 toggles emoji.\nTab switches focus. PgUp/PgDn scroll. Mouse wheel scrolls the pointed pane; drag the right scrollbar. Right-click opens actions. L shows document links. P shows properties. O opens the original in the desktop application. R refreshes.\n\n## Chat\nType immediately. Enter sends; Alt+Enter, Shift+Enter or Ctrl+J inserts a newline. Multiline paste never submits.\nScroll the conversation to read history. Esc returns to the latest message and input. A separate Esc in the input cancels an active operation. Ctrl+C clears only the draft.\n\n## Commands\n/help, /status, /skills, /skills clear, /search TEXT, /stage prd, /pm plan, /sessions, /resume ID, /continue, /approve, /deny, /reconcile ACTUAL_OUTCOME, /new, /quit.\nUse a leading $skill-name to explicitly enable a project Skill. Skills remain selected in the session until cleared. Context values come only from the service; missing values remain unavailable.";
+pub const HELP: &str = "# PM Agent\n\nF2 switches Browse / Chat. F1 opens help. Ctrl+Q exits when idle.\n\n## Browse\nAlt+1…9 selects a category; Alt+0 lists all categories. Alt+Left/Right cycles categories.\nEnter opens the selected document; Esc returns to the list. F3 collapses the list; F4 maximizes the document. F6 toggles emoji.\nTab switches focus. PgUp/PgDn scroll. Mouse wheel scrolls the pointed pane; drag the right scrollbar. Right-click opens actions. L shows document links. P shows properties. O opens the original in the desktop application. R refreshes. E edits supported project fields; N creates a PBI, risk or decision.\n\n## Editing\nEnter/Tab edits fields; lists use one value per line. Use left/right to select enum values. Ctrl+S reviews changes, then Ctrl+S saves the reviewed result. Esc reverts the active field or returns from preview. Ctrl+D discards with confirmation.\n\n## Chat\nType immediately. Enter sends; Alt+Enter, Shift+Enter or Ctrl+J inserts a newline. Multiline paste never submits.\nScroll the conversation to read history. Esc returns to the latest message and input. A separate Esc in the input cancels an active operation. Ctrl+C clears only the draft.\n\n## Commands\n/help, /status, /skills, /skills clear, /search TEXT, /stage prd, /pm plan, /sessions, /resume ID, /continue, /approve, /deny, /reconcile ACTUAL_OUTCOME, /new, /quit.\nUse a leading $skill-name to explicitly enable a project Skill. Skills remain selected in the session until cleared. Context values come only from the service; missing values remain unavailable.";
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Mode {
@@ -54,9 +54,16 @@ pub enum Command {
     Refresh,
     Open(String),
     Skills,
+    Edit(String),
+    New(String),
+    ReviewEdit,
+    SaveEdit,
+    CloseEdit,
 }
 #[derive(Clone)]
 enum Choice {
+    Edit,
+    New(&'static str),
     Category(usize),
     Collapse,
     Maximize,
@@ -93,6 +100,7 @@ struct Regions {
     bar: Rect,
 }
 pub struct App {
+    pub(super) form: Option<super::form::Form>,
     pub docs: Vec<Document>,
     pub tab: usize,
     pub selected: usize,
@@ -129,6 +137,7 @@ pub struct App {
 impl App {
     pub fn new(docs: Vec<Document>) -> Self {
         Self {
+            form: None,
             docs,
             tab: 0,
             selected: 0,
@@ -323,6 +332,16 @@ impl App {
     }
     fn action(&mut self, choice: Choice) -> Command {
         match choice {
+            Choice::Edit | Choice::New(_) if self.busy => {
+                self.status = "Wait for the active operation before editing project records".into()
+            }
+            Choice::Edit => {
+                return self
+                    .selected_path()
+                    .map(Command::Edit)
+                    .unwrap_or(Command::None);
+            }
+            Choice::New(kind) => return Command::New(kind.into()),
             Choice::Category(n) => self.category(n),
             Choice::Collapse => {
                 self.collapsed = !self.collapsed;
@@ -479,6 +498,7 @@ impl App {
             self.popup(
                 "Document actions",
                 vec![
+                    ("Edit project fields".into(), Choice::Edit),
                     ("Read document".into(), Choice::Maximize),
                     ("Open original".into(), Choice::Open),
                     ("Properties / provenance".into(), Choice::Properties),
@@ -549,6 +569,14 @@ impl App {
         }
     }
     pub fn event(&mut self, event: Event) -> Command {
+        if let Some(form) = &mut self.form {
+            return match form.event(event) {
+                super::form::Action::None => Command::None,
+                super::form::Action::Review => Command::ReviewEdit,
+                super::form::Action::Save => Command::SaveEdit,
+                super::form::Action::Close => Command::CloseEdit,
+            };
+        }
         match event {
             Event::Paste(text)
                 if self.mode == Mode::Chat
@@ -800,6 +828,15 @@ impl App {
                 KeyCode::Home => self.scroll = 0,
                 KeyCode::End => self.scroll = usize::MAX,
                 KeyCode::Char('r') => return Command::Refresh,
+                KeyCode::Char('e') => return self.action(Choice::Edit),
+                KeyCode::Char('n') if !self.busy => self.popup(
+                    "New project record",
+                    vec![
+                        ("PBI".into(), Choice::New("pbi")),
+                        ("Risk".into(), Choice::New("risk")),
+                        ("Decision".into(), Choice::New("decision")),
+                    ],
+                ),
                 KeyCode::Char('o') => return self.action(Choice::Open),
                 KeyCode::Char('p') => return self.action(Choice::Properties),
                 KeyCode::Char('l') => return self.action(Choice::Links),
@@ -842,6 +879,10 @@ impl App {
         Command::None
     }
     pub fn draw(&mut self, f: &mut ratatui::Frame) {
+        if let Some(form) = &mut self.form {
+            form.draw(f);
+            return;
+        }
         let all = f.area();
         self.regions = Regions::default();
         let outer = Layout::default()
@@ -917,7 +958,10 @@ impl App {
             }
             format!("{model} | {rest}")
         } else {
-            format!("F2 Chat  F3 List  F4 Max  F1 Help | {}", self.status)
+            format!(
+                "F2 Chat  E Edit  N New  F3 List  F4 Max  F1 Help | {}",
+                self.status
+            )
         };
         f.render_widget(
             Paragraph::new(status).style(Style::default().fg(Color::Gray)),

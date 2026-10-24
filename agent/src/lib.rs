@@ -1,5 +1,6 @@
 pub mod baselines;
 pub mod config;
+pub mod editing;
 mod extraction;
 pub mod governance;
 mod locale;

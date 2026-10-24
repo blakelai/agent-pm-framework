@@ -59,6 +59,7 @@ agent/target/debug/pm-agent --vault . chat --stage prd "Review the supplied sour
 | Wheel / scrollbar drag | Scroll the pointed pane or its rendered content |
 | Right-click / L / P | Context actions / document links / properties |
 | O / R in Browse | Open original / refresh documents |
+| E / N in Browse | Edit supported project fields / create a PBI, risk or decision |
 | Enter in Chat | Send the draft when idle; input is ready without pressing i |
 | Alt+Enter / supported Shift+Enter / Ctrl+J | Insert a newline; multiline paste never sends |
 | Esc in transcript | Latest output, resume following, return input focus |
@@ -70,6 +71,8 @@ agent/target/debug/pm-agent --vault . chat --stage prd "Review the supplied sour
 The transcript and composer are borderless; the input has a gray background and supports multiple lines, cursor movement and Unicode grapheme deletion. The browser and conversation render Markdown. The status line shows the model, state, short session ID and service-reported input usage; click it or use `/status` for full details. Missing usage remains unavailable, with no estimates or inferred percentages.
 
 See the [interaction contract](Interaction.md) for focus priority, terminal compatibility, link handling and cancellation semantics.
+
+[Structured editing](Editing.md) covers staffing, iterations, forecast dates, PBIs, risks and draft decisions. Ctrl+S first validates and previews changes; a separate Ctrl+S saves the reviewed result. Missing values remain unknown. Status changes require the existing evidence contracts, and stale documents or changed preview inputs are rejected.
 
 Views include BRD, PRD/REQ, domain knowledge, systems, questions, people/schedules, backlog, progress/risks, verification and Agent runs. They show real Markdown records and metadata. Requirement views recognize document types even outside conventional subfolders. Templates appear in All, not project-specific views. Empty views remain empty; no progress, people or risk scores are synthesized for presentation.
 
