@@ -19,6 +19,7 @@ The approved direction is a local Rust TUI for macOS/Linux, sharing project docu
 | Agent runtime | Stage Skill/Playbook plus explicit custom Skills, dependency/reference validation and activation fingerprints; tool loop, persisted questions and sourced draft writes |
 | Planning | Native Rust estimates/capacity/dependencies, localized Markdown reports and structured forecast data; no interpreter required |
 | Interactive planning | Iteration-filtered PBIs, role capacity/demand, supplied allocations and project-wide signals; reviewed single-item scheduling with before/after planning impact |
+| Delivery workflows | Dedicated Change/UAT/Release/Benefit views and typed editors; versioned evidence gates, historical outcome preservation, read-only Agent overview |
 | Traceability and governance commands | Native coverage/status/impact, baseline capture and pinned fingerprints, settings and work packets; compatible legacy content hashes |
 | Validation | Native language, terminology, traceability, readiness/acceptance, source and baseline integrity, local OKF authoring checks; structured findings and strict-mode exit status |
 | Source operations | Native material import and PDF/Office text extraction, repository registration, immutable snapshots and hash-verified evidence capture |
@@ -27,7 +28,7 @@ The approved direction is a local Rust TUI for macOS/Linux, sharing project docu
 | Store | SQLite sessions, tool ledger and document projection; unknown outcomes require reconciliation |
 | Distribution | Cargo lockfile, local configuration example, operating guide and macOS/Linux CI jobs |
 
-The executable workbench now has 15 native PM commands. Production execution and packaging no longer use Python, an embedded toolkit or an interpreter setting. Existing workflow procedures cover intake through operations. Initial structured editors and interactive scheduling/resource views are implemented; dedicated delivery screens, visual artifact review and broader live-project evaluation remain on the product roadmap.
+The executable workbench now has 16 native PM commands. Production execution and packaging no longer use Python, an embedded toolkit or an interpreter setting. Existing workflow procedures cover intake through operations. Structured editors, interactive scheduling/resource views and initial dedicated delivery workflows are implemented; visual artifact review, advanced planning and broader live-project evaluation remain on the product roadmap.
 
 ## Delivery sequence and acceptance
 
@@ -36,13 +37,13 @@ The executable workbench now has 15 native PM commands. Production execution and
 | 0. Contracts and technical integration | Protocol fixture implementation complete; live provider certification pending | Both adapters and both MCP transports exercise actual request/result cycles; real endpoints validated separately |
 | 1. Local workbench | Implemented | Browse real Vault records without a model; persist/restore conversations; preserve source/baseline boundaries |
 | 2. Grounded analysis MVP | Initial vertical flows implemented and exercised with one live model | Sources -> explicit questions -> sufficient answers -> sourced draft -> deterministic validation; broader real-project evaluation pending |
-| 3. Full delivery controls | Native planning, validation, coverage/status/impact and baseline operations implemented; richer UI pending | Baseline/change gates, resource calendars, remaining forecasts, risks, UAT/release and benefits operated through typed commands and views |
+| 3. Full delivery controls | Planning and delivery views implemented; advanced planning and broader release scopes pending | Baseline/change gates, resource calendars, remaining forecasts, risks, UAT/release and benefits operated through typed commands and views |
 | 4. Materials and reliability | Native text/material ingestion implemented; visual review/OCR and advanced conflict handling pending | PDF/slides/images reviewed with locators; missing extraction never presented as complete; backup/restore and migrations exercised |
 | 5. Pilot and release | Pending | Real internal-system project, live provider matrix, semantic/clarification evaluations, platform packaging and operational documentation |
 
 ## Next engineering work
 
-1. Add dedicated change, UAT, release and benefits workflows. Existing forms, state evidence checks and reviewed scheduling are described in [Editing](Editing.md) and [Planning view](Planning-View.md). Bulk schedule scenarios and a calendar-duration model need separate requirements; person-days alone cannot establish task dates.
+1. Extend [delivery workflows](Delivery-Workflows.md) after real-project evaluation: multi-baseline or non-requirement release contracts, cost aggregation, explicit history migration and richer evidence navigation. Existing forms and scheduling are described in [Editing](Editing.md) and [Planning view](Planning-View.md). Bulk schedule scenarios and a calendar-duration model need separate requirements; person-days alone cannot establish task dates.
 2. Add dependency-scoped clarification gates, automatic file watching, source impact views, document diffs and richer evidence navigation.
 3. Add explicit provider capability probes, provider capacity and budget controls beyond reported token counts, tested retry policies for proven idempotent reads, MCP OAuth, and reviewed visual extraction.
 4. Expand the live provider matrix using user-specified endpoints/models and evaluate a real repository/OpenWiki/source workflow. Installed model names, business sources and semantic decisions must not be inferred.

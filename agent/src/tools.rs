@@ -47,7 +47,7 @@ pub fn specs() -> Vec<ToolSpec> {
         spec(
             "pm",
             "Execute a deterministic built-in project-management operation. Read tools/README.md for arguments. Local reports, work packets, registered snapshots, evidence and baseline candidates run directly. New external sources, language changes and exports require exact-call confirmation. Unknown scheduling inputs remain unknown.",
-            json!({"command":{"type":"string","enum":["validate","coverage","plan","status","impact","fingerprint","settings","ingest","repo-add","sync","evidence","prepare","baseline","okf-export","okf-check"]},"args":{"type":"array","items":{"type":"string"}}}),
+            json!({"command":{"type":"string","enum":["validate","coverage","plan","status","delivery","impact","fingerprint","settings","ingest","repo-add","sync","evidence","prepare","baseline","okf-export","okf-check"]},"args":{"type":"array","items":{"type":"string"}}}),
             &["command", "args"],
         ),
     ]
@@ -77,6 +77,7 @@ pub fn requires_approval(name: &str, args: &Value) -> bool {
                         | "coverage"
                         | "plan"
                         | "status"
+                        | "delivery"
                         | "impact"
                         | "fingerprint"
                         | "okf-check"
@@ -185,6 +186,7 @@ pub async fn run_pm(workspace: &Workspace, command: &str, args: &[String]) -> Re
             "coverage",
             "plan",
             "status",
+            "delivery",
             "impact",
             "fingerprint",
             "settings",

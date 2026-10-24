@@ -1,3 +1,4 @@
+mod delivery;
 mod editor;
 mod form;
 mod markdown;
@@ -117,6 +118,11 @@ pub async fn run(workspace: Workspace, config_path: PathBuf) -> Result<()> {
                         if let Some(planner)=&mut app.planner {planner.replace(snapshot);} else {app.planner=Some(planner::Planner::new(snapshot));}
                     },
                     Command::ClosePlanning=>app.planner=None,
+                    Command::Delivery=>{
+                        let snapshot=crate::delivery::Snapshot::load(&workspace);
+                        if let Some(delivery)=&mut app.delivery {delivery.replace(snapshot);} else {app.delivery=Some(delivery::Delivery::new(snapshot));}
+                    },
+                    Command::CloseDelivery=>app.delivery=None,
                     Command::Read(path)=>{refresh(&workspace,&mut app,&mut store);app.read_document(&path);},
                     Command::Schedule{path,hash,sprint}=>match crate::schedule::propose(&workspace,&path,&hash,sprint) {
                         Ok(edit)=>{
@@ -132,11 +138,15 @@ pub async fn run(workspace: Workspace, config_path: PathBuf) -> Result<()> {
                         Err(e)=>{
                             app.status=format!("Edit unavailable: {e}");
                             if let Some(planner)=&mut app.planner {planner.message=app.status.clone();}
+                            if let Some(delivery)=&mut app.delivery {delivery.message=app.status.clone();}
                         },
                     },
                     Command::New(kind)=>match crate::editing::Edit::create(&workspace,&kind) {
                         Ok(edit)=>app.form=Some(form::Form::new(edit)),
-                        Err(e)=>app.status=format!("Create unavailable: {e}"),
+                        Err(e)=>{
+                            app.status=format!("Create unavailable: {e}");
+                            if let Some(delivery)=&mut app.delivery {delivery.message=app.status.clone();}
+                        },
                     },
                     Command::ReviewEdit=>if let Some(form)=&mut app.form {
                         match form.edit.preview(&workspace) {
@@ -155,6 +165,7 @@ pub async fn run(workspace: Workspace, config_path: PathBuf) -> Result<()> {
                                 app.selected=app.visible().iter().position(|d|d.path==saved.path).unwrap_or(0);
                                 app.scroll=0;
                                 if let Some(planner)=&mut app.planner {planner.replace(crate::schedule::Snapshot::load(&workspace));planner.message=app.status.clone();}
+                                if let Some(delivery)=&mut app.delivery {delivery.replace(crate::delivery::Snapshot::load(&workspace));delivery.select_path(&saved.path);delivery.message=app.status.clone();}
                             },
                             Some(Err(e))=>if let Some(form)=&mut app.form {form.preview=None;form.message=format!("{e:#}");},
                             None=>{},

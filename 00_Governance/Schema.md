@@ -37,3 +37,11 @@ A requirement is one verifiable assertion, linked to its PRD and evidence, with 
 See [baseline/change procedure](Baselines-and-Changes.md), [Planning](../06_Delivery/Planning.md) and [OKF profile](../90_Agent/OKF-Profile.md).
 
 Working tools use flat Properties and JSON-compatible inline lists/maps. Keep optional nested OKF families in JSON-style inline values when using these tools; the export validator accepts standard YAML, but the working reader is not a general-purpose OKF consumer.
+
+## Delivery workflow extension
+
+New change, uat, release and benefit records use workflow_schema: delivery-v1. [Delivery workflows](../agent/Delivery-Workflows.md) defines their states, required fields, evidence gates, event-time rules and editing locations. Templates are [Change](../80_Templates/Change.md), [UAT](../80_Templates/UAT.md), [Release](../80_Templates/Release.md) and [Benefit](../80_Templates/Benefit.md).
+
+Drafts preserve unknown values. Accepted/rejected decisions, actual releases/cancellations and measured benefits are historical; corrections use a new ID and previous_records links. The profile uses explicit actual actors and RFC3339 times, approved requirement versions for UAT, matching acceptance/release scopes and supplied measurement inputs. Native validate and TUI saves share these structural checks. Their success is not proof of an actual event or semantic completeness.
+
+Older Change/Release records without the extension retain their legacy contract and are explicitly marked legacy in the Delivery view. They are not silently upgraded or editable through the new forms. Unknown schema versions fail validation. No baseline approval or project outcome is manufactured by migration.

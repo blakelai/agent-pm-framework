@@ -28,6 +28,7 @@ Existing IDs, document types, language metadata, unexposed properties and surrou
 | PBI | Owner, work type, delivery state, Sprint, context and traceability links, dependencies, readiness dates, original/remaining estimates, readiness/acceptance/DoD evidence, AC mapping and document content |
 | Risk | Owner, due date, open/closed state, evidence and content |
 | Draft decision | Owner, context/evidence, state, actual decision actor/date, decision evidence and content |
+| Change / UAT / Release / Benefit | Versioned workflow fields, typed evidence links, supplied event and measurement inputs; see [delivery workflows](Delivery-Workflows.md) |
 
 Rows are checked for invalid dates/numbers, duplicate keys, overlapping periods, inconsistent calendars and over-allocation. People and unfinished scheduled PBIs must refer to recorded Sprints, even during setup. The existing forecast engine evaluates the candidate without writing a report. During setup, missing periods, forecast date or current-project allocations produce an explicit unavailable-forecast note; the editor does not manufacture those inputs. Invalid supplied values still fail. A saved edit does not refresh an existing Plan-Report: run /pm plan when the planning inputs are ready. Preview checks the edited record and its planning inputs; use /pm validate for a full workspace quality report.
 
@@ -47,4 +48,4 @@ The editor compares the original document before preview and again before save. 
 
 A successful save creates an English record under 90_Agent/Runs with before/after hashes, reviewed changes and validation notes. It records local TUI initiation without inventing a human identity. If the document saves but its audit write fails, the UI explicitly reports that partial result and does not present the document save as unexecuted.
 
-See [interaction controls](Interaction.md), [project schema](../00_Governance/Schema.md) and [planning rules](../06_Delivery/Planning.md). Richer delivery-specific screens and backup/migration tooling remain separate milestones.
+F7 opens the [delivery workflows](Delivery-Workflows.md), where N creates a Change, UAT, Release or Benefit draft and E edits supported records. See [interaction controls](Interaction.md), [project schema](../00_Governance/Schema.md) and [planning rules](../06_Delivery/Planning.md). Backup/migration tooling remains a separate milestone.

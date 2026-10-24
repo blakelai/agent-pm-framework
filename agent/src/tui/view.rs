@@ -31,7 +31,7 @@ pub const TABS: &[(&str, &str)] = &[
     ("✅", "Verification"),
     ("🤖", "Agent Runs"),
 ];
-pub const HELP: &str = "# PM Agent\n\nF2 switches Browse / Chat. F1 opens help. Ctrl+Q exits when idle.\n\n## Browse\nAlt+1…9 selects a category; Alt+0 lists all categories. Alt+Left/Right cycles categories.\nEnter opens the selected document; Esc returns to the list. F3 collapses the list; F4 maximizes the document. F6 toggles emoji.\nTab switches focus. PgUp/PgDn scroll. Mouse wheel scrolls the pointed pane; drag the right scrollbar. Right-click opens actions. L shows document links. P shows properties. O opens the original in the desktop application. R refreshes. E edits supported project fields; N creates a PBI, risk or decision. F5 or Planning opens the local planning view: 1 Schedule, 2 Capacity, 3 Signals; M proposes an iteration move; P/I/A edit allocations, iterations and forecast date; R refreshes; Esc returns.\n\n## Editing\nEnter/Tab edits fields; lists use one value per line. Use left/right to select enum values. Ctrl+S reviews changes, then Ctrl+S saves the reviewed result. Esc reverts the active field or returns from preview. Ctrl+D discards with confirmation.\n\n## Chat\nType immediately. Enter sends; Alt+Enter, Shift+Enter or Ctrl+J inserts a newline. Multiline paste never submits.\nScroll the conversation to read history. Esc returns to the latest message and input. A separate Esc in the input cancels an active operation. Ctrl+C clears only the draft.\n\n## Commands\n/help, /status, /skills, /skills clear, /search TEXT, /stage prd, /pm plan, /sessions, /resume ID, /continue, /approve, /deny, /reconcile ACTUAL_OUTCOME, /new, /quit.\nUse a leading $skill-name to explicitly enable a project Skill. Skills remain selected in the session until cleared. Context values come only from the service; missing values remain unavailable.";
+pub const HELP: &str = "# PM Agent\n\nF2 switches Browse / Chat. F1 opens help. Ctrl+Q exits when idle.\n\n## Browse\nAlt+1…9 selects a category; Alt+0 lists all categories. Alt+Left/Right cycles categories.\nEnter opens the selected document; Esc returns to the list. F3 collapses the list; F4 maximizes the document. F6 toggles emoji.\nTab switches focus. PgUp/PgDn scroll. Mouse wheel scrolls the pointed pane; drag the right scrollbar. Right-click opens actions. L shows document links. P shows properties. O opens the original in the desktop application. R refreshes. E edits supported project fields; N creates a PBI, risk or decision. F5 or Planning opens the local planning view: 1 Schedule, 2 Capacity, 3 Signals; M proposes an iteration move; P/I/A edit allocations, iterations and forecast date; R refreshes; Esc returns. F7 or Delivery opens Changes, UAT, Releases and Benefits: 1-4/Alt+1-4 select tabs, N creates a draft, E edits, O opens the document, R refreshes, Enter focuses details, Esc returns.\n\n## Editing\nEnter/Tab edits fields; lists use one value per line. Use left/right to select enum values. Ctrl+S reviews changes, then Ctrl+S saves the reviewed result. Esc reverts the active field or returns from preview. Ctrl+D discards with confirmation.\n\n## Chat\nType immediately. Enter sends; Alt+Enter, Shift+Enter or Ctrl+J inserts a newline. Multiline paste never submits.\nScroll the conversation to read history. Esc returns to the latest message and input. A separate Esc in the input cancels an active operation. Ctrl+C clears only the draft.\n\n## Commands\n/help, /status, /skills, /skills clear, /search TEXT, /stage prd, /pm plan, /sessions, /resume ID, /continue, /approve, /deny, /reconcile ACTUAL_OUTCOME, /new, /quit.\nUse a leading $skill-name to explicitly enable a project Skill. Skills remain selected in the session until cleared. Context values come only from the service; missing values remain unavailable.";
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Mode {
@@ -61,6 +61,8 @@ pub enum Command {
     CloseEdit,
     Planning,
     ClosePlanning,
+    Delivery,
+    CloseDelivery,
     Read(String),
     Schedule {
         path: String,
@@ -70,6 +72,7 @@ pub enum Command {
 }
 #[derive(Clone)]
 enum Choice {
+    Delivery,
     Planning,
     Edit,
     New(&'static str),
@@ -95,6 +98,7 @@ struct Menu {
 }
 #[derive(Default)]
 struct Regions {
+    delivery: Rect,
     planning: Rect,
     browse: Rect,
     chat: Rect,
@@ -110,6 +114,7 @@ struct Regions {
     bar: Rect,
 }
 pub struct App {
+    pub(super) delivery: Option<super::delivery::Delivery>,
     pub(super) planner: Option<super::planner::Planner>,
     pub(super) form: Option<super::form::Form>,
     pub docs: Vec<Document>,
@@ -148,6 +153,7 @@ pub struct App {
 impl App {
     pub fn new(docs: Vec<Document>) -> Self {
         Self {
+            delivery: None,
             planner: None,
             form: None,
             docs,
@@ -225,9 +231,13 @@ impl App {
             if let Some(p) = &mut self.planner {
                 p.message = "Document is no longer available; refresh the planning view".into();
             }
+            if let Some(d) = &mut self.delivery {
+                d.message = "Document is no longer available; refresh the delivery view".into();
+            }
             return;
         }
         self.planner = None;
+        self.delivery = None;
         self.tab = 0;
         self.filter.clear();
         self.selected = self
@@ -362,7 +372,7 @@ impl App {
     }
     fn action(&mut self, choice: Choice) -> Command {
         match choice {
-            Choice::Edit | Choice::New(_) | Choice::Planning if self.busy => {
+            Choice::Edit | Choice::New(_) | Choice::Planning | Choice::Delivery if self.busy => {
                 self.status = "Wait for the active operation before editing project records".into()
             }
             Choice::Edit => {
@@ -373,6 +383,7 @@ impl App {
             }
             Choice::New(kind) => return Command::New(kind.into()),
             Choice::Planning => return Command::Planning,
+            Choice::Delivery => return Command::Delivery,
             Choice::Category(n) => self.category(n),
             Choice::Collapse => {
                 self.collapsed = !self.collapsed;
@@ -611,6 +622,9 @@ impl App {
         if let Some(planner) = &mut self.planner {
             return planner.event(event);
         }
+        if let Some(delivery) = &mut self.delivery {
+            return delivery.event(event);
+        }
         match event {
             Event::Paste(text)
                 if self.mode == Mode::Chat
@@ -659,6 +673,11 @@ impl App {
                     }
                     MouseEventKind::Down(MouseButton::Left) if self.regions.chat.contains(p) => {
                         self.switch(Mode::Chat)
+                    }
+                    MouseEventKind::Down(MouseButton::Left)
+                        if self.regions.delivery.contains(p) =>
+                    {
+                        return self.action(Choice::Delivery);
                     }
                     MouseEventKind::Down(MouseButton::Left)
                         if self.regions.planning.contains(p) =>
@@ -832,6 +851,7 @@ impl App {
             }
             match key.code {
                 KeyCode::F(5) => return self.action(Choice::Planning),
+                KeyCode::F(7) => return self.action(Choice::Delivery),
                 KeyCode::F(3) => return self.action(Choice::Collapse),
                 KeyCode::F(4) => return self.action(Choice::Maximize),
                 KeyCode::F(6) => self.icons = !self.icons,
@@ -927,6 +947,10 @@ impl App {
             planner.draw(f);
             return;
         }
+        if let Some(delivery) = &mut self.delivery {
+            delivery.draw(f);
+            return;
+        }
         let all = f.area();
         self.regions = Regions::default();
         let outer = Layout::default()
@@ -974,6 +998,16 @@ impl App {
             f.render_widget(
                 Paragraph::new(" F5 Planning ").style(Style::default().fg(Color::Gray)),
                 self.regions.planning,
+            );
+            self.regions.delivery = Rect::new(
+                outer[0].x + outer[0].width.min(56),
+                outer[0].y,
+                outer[0].width.saturating_sub(56).min(20),
+                outer[0].height,
+            );
+            f.render_widget(
+                Paragraph::new(" F7 Delivery ").style(Style::default().fg(Color::Gray)),
+                self.regions.delivery,
             );
             self.draw_browser(f, outer[1]);
         } else {
@@ -1365,6 +1399,10 @@ fn icon(doc: &Document) -> &'static str {
         "iteration" | "milestone" => "📅 ",
         "pbi" => "🗂️ ",
         "risk" => "⚠️ ",
+        "change" => "🔁 ",
+        "uat" => "☑️ ",
+        "release" => "🚀 ",
+        "benefit" => "📈 ",
         "test_case" | "testcase" | "test_run" => "✅ ",
         "agent_run" | "Skill" => "🤖 ",
         "context" | "term" | "glossary" => "📚 ",
@@ -1392,6 +1430,26 @@ mod tests {
             row: area.y,
             modifiers: KeyModifiers::NONE,
         })
+    }
+    #[test]
+    fn delivery_entry_preserves_chat_and_blocks_while_running() {
+        let mut a = App::new(vec![]);
+        a.input.insert("Unfinished chat draft");
+        assert_eq!(key(&mut a, KeyCode::F(7)), Command::Delivery);
+        draw(&mut a, 120, 30);
+        assert_eq!(
+            a.event(mouse(
+                MouseEventKind::Down(MouseButton::Left),
+                a.regions.delivery
+            )),
+            Command::Delivery
+        );
+        a.busy = true;
+        assert_eq!(key(&mut a, KeyCode::F(7)), Command::None);
+        a.busy = false;
+        key(&mut a, KeyCode::F(2));
+        assert_eq!(key(&mut a, KeyCode::F(7)), Command::None);
+        assert_eq!(a.input.text, "Unfinished chat draft");
     }
     #[test]
     fn planning_entry_is_local_to_browse_and_respects_running_operations() {

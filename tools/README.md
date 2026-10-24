@@ -6,7 +6,7 @@ title: "Local tools"
 
 # Local tools
 
-All 15 operations run in the Rust application through `pm-agent --vault /path/to/vault pm COMMAND ...` or the Agent's `pm` tool. Install or build the binary using [application setup](../agent/README.md). No Python runtime or model is needed for deterministic operations.
+All 16 operations run in the Rust application through `pm-agent --vault /path/to/vault pm COMMAND ...` or the Agent's `pm` tool. Install or build the binary using [application setup](../agent/README.md). No Python runtime or model is needed for deterministic operations.
 
 The examples assume `pm-agent` is on PATH. Otherwise substitute `agent/target/debug/pm-agent` from the framework root. `--vault` precedes `pm`; relative source paths are resolved against that Vault.
 
@@ -24,6 +24,7 @@ pm-agent --vault . pm validate --strict
 pm-agent --vault . pm coverage
 pm-agent --vault . pm plan
 pm-agent --vault . pm status
+pm-agent --vault . pm delivery
 pm-agent --vault . pm impact REQ-001
 pm-agent --vault . pm fingerprint REQ-001
 pm-agent --vault . pm baseline --id BASE-001 --include BRD-001 --include PRD-001 --include REQ-001 --include LANG-CONTEXT
@@ -44,6 +45,7 @@ Commands containing paths and IDs are interface examples; replace them with actu
 | coverage | English operational trace report; latest matching runs, excluding simulations |
 | plan | Project-language forecast from remaining effort and capacity; no optimization or delivery probability |
 | status / impact | English management-state or downstream-review report; no automatic decision or external sending |
+| delivery | Read-only structured Change/UAT/Release/Benefit overview with current problems and next-gate inputs; no generated report, state transition or approval; see [delivery contract](../agent/Delivery-Workflows.md) |
 | baseline | Exact candidate snapshots; no identity or approval enforcement |
 | okf-export | New read-only knowledge bundle outside the Vault; refuses an existing destination |
 | okf-check | All Markdown files in the supplied bundle; core structure and optional-field warnings |

@@ -1,7 +1,7 @@
 //! Human-operated project edits: validate and review before an optimistic write.
 //! The Agent's draft tool deliberately does not use this commit path.
 use crate::{
-    planning, records, validation,
+    delivery, planning, records, validation,
     workspace::{self, Document, Workspace},
 };
 use anyhow::{Context, Result, ensure};
@@ -22,6 +22,7 @@ pub enum FieldType {
     Number,
     Date,
     Timestamp,
+    EventTimestamp,
     List,
     Choice(&'static [&'static str]),
 }
@@ -34,6 +35,9 @@ impl FieldType {
             Self::Date => "ISO date: YYYY-MM-DD; blank remains unknown".into(),
             Self::Timestamp => {
                 "Actual ISO date or RFC3339 timestamp; never filled automatically".into()
+            }
+            Self::EventTimestamp => {
+                "Actual RFC3339 timestamp with timezone; blank remains unknown".into()
             }
             Self::List => "One value or [[document link]] per line; blank is an empty list".into(),
             Self::Choice(values) => format!("Choose: {}", values.join(" / ")),
@@ -68,6 +72,11 @@ impl FieldType {
                     planning::date(s).is_ok() || chrono::DateTime::parse_from_rfc3339(s).is_ok(),
                     "Use an actual ISO date or RFC3339 timestamp"
                 );
+                json!(s)
+            }
+            Self::EventTimestamp => {
+                chrono::DateTime::parse_from_rfc3339(s)
+                    .context("Supply an actual RFC3339 timestamp with timezone")?;
                 json!(s)
             }
             Self::Choice(values) => {
@@ -126,6 +135,7 @@ pub struct Saved {
 fn fields(kind: &str) -> Vec<(&'static str, FieldType)> {
     use FieldType::*;
     let mut result = vec![("title", Text), ("owner", Text)];
+    result.extend(delivery::fields(kind));
     match kind {
         "pbi" => result.extend([
             (
@@ -252,10 +262,13 @@ fn editable(path: &str, m: &Value) -> Result<()> {
         "06_Delivery/People.md" | "06_Delivery/Iterations.md" | "06_Delivery/Planning.md"
     ) || path.starts_with("05_Backlog/") && m["type"] == "pbi"
         || path.starts_with("07_Decisions/")
-            && matches!(m["type"].as_str(), Some("risk" | "decision"));
+            && matches!(m["type"].as_str(), Some("risk" | "decision"))
+        || delivery::folder(m["type"].as_str().unwrap_or(""))
+            .is_some_and(|folder| path.starts_with(folder))
+            && m["workflow_schema"] == delivery::PROFILE;
     ensure!(
         allowed && path.ends_with(".md"),
-        "Structured editing supports People, Iterations, Planning, PBIs, risks and decisions in their project folders"
+        "Structured editing supports planning, PBIs, risks, decisions and delivery-v1 records in their project folders"
     );
     ensure!(
         !path
@@ -288,6 +301,10 @@ impl Edit {
             metadata["type"] != "decision" || metadata["workflow_status"] == "draft",
             "Recorded decisions are historical; create a new decision linked to the previous record"
         );
+        ensure!(
+            !delivery::historical(&metadata),
+            "Recorded delivery outcomes are historical; create a new record linked through previous_records"
+        );
         Ok(Self {
             path: path.into(),
             original: Some(original),
@@ -298,7 +315,7 @@ impl Edit {
     }
     pub fn create(w: &Workspace, kind: &str) -> Result<Self> {
         ensure!(
-            ["pbi", "risk", "decision"].contains(&kind),
+            ["pbi", "risk", "decision"].contains(&kind) || delivery::KINDS.contains(&kind),
             "Unsupported record type"
         );
         let mut metadata =
@@ -309,7 +326,12 @@ impl Edit {
         } else {
             metadata["workflow_status"] = json!(if kind == "risk" { "open" } else { "draft" });
         }
-        let path = if kind == "pbi" {
+        if delivery::KINDS.contains(&kind) {
+            metadata["workflow_schema"] = json!(delivery::PROFILE);
+        }
+        let path = if let Some(folder) = delivery::folder(kind) {
+            folder
+        } else if kind == "pbi" {
             "05_Backlog/"
         } else {
             "07_Decisions/"
@@ -326,7 +348,10 @@ impl Edit {
     pub fn entries(&self) -> Vec<Entry> {
         let mut properties = if self.path == "06_Delivery/Planning.md" {
             vec![("as_of", FieldType::Date)]
-        } else if self.path.starts_with("06_Delivery/") {
+        } else if matches!(
+            self.path.as_str(),
+            "06_Delivery/People.md" | "06_Delivery/Iterations.md"
+        ) {
             vec![]
         } else {
             fields(self.metadata["type"].as_str().unwrap_or(""))
@@ -343,7 +368,10 @@ impl Edit {
                 target: Target::Property(key.into()),
             })
             .collect::<Vec<_>>();
-        if !self.path.starts_with("06_Delivery/") {
+        if !matches!(
+            self.path.as_str(),
+            "06_Delivery/People.md" | "06_Delivery/Iterations.md" | "06_Delivery/Planning.md"
+        ) {
             entries.push(Entry {
                 label: "Document content (Markdown)".into(),
                 value: self.render_body().unwrap_or_else(|_| self.body.clone()),
@@ -473,7 +501,10 @@ impl Edit {
         for key in ["type", "title", "language"] {
             records::string(m, key)?;
         }
-        if !path.starts_with("06_Delivery/") {
+        if !matches!(
+            path.as_str(),
+            "06_Delivery/People.md" | "06_Delivery/Iterations.md" | "06_Delivery/Planning.md"
+        ) {
             ensure!(
                 m["language"] == w.language()?,
                 "Document language differs from Settings; handle the language migration explicitly"
@@ -521,11 +552,38 @@ impl Edit {
         let mut planning_changes = vec![];
         validate_tables(&self.tables)?;
         if let Some(original) = &self.original {
-            let (old, _) = records::parse_project_note(original)?;
+            let (old, old_body) = records::parse_project_note(original)?;
             ensure!(
                 old["id"] == d.metadata["id"] && old["type"] == d.metadata["type"],
                 "Record identity cannot change"
             );
+            if old["type"] == "release"
+                && old["workflow_schema"] == delivery::PROFILE
+                && old["workflow_status"] == "ready"
+            {
+                let mut basis = d.metadata.clone();
+                for key in [
+                    "workflow_status",
+                    "released_by",
+                    "released_at",
+                    "release_evidence",
+                ] {
+                    if let Some(value) = old.get(key) {
+                        basis[key] = value.clone();
+                    } else {
+                        basis.as_object_mut().unwrap().remove(key);
+                    }
+                }
+                ensure!(
+                    basis == old
+                        && old_body.trim() == d.body.trim()
+                        && matches!(
+                            d.metadata["workflow_status"].as_str(),
+                            Some("ready" | "released")
+                        ),
+                    "A ready release preserves its reviewed scope and go decision; record only the release event here, or create a linked new record for a changed scope or no-go decision"
+                );
+            }
             if old["type"] == "decision" && old["workflow_status"] != "draft" {
                 ensure!(
                     old == d.metadata && original == &content,
@@ -607,7 +665,11 @@ impl Edit {
             ensure!(f.level != "ERROR", "{}: {}", f.code, f.message);
             warnings.push(format!("{}: {}", f.code, f.message));
         }
-        if d.path.starts_with("06_Delivery/") || d.kind == "pbi" {
+        if matches!(
+            d.path.as_str(),
+            "06_Delivery/People.md" | "06_Delivery/Iterations.md" | "06_Delivery/Planning.md"
+        ) || d.kind == "pbi"
+        {
             check_period_references(w, &d)?;
             match planning::preview(w, &d.path, &content) {
                 Ok(plan) => {

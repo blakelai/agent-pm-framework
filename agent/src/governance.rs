@@ -14,6 +14,7 @@ const COMMANDS: &[&str] = &[
     "validate",
     "coverage",
     "status",
+    "delivery",
     "impact",
     "baseline",
     "fingerprint",
@@ -84,6 +85,7 @@ enum Command {
     },
     Coverage,
     Status,
+    Delivery,
     Impact {
         id: String,
     },
@@ -334,6 +336,7 @@ fn execute(workspace: &Workspace, command: Command) -> Result<Value> {
         | Command::OkfCheck { .. } => unreachable!(),
         Command::Coverage => traceability::report(&records),
         Command::Status => status(&records),
+        Command::Delivery => Ok(crate::delivery::Snapshot::load(workspace).value()),
         Command::Impact { id } => baselines::impact(&records, &id),
         Command::Baseline { id, include } => {
             let mut result = baselines::capture(&records, &id, &include)?;

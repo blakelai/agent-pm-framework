@@ -10,14 +10,14 @@ A working first implementation of the local Rust terminal agent. It browses the 
 
 ## Build and start
 
-Run from the framework repository root. Rust 1.96+ and a C toolchain are required. The application and SQLite are compiled into the binary. All 15 PM operations run natively in Rust, including PDF/Office text extraction and OKF export. No Python installation is required to build or run the application. Git records repository revision/dirty state when available; unavailable Git produces an explicit unversioned snapshot.
+Run from the framework repository root. Rust 1.96+ and a C toolchain are required. The application and SQLite are compiled into the binary. All 16 PM operations run natively in Rust, including PDF/Office text extraction and OKF export. No Python installation is required to build or run the application. Git records repository revision/dirty state when available; unavailable Git produces an explicit unversioned snapshot.
 
 ```sh
 cargo build --manifest-path agent/Cargo.toml --locked
 agent/target/debug/pm-agent --vault . tui
 ```
 
-Browsing, searching and opening documents do not need an API key or model. Press `i`, type `/help`, and press Enter. Edit project content in Obsidian or use `o` to open the selected document with the desktop's associated application. Use `r` to reload changes.
+Browsing, searching and opening documents do not need an API key or model. F1 shows help; F2 switches directly to chat input. Edit project content in Obsidian or use `o` to open the selected document with the desktop's associated application. Use `r` to reload changes.
 
 Use a dedicated project copy for actual work. The framework checkout contains no demonstration requirements, staffing or dates. Keep [Project](../00_Governance/Project.md) and [Settings](../00_Governance/Settings.md) authoritative; a conversation's language does not change the document language.
 
@@ -61,6 +61,7 @@ agent/target/debug/pm-agent --vault . chat --stage prd "Review the supplied sour
 | O / R in Browse | Open original / refresh documents |
 | E / N in Browse | Edit supported project fields / create a PBI, risk or decision |
 | F5 / Planning in Browse | Interactive iteration, capacity and planning-signal views |
+| F7 / Delivery in Browse | Change, UAT, release and benefit records, evidence checks and editors |
 | Enter in Chat | Send the draft when idle; input is ready without pressing i |
 | Alt+Enter / supported Shift+Enter / Ctrl+J | Insert a newline; multiline paste never sends |
 | Esc in transcript | Latest output, resume following, return input focus |
@@ -79,6 +80,8 @@ Views include BRD, PRD/REQ, domain knowledge, systems, questions, people/schedul
 
 The [planning view](Planning-View.md) filters actual PBIs by iteration, shows capacity and remaining demand by role, and exposes supplied allocations across projects. M proposes a PBI move; review its before/after planning impact before saving. P, I and A open the existing allocation, iteration and forecast-date editors. Missing inputs keep calculations unavailable, and refreshing the view never replaces a historical forecast report.
 
+The [delivery views](Delivery-Workflows.md) show current workflow checks and missing inputs. N creates a draft in the selected workflow; E edits it through the same review/save controls. UAT uses approved requirement versions and actual tests, release requires matching UAT and operational evidence, and benefit measurements preserve supplied baselines and observation windows. Recorded outcomes remain historical; these screens do not approve or deploy automatically.
+
 | Command | Purpose |
 |---|---|
 | `/skills`, `/skills clear` | Select project Skills / clear additional selections |
@@ -87,6 +90,7 @@ The [planning view](Planning-View.md) filters actual PBIs by iteration, shows ca
 | `/stage prd` | Select a workflow capability before starting a session |
 | `/pm plan` | Recalculate a staffing forecast from recorded inputs |
 | `/pm validate`, `/pm coverage`, `/pm status` | Generate and display actual PM reports |
+| `/pm delivery` | Read current delivery records and missing gate inputs without writing a report |
 | `/sessions`, `/resume ID` | List or load durable conversations |
 | `/continue` | Explicitly continue a failed, cancelled or completed turn |
 | `/approve`, `/deny` | Decide the exact pending external/import operation |
@@ -102,7 +106,7 @@ Every PM operation uses the compiled Rust implementation. There is no Python dis
 | Capability | Commands |
 |---|---|
 | Analysis sources | `ingest`, `repo-add`, `sync`, `evidence` |
-| Planning and governance | `plan`, `validate`, `coverage`, `status`, `impact`, `baseline`, `fingerprint`, `settings`, `prepare` |
+| Planning and governance | `plan`, `validate`, `coverage`, `status`, `delivery`, `impact`, `baseline`, `fingerprint`, `settings`, `prepare` |
 | Knowledge exchange | `okf-export`, `okf-check` |
 
 The original implementation now lives only in `tests/legacy` as an independent regression oracle. Python is a development-test dependency, documented in [test setup](../tests/README.md); the binary does not embed or invoke those files.

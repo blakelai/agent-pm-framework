@@ -431,6 +431,7 @@ fn every_pm_entry_runs_as_a_binary_with_no_python_or_model_configuration() {
         "validate",
         "coverage",
         "status",
+        "delivery",
         "impact",
         "baseline",
         "fingerprint",

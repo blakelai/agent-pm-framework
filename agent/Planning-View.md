@@ -43,6 +43,6 @@ The selected PBI hash must still match the loaded view. The editor then checks p
 
 ## Scope
 
-This view supports one reviewed PBI move at a time and typed editing of existing planning inputs. It does not optimize assignments, choose dates, split work, infer holidays, infer consumed effort or establish commitments. Bulk schedule scenarios, a calendar-duration Gantt model, dedicated change/UAT/release/benefits screens and broader live-project evaluation remain separate work.
+This view supports one reviewed PBI move at a time and typed editing of existing planning inputs. It does not optimize assignments, choose dates, split work, infer holidays, infer consumed effort or establish commitments. [Delivery workflows](Delivery-Workflows.md) provide separate Change/UAT/Release/Benefit screens. Bulk schedule scenarios, a calendar-duration Gantt model and broader live-project evaluation remain separate work.
 
 See [planning rules](../06_Delivery/Planning.md), [interaction controls](Interaction.md) and [implementation milestones](Implementation.md).

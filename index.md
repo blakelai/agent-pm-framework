@@ -6,6 +6,7 @@ okf_version: "0.2"
 
 - [PM Agent application](agent/README.md) - Reference
 - [PM Agent implementation milestones](agent/Implementation.md) - Reference
+- [Delivery workflows](agent/Delivery-Workflows.md) - Reference
 
 - [Baselines and change](00_Governance/Baselines-and-Changes.md) - Reference
 - [Discovery and prioritization](00_Governance/Discovery-and-Prioritization.md) - Reference
@@ -28,6 +29,8 @@ okf_version: "0.2"
 - [Business requirements](80_Templates/BRD.md) - brd
 - [Baseline approval record](80_Templates/Baseline-Decision.md) - decision
 - [Change proposal](80_Templates/Change.md) - change
+- [User acceptance review](80_Templates/UAT.md) - uat
+- [Outcome measurement](80_Templates/Benefit.md) - benefit
 - [Bounded context](80_Templates/Context.md) - glossary
 - [Integration contract](80_Templates/Contract.md) - contract
 - [Decision record](80_Templates/Decision.md) - decision

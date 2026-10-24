@@ -638,6 +638,11 @@ fn inspect_record(
 ) {
     let m = &d.metadata;
     let kind = d.kind.as_str();
+    findings.check(
+        "DELIVERY_WORKFLOW",
+        &d.path,
+        crate::delivery::check(records, d),
+    );
     if let Some(language) = language
         && [
             "brd",
@@ -905,6 +910,26 @@ pub fn inspect(workspace: &Workspace) -> Result<Vec<Finding>> {
     }
     baseline_checks(&records, &paths, &mut findings);
     Ok(findings.0)
+}
+/// Reuse PBI completion checks for delivery gates without recursively checking releases.
+pub(crate) fn completed_item(records: &Records, item: &Document) -> Result<()> {
+    ensure!(
+        item.kind == "pbi" && item.metadata["delivery_status"] == "done",
+        "Expected a completed PBI"
+    );
+    let mut findings = Findings::default();
+    check_links(records, item, &mut findings);
+    inspect_record(records, item, None, &glossaries(records), &mut findings);
+    for f in findings.0 {
+        ensure!(
+            f.level != "ERROR",
+            "{}: {}: {}",
+            item.path,
+            f.code,
+            f.message
+        );
+    }
+    Ok(())
 }
 /// Apply the same record/readiness checks to an unsaved editor candidate.
 pub(crate) fn inspect_candidate(

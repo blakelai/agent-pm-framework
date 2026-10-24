@@ -142,6 +142,9 @@ pub fn evidence_for(records: &Records, req: &Document) -> Result<Coverage> {
         if d.kind != "release" || m["workflow_status"] != "released" || truth(&m["simulation"]) {
             continue;
         }
+        if crate::delivery::check(records, d).is_err() {
+            continue;
+        }
         let release_items = records.targets(m.get("items"), &["pbi"])?;
         let release_runs = records.targets(m.get("test_runs"), &["test_run"])?;
         if !pbis.is_empty()
