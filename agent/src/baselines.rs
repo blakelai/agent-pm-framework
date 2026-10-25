@@ -65,7 +65,7 @@ pub fn capture(records: &Records, id: &str, includes: &[String]) -> Result<Value
         json!({"manifest":format!("{relative}/manifest.json"),"manifest_sha256":hash(&bytes),"candidate":true,"approved":false}),
     )
 }
-fn snapshot_path(id: &str, entry: &Value) -> Result<String> {
+pub(crate) fn snapshot_path(id: &str, entry: &Value) -> Result<String> {
     let snapshot = string(entry, "snapshot")?;
     ensure!(
         Path::new(&snapshot)

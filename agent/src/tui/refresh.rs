@@ -15,12 +15,14 @@ pub const INTERVAL: Duration = Duration::from_secs(2);
 pub struct Views {
     planning: bool,
     delivery: bool,
+    inspecting: bool,
 }
 impl Views {
     pub fn of(app: &App) -> Self {
         Self {
             planning: app.planner.is_some(),
             delivery: app.delivery.is_some(),
+            inspecting: app.inspector.is_some(),
         }
     }
 }
@@ -197,6 +199,9 @@ fn apply(update: Update, app: &mut App, store: &mut Store) -> Result<()> {
     if let Some(form) = &mut app.form {
         form.inputs_changed();
     }
+    if let Some(inspector) = &mut app.inspector {
+        inspector.invalidate();
+    }
     Ok(())
 }
 
@@ -205,6 +210,9 @@ fn unavailable(problem: String, app: &mut App, store: &mut Store) -> bool {
         return false;
     }
     app.replace_documents(vec![]);
+    if let Some(inspector) = &mut app.inspector {
+        inspector.invalidate();
+    }
     let index_error = store.reindex(&[]).err();
     app.refresh_error = Some(match index_error {
         Some(e) => format!("{problem}; index unavailable: {e}"),
@@ -484,5 +492,22 @@ mod tests {
         assert!(monitor.finish(&request, Ok(Some(update)), &mut app, &mut store));
         assert!(!w.root.join("06_Delivery/Plan-Report.md").exists());
         assert!(!w.root.join("90_Agent/Runs").exists());
+    }
+    #[test]
+    fn file_change_invalidates_inspection_and_its_outstanding_worker() {
+        let (_dir, w, mut app, mut store, mut monitor) = fixture();
+        let request = crate::inspection::Request {
+            id: "PROJECT-TEST".into(),
+            target: crate::inspection::Target::Impact,
+        };
+        let mut inspector = super::super::inspection::Inspector::new(request.clone());
+        inspector.start(request.clone(), 1);
+        app.inspector = Some(inspector);
+        put(&w, "04_Requirements/TEST.md", "# Changed input");
+        assert!(poll(&w, &mut app, &mut store, &mut monitor));
+        let inspector = app.inspector.as_mut().unwrap();
+        assert!(inspector.ticket.is_none());
+        assert!(!inspector.finish(1, crate::inspection::load(&w, &request)));
+        assert!(inspector.message.contains("Results cleared"));
     }
 }

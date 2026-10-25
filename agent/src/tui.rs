@@ -1,6 +1,7 @@
 mod delivery;
 mod editor;
 mod form;
+mod inspection;
 mod markdown;
 mod planner;
 mod refresh;
@@ -81,6 +82,9 @@ pub async fn run(workspace: Workspace, config_path: PathBuf) -> Result<()> {
     let mut polling = tokio::time::interval(refresh::INTERVAL);
     polling.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     let (refresh_tx, mut refresh_rx) = mpsc::unbounded_channel();
+    let (inspect_tx, mut inspect_rx) = mpsc::unbounded_channel();
+    let mut inspection_running = false;
+    let mut inspection_ticket = 0u64;
     loop {
         tokio::select! {
             _ = polling.tick() => {
@@ -97,6 +101,10 @@ pub async fn run(workspace: Workspace, config_path: PathBuf) -> Result<()> {
             },
             Some((request, result)) = refresh_rx.recv() => {
                 dirty |= monitor.finish(&request, result, &mut app, &mut store);
+            },
+            Some((ticket, result)) = inspect_rx.recv() => {
+                inspection_running = false;
+                if let Some(inspector) = &mut app.inspector { dirty |= inspector.finish(ticket, result); }
             },
             _ = repaint.tick() => {
                 if dirty { terminal.draw(|f| app.draw(f))?; dirty = false; }
@@ -146,6 +154,24 @@ pub async fn run(workspace: Workspace, config_path: PathBuf) -> Result<()> {
                         if let Some(delivery)=&mut app.delivery {delivery.replace(snapshot);} else {app.delivery=Some(delivery::Delivery::new(snapshot));}
                     },
                     Command::CloseDelivery=>app.delivery=None,
+                    Command::Inspect(request)=>{
+                        if app.inspector.is_none() {app.inspector=Some(inspection::Inspector::new(request.clone()));}
+                        let inspector=app.inspector.as_mut().unwrap();
+                        if inspection_running {
+                            inspector.message="Previous inspection is finishing; R retries when it completes".into();
+                        } else {
+                            inspection_ticket=inspection_ticket.wrapping_add(1);
+                            inspector.start(request.clone(),inspection_ticket);
+                            inspection_running=true;
+                            let workspace=workspace.clone();let sender=inspect_tx.clone();let ticket=inspection_ticket;
+                            tokio::spawn(async move {
+                                let result=tokio::task::spawn_blocking(move || crate::inspection::load(&workspace,&request))
+                                    .await.context("Inspection worker failed").and_then(|r|r);
+                                let _=sender.send((ticket,result));
+                            });
+                        }
+                    },
+                    Command::CloseInspection=>app.inspector=None,
                     Command::Read(path)=>{refresh(&workspace,&mut app,&mut store);app.read_document(&path);},
                     Command::Schedule{path,hash,sprint}=>match crate::schedule::propose(&workspace,&path,&hash,sprint) {
                         Ok(edit)=>{

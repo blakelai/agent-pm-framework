@@ -4,6 +4,7 @@ pub mod delivery;
 pub mod editing;
 mod extraction;
 pub mod governance;
+pub mod inspection;
 mod locale;
 pub mod mcp;
 pub mod okf;

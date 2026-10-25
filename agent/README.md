@@ -10,7 +10,7 @@ A working first implementation of the local Rust terminal agent. It browses the 
 
 ## Build and start
 
-Run from the framework repository root. Rust 1.96+ and a C toolchain are required. The application and SQLite are compiled into the binary. All 16 PM operations run natively in Rust, including PDF/Office text extraction and OKF export. No Python installation is required to build or run the application. Git records repository revision/dirty state when available; unavailable Git produces an explicit unversioned snapshot.
+Run from the framework repository root. Rust 1.96+ and a C toolchain are required. The application and SQLite are compiled into the binary. All 17 PM operations run natively in Rust, including PDF/Office text extraction and OKF export. No Python installation is required to build or run the application. Git records repository revision/dirty state when available; unavailable Git produces an explicit unversioned snapshot.
 
 ```sh
 cargo build --manifest-path agent/Cargo.toml --locked
@@ -62,6 +62,7 @@ agent/target/debug/pm-agent --vault . chat --stage prd "Review the supplied sour
 | E / N in Browse | Edit supported project fields / create a PBI, risk or decision |
 | F5 / Planning in Browse | Interactive iteration, capacity and planning-signal views |
 | F7 / Delivery in Browse | Change, UAT, release and benefit records, evidence checks and editors |
+| F8 / Impact and compare in context menu | Recorded downstream chains and explicit baseline/source differences |
 | Enter in Chat | Send the draft when idle; input is ready without pressing i |
 | Alt+Enter / supported Shift+Enter / Ctrl+J | Insert a newline; multiline paste never sends |
 | Esc in transcript | Latest output, resume following, return input focus |
@@ -73,6 +74,8 @@ agent/target/debug/pm-agent --vault . chat --stage prd "Review the supplied sour
 The transcript and composer are borderless; the input has a gray background and supports multiple lines, cursor movement and Unicode grapheme deletion. The browser and conversation render Markdown. The status line shows the model, state, short session ID and service-reported input usage; click it or use `/status` for full details. Missing usage remains unavailable, with no estimates or inferred percentages.
 
 See the [interaction contract](Interaction.md) for focus priority, terminal compatibility, link handling and cancellation semantics.
+
+F8 or the document context menu opens [Impact and Compare](Inspection.md). Follow recorded reference chains, explicitly select a baseline to compare, or compare repository evidence against the latest synchronized snapshot. Changes clear stale results; R revalidates. Missing inputs remain visible and no business state is inferred from text differences.
 
 [Automatic refresh](Automatic-Refresh.md) detects local knowledge edits every two seconds without a model call. Browse, Planning and Delivery update while retaining selection and drafts. Changed inputs invalidate an open form's preview; unreadable files show an error and retry automatically. Historical reports are not regenerated.
 
@@ -93,6 +96,7 @@ The [delivery views](Delivery-Workflows.md) show current workflow checks and mis
 | `/pm plan` | Recalculate a staffing forecast from recorded inputs |
 | `/pm validate`, `/pm coverage`, `/pm status` | Generate and display actual PM reports |
 | `/pm delivery` | Read current delivery records and missing gate inputs without writing a report |
+| `/pm inspect ID` | Read downstream reference chains; add `--baseline BASE-ID` or `--source` for an explicit comparison |
 | `/sessions`, `/resume ID` | List or load durable conversations |
 | `/continue` | Explicitly continue a failed, cancelled or completed turn |
 | `/approve`, `/deny` | Decide the exact pending external/import operation |
@@ -108,7 +112,7 @@ Every PM operation uses the compiled Rust implementation. There is no Python dis
 | Capability | Commands |
 |---|---|
 | Analysis sources | `ingest`, `repo-add`, `sync`, `evidence` |
-| Planning and governance | `plan`, `validate`, `coverage`, `status`, `delivery`, `impact`, `baseline`, `fingerprint`, `settings`, `prepare` |
+| Planning and governance | `plan`, `validate`, `coverage`, `status`, `delivery`, `inspect`, `impact`, `baseline`, `fingerprint`, `settings`, `prepare` |
 | Knowledge exchange | `okf-export`, `okf-check` |
 
 The original implementation now lives only in `tests/legacy` as an independent regression oracle. Python is a development-test dependency, documented in [test setup](../tests/README.md); the binary does not embed or invoke those files.

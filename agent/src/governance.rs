@@ -15,6 +15,7 @@ const COMMANDS: &[&str] = &[
     "coverage",
     "status",
     "delivery",
+    "inspect",
     "impact",
     "baseline",
     "fingerprint",
@@ -86,6 +87,13 @@ enum Command {
     Coverage,
     Status,
     Delivery,
+    Inspect {
+        id: String,
+        #[arg(long, conflicts_with = "source")]
+        baseline: Option<String>,
+        #[arg(long)]
+        source: bool,
+    },
     Impact {
         id: String,
     },
@@ -337,6 +345,25 @@ fn execute(workspace: &Workspace, command: Command) -> Result<Value> {
         Command::Coverage => traceability::report(&records),
         Command::Status => status(&records),
         Command::Delivery => Ok(crate::delivery::Snapshot::load(workspace).value()),
+        Command::Inspect {
+            id,
+            baseline,
+            source,
+        } => {
+            use crate::inspection::{self, Request, Target};
+            let target = if let Some(id) = baseline {
+                Target::Baseline(id)
+            } else if source {
+                Target::Source
+            } else {
+                Target::Impact
+            };
+            let snapshot = inspection::load(workspace, &Request { id, target })?;
+            if let Some(error) = &snapshot.comparison_error {
+                anyhow::bail!("Comparison unavailable: {error}");
+            }
+            Ok(serde_json::to_value(snapshot)?)
+        }
         Command::Impact { id } => baselines::impact(&records, &id),
         Command::Baseline { id, include } => {
             let mut result = baselines::capture(&records, &id, &include)?;

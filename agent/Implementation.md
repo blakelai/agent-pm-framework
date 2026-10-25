@@ -24,12 +24,13 @@ The approved direction is a local Rust TUI for macOS/Linux, sharing project docu
 | Traceability and governance commands | Native coverage/status/impact, baseline capture and pinned fingerprints, settings and work packets; compatible legacy content hashes |
 | Validation | Native language, terminology, traceability, readiness/acceptance, source and baseline integrity, local OKF authoring checks; structured findings and strict-mode exit status |
 | Source operations | Native material import and PDF/Office text extraction, repository registration, immutable snapshots and hash-verified evidence capture |
+| Impact and comparison | Read-only reference chains, explicit baseline/current and pinned/latest source comparisons; background TUI reads, integrity checks and stale-result invalidation |
 | OKF exchange | Native bundle validation and staged portable export; exact raw attachments and typed Skill concepts |
 | MCP | Official Rust SDK, stdio/Streamable HTTP, configured tool allowlist, schema validation, exact-call authorization |
 | Store | SQLite sessions, tool ledger and document projection; unknown outcomes require reconciliation |
 | Distribution | Cargo lockfile, local configuration example, operating guide and macOS/Linux CI jobs |
 
-The executable workbench now has 16 native PM commands. Production execution and packaging no longer use Python, an embedded toolkit or an interpreter setting. Existing workflow procedures cover intake through operations. Structured editors, interactive scheduling/resource views and initial dedicated delivery workflows are implemented; visual artifact review, advanced planning and broader live-project evaluation remain on the product roadmap.
+The executable workbench now has 17 native PM commands. Production execution and packaging no longer use Python, an embedded toolkit or an interpreter setting. Existing workflow procedures cover intake through operations. Structured editors, interactive scheduling/resource views and initial dedicated delivery workflows are implemented; visual artifact review, advanced planning and broader live-project evaluation remain on the product roadmap.
 
 ## Delivery sequence and acceptance
 
@@ -45,7 +46,7 @@ The executable workbench now has 16 native PM commands. Production execution and
 ## Next engineering work
 
 1. Extend [delivery workflows](Delivery-Workflows.md) after real-project evaluation: multi-baseline or non-requirement release contracts, cost aggregation, explicit history migration and richer evidence navigation. Existing forms and scheduling are described in [Editing](Editing.md) and [Planning view](Planning-View.md). Bulk schedule scenarios and a calendar-duration model need separate requirements; person-days alone cannot establish task dates.
-2. Add dependency-scoped clarification gates, source impact views, document diffs and richer evidence navigation. [Automatic refresh](Automatic-Refresh.md) now uses background content polling; operating-system notifications and automatic conflict reconciliation remain possible reliability improvements.
+2. Add dependency-scoped clarification gates and extend [impact and comparison](Inspection.md) after usage feedback: material revision contracts, broader relationship types and richer evidence navigation. [Automatic refresh](Automatic-Refresh.md) now uses background content polling; operating-system notifications and automatic conflict reconciliation remain possible reliability improvements.
 3. Add explicit provider capability probes, provider capacity and budget controls beyond reported token counts, tested retry policies for proven idempotent reads, MCP OAuth, and reviewed visual extraction.
 4. Expand the live provider matrix using user-specified endpoints/models and evaluate a real repository/OpenWiki/source workflow. Installed model names, business sources and semantic decisions must not be inferred.
 

@@ -31,7 +31,9 @@ pub const TABS: &[(&str, &str)] = &[
     ("✅", "Verification"),
     ("🤖", "Agent Runs"),
 ];
-pub const HELP: &str = "# PM Agent\n\nF2 switches Browse / Chat. F1 opens help. Ctrl+Q exits when idle.\n\n## Browse\nAlt+1…9 selects a category; Alt+0 lists all categories. Alt+Left/Right cycles categories.\nEnter opens the selected document; Esc returns to the list. F3 collapses the list; F4 maximizes the document. F6 toggles emoji.\nTab switches focus. PgUp/PgDn scroll. Mouse wheel scrolls the pointed pane; drag the right scrollbar. Right-click opens actions. L shows document links. P shows properties. O opens the original in the desktop application. R refreshes immediately. Local knowledge files also refresh automatically every two seconds; drafts are retained and changed inputs require a new preview. E edits supported project fields; N creates a PBI, risk or decision. F5 or Planning opens the local planning view: 1 Schedule, 2 Capacity, 3 Signals; M proposes an iteration move; P/I/A edit allocations, iterations and forecast date; R refreshes; Esc returns. F7 or Delivery opens Changes, UAT, Releases and Benefits: 1-4/Alt+1-4 select tabs, N creates a draft, E edits, O opens the document, R refreshes, Enter focuses details, Esc returns.\n\n## Editing\nEnter/Tab edits fields; lists use one value per line. Use left/right to select enum values. Ctrl+S reviews changes, then Ctrl+S saves the reviewed result. Esc reverts the active field or returns from preview. Ctrl+D discards with confirmation.\n\n## Chat\nType immediately. Enter sends; Alt+Enter, Shift+Enter or Ctrl+J inserts a newline. Multiline paste never submits.\nScroll the conversation to read history. Esc returns to the latest message and input. A separate Esc in the input cancels an active operation. Ctrl+C clears only the draft.\n\n## Commands\n/help, /status, /skills, /skills clear, /search TEXT, /stage prd, /pm plan, /sessions, /resume ID, /continue, /approve, /deny, /reconcile ACTUAL_OUTCOME, /new, /quit.\nUse a leading $skill-name to explicitly enable a project Skill. Skills remain selected in the session until cleared. Context values come only from the service; missing values remain unavailable.";
+pub const HELP: &str = "# PM Agent\n\nF2 switches Browse / Chat. F1 opens help. Ctrl+Q exits when idle.\n\n## Browse\nAlt+1…9 selects a category; Alt+0 lists all categories. Alt+Left/Right cycles categories.\nEnter opens the selected document; Esc returns to the list. F3 collapses the list; F4 maximizes the document. F6 toggles emoji.\nTab switches focus. PgUp/PgDn scroll. Mouse wheel scrolls the pointed pane; drag the right scrollbar. Right-click opens actions. L shows document links. P shows properties. O opens the original in the desktop application. R refreshes immediately. Local knowledge files also refresh automatically every two seconds; drafts are retained and changed inputs require a new preview. E edits supported project fields; N creates a PBI, risk or decision. F5 or Planning opens the local planning view: 1 Schedule, 2 Capacity, 3 Signals; M proposes an iteration move; P/I/A edit allocations, iterations and forecast date; R refreshes; Esc returns. F7 or Delivery opens Changes, UAT, Releases and Benefits: 1-4/Alt+1-4 select tabs, N creates a draft, E edits, O opens the document, R refreshes, Enter focuses details, Esc returns.\n\nF8 or the document context menu opens Impact and Compare: 1 references, 2 baseline diff, 3 source diff; Enter explicitly compares a baseline; O opens a candidate; R revalidates; F4 maximizes; Esc returns. Changed project inputs clear results. Source comparisons use captured snapshots only.
+
+## Editing\nEnter/Tab edits fields; lists use one value per line. Use left/right to select enum values. Ctrl+S reviews changes, then Ctrl+S saves the reviewed result. Esc reverts the active field or returns from preview. Ctrl+D discards with confirmation.\n\n## Chat\nType immediately. Enter sends; Alt+Enter, Shift+Enter or Ctrl+J inserts a newline. Multiline paste never submits.\nScroll the conversation to read history. Esc returns to the latest message and input. A separate Esc in the input cancels an active operation. Ctrl+C clears only the draft.\n\n## Commands\n/help, /status, /skills, /skills clear, /search TEXT, /stage prd, /pm plan, /sessions, /resume ID, /continue, /approve, /deny, /reconcile ACTUAL_OUTCOME, /new, /quit.\nUse a leading $skill-name to explicitly enable a project Skill. Skills remain selected in the session until cleared. Context values come only from the service; missing values remain unavailable.";
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Mode {
@@ -63,6 +65,8 @@ pub enum Command {
     ClosePlanning,
     Delivery,
     CloseDelivery,
+    Inspect(crate::inspection::Request),
+    CloseInspection,
     Read(String),
     Schedule {
         path: String,
@@ -72,6 +76,7 @@ pub enum Command {
 }
 #[derive(Clone)]
 enum Choice {
+    Inspect,
     Delivery,
     Planning,
     Edit,
@@ -114,6 +119,7 @@ struct Regions {
     bar: Rect,
 }
 pub struct App {
+    pub(super) inspector: Option<super::inspection::Inspector>,
     pub(super) delivery: Option<super::delivery::Delivery>,
     pub(super) planner: Option<super::planner::Planner>,
     pub(super) form: Option<super::form::Form>,
@@ -155,6 +161,7 @@ pub struct App {
 impl App {
     pub fn new(docs: Vec<Document>) -> Self {
         Self {
+            inspector: None,
             delivery: None,
             planner: None,
             form: None,
@@ -268,6 +275,9 @@ impl App {
     }
     pub(super) fn read_document(&mut self, path: &str) {
         if !self.docs.iter().any(|d| d.path == path) {
+            if let Some(i) = &mut self.inspector {
+                i.message = "Document is no longer available; R rechecks the project".into();
+            }
             if let Some(p) = &mut self.planner {
                 p.message = "Document is no longer available; refresh the planning view".into();
             }
@@ -278,6 +288,7 @@ impl App {
         }
         self.planner = None;
         self.delivery = None;
+        self.inspector = None;
         self.tab = 0;
         self.filter.clear();
         self.selected = self
@@ -415,7 +426,13 @@ impl App {
     }
     fn action(&mut self, choice: Choice) -> Command {
         match choice {
-            Choice::Edit | Choice::New(_) | Choice::Planning | Choice::Delivery if self.busy => {
+            Choice::Edit
+            | Choice::New(_)
+            | Choice::Planning
+            | Choice::Delivery
+            | Choice::Inspect
+                if self.busy =>
+            {
                 self.status = "Wait for the active operation before editing project records".into()
             }
             Choice::Edit => {
@@ -427,6 +444,15 @@ impl App {
             Choice::New(kind) => return Command::New(kind.into()),
             Choice::Planning => return Command::Planning,
             Choice::Delivery => return Command::Delivery,
+            Choice::Inspect => {
+                if let Some(id) = self.visible().get(self.selected).and_then(|d| d.id.clone()) {
+                    return Command::Inspect(crate::inspection::Request {
+                        id,
+                        target: crate::inspection::Target::Impact,
+                    });
+                }
+                self.status = "Inspection needs a managed project record with an ID".into();
+            }
             Choice::Category(n) => self.category(n),
             Choice::Collapse => {
                 self.collapsed = !self.collapsed;
@@ -587,6 +613,7 @@ impl App {
                     ("Read document".into(), Choice::Maximize),
                     ("Open original".into(), Choice::Open),
                     ("Properties / provenance".into(), Choice::Properties),
+                    ("F8 Impact / compare".into(), Choice::Inspect),
                     ("Open link".into(), Choice::Links),
                     ("Reference in chat".into(), Choice::Reference),
                     ("Collapse / expand list".into(), Choice::Collapse),
@@ -654,6 +681,9 @@ impl App {
         }
     }
     pub fn event(&mut self, event: Event) -> Command {
+        if let Some(inspector) = &mut self.inspector {
+            return inspector.event(event);
+        }
         if let Some(form) = &mut self.form {
             return match form.event(event) {
                 super::form::Action::None => Command::None,
@@ -895,6 +925,7 @@ impl App {
             match key.code {
                 KeyCode::F(5) => return self.action(Choice::Planning),
                 KeyCode::F(7) => return self.action(Choice::Delivery),
+                KeyCode::F(8) => return self.action(Choice::Inspect),
                 KeyCode::F(3) => return self.action(Choice::Collapse),
                 KeyCode::F(4) => return self.action(Choice::Maximize),
                 KeyCode::F(6) => self.icons = !self.icons,
@@ -996,6 +1027,10 @@ impl App {
         }
     }
     fn draw_content(&mut self, f: &mut ratatui::Frame) {
+        if let Some(inspector) = &mut self.inspector {
+            inspector.draw(f);
+            return;
+        }
         if let Some(form) = &mut self.form {
             form.draw(f);
             return;
@@ -1539,6 +1574,39 @@ mod tests {
             .map(|c| c.symbol())
             .collect::<String>();
         assert!(rendered.contains("Files unavailable"));
+    }
+    #[test]
+    fn inspection_entry_requires_a_record_preserves_drafts_and_is_browse_only() {
+        let mut a = App::new(vec![]);
+        assert_eq!(key(&mut a, KeyCode::F(8)), Command::None);
+        a.docs.push(Document {
+            path: "04_Requirements/REQ-TEST.md".into(),
+            title: "Synthetic".into(),
+            kind: "requirement".into(),
+            id: Some("REQ-TEST".into()),
+            hash: "fixture".into(),
+            metadata: serde_json::json!({}),
+            body: "# Synthetic".into(),
+        });
+        a.input.insert("Unsent draft 中文");
+        let request = crate::inspection::Request {
+            id: "REQ-TEST".into(),
+            target: crate::inspection::Target::Impact,
+        };
+        assert_eq!(
+            key(&mut a, KeyCode::F(8)),
+            Command::Inspect(request.clone())
+        );
+        a.busy = true;
+        assert_eq!(key(&mut a, KeyCode::F(8)), Command::None);
+        a.busy = false;
+        a.switch(Mode::Chat);
+        assert_eq!(key(&mut a, KeyCode::F(8)), Command::None);
+        a.switch(Mode::Browse);
+        a.inspector = Some(super::super::inspection::Inspector::new(request));
+        a.read_document("04_Requirements/REQ-TEST.md");
+        assert!(a.inspector.is_none());
+        assert_eq!(a.input.text, "Unsent draft 中文");
     }
     #[test]
     fn delivery_entry_preserves_chat_and_blocks_while_running() {

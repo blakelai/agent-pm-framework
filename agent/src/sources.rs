@@ -328,7 +328,7 @@ fn snapshot_id(repo_id: &str, revision: &Value, dirty: &Value, files: &Value) ->
     }
     Ok(format!("SNAP-{repo_id}-{}", &hash(ascii.as_bytes())[..16]))
 }
-fn manifest(workspace: &Workspace, repo_id: &str, snapshot: &str) -> Result<Value> {
+pub(crate) fn manifest(workspace: &Workspace, repo_id: &str, snapshot: &str) -> Result<Value> {
     records::identifier(repo_id)?;
     let suffix = snapshot
         .strip_prefix(&format!("SNAP-{repo_id}-"))

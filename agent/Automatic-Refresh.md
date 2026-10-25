@@ -18,6 +18,8 @@ The browser retains its category, filter, selected path, focus, layout and readi
 
 Properties, link menus and document actions close on a refresh because their choices describe the old snapshot. An open scheduling destination picker closes with a message to reopen it against the current iteration list. Conversation input, transcript reading position, service-reported usage and active operations remain unchanged.
 
+An open [Impact and Compare](Inspection.md) view clears results on a tracked input change or read failure. R explicitly rebuilds its reference graph and comparison; an outstanding older inspection cannot restore cleared results. Snapshot payloads remain outside polling, so R is also required to detect external changes to those immutable inputs.
+
 ## Drafts and failures
 
 An open form retains its draft and active input field. A detected input change invalidates any existing preview and requires another review before saving. The existing save checks still reject a changed source document or changed review inputs, including changes made between polls. If the record being edited changed externally, discard and reopen it to reconcile; there is no automatic merge or overwrite.
@@ -28,6 +30,6 @@ A malformed or unreadable input produces a visible Files unavailable message. Th
 
 This feature uses content polling, not operating-system filesystem notifications. It reads knowledge documents under the same scope and size limits as browsing, plus baseline payloads and local catalogs. It excludes runtime data, Git metadata, raw assets, extracted originals and repository/OpenWiki snapshot payloads. Symlinks are not followed; linked auxiliary inputs and oversized baseline/catalog files are rejected. External registered repositories are not scanned or synchronized automatically; use the existing source operations and validation for provenance checks.
 
-Only the local document index and in-memory views change. No project report, edit audit, approval, test result, release event or measured benefit is generated. Historical reports retain their recorded timestamps until explicitly regenerated. These optimistic reads are not filesystem transactions, source-integrity certification or semantic verification. Backup/restore, document comparison and automatic conflict reconciliation remain separate milestones.
+Only the local document index and in-memory views change. No project report, edit audit, approval, test result, release event or measured benefit is generated. Historical reports retain their recorded timestamps until explicitly regenerated. These optimistic reads are not filesystem transactions, source-integrity certification or semantic verification. Backup/restore and automatic conflict reconciliation remain separate milestones.
 
 See [interaction controls](Interaction.md), [structured editing](Editing.md), [planning](Planning-View.md) and [delivery workflows](Delivery-Workflows.md).

@@ -22,6 +22,8 @@ E opens the [structured editor](Editing.md) for a supported project record. N st
 
 ## Reading and Markdown
 
+F8 or Impact / compare in a document's context menu opens the [read-only inspector](Inspection.md). Its three tabs show reference chains, an explicitly selected baseline diff and pinned-source versus latest-snapshot differences. Enter compares a selected baseline, O reads a candidate, R revalidates, F4 maximizes and Esc returns focus before closing. Mouse navigation and a detail scrollbar are available. External project changes clear results and require another recheck; no source sync or semantic invalidation is automatic.
+
 F7 or Delivery opens [Change, UAT, Release and Benefit workflows](Delivery-Workflows.md). Select a tab with 1–4, Alt+1–4 or a click; N creates a draft and E/right-click edits a supported record. Enter focuses details, Esc returns to the record list, and another Esc returns to Browse. Mouse scrolling and the detail scrollbar remain available; F6 toggles emoji. The same preview/save and discard controls apply. Current checks never create decisions or release events.
 
 F5 or the Planning button in Browse opens [interactive scheduling](Planning-View.md). Its Schedule, Capacity and Signals tabs support keyboard and mouse navigation. M/right-click proposes a PBI move and opens a reviewed editor; selecting an iteration alone never saves it. Esc closes the target picker first, then returns to Browse. Existing form discard controls apply to any proposed change. R refreshes the planning snapshot immediately; P/I/A edit People, Iterations and the forecast date.
