@@ -10,7 +10,7 @@ A working first implementation of the local Rust terminal agent. It browses the 
 
 ## Build and start
 
-Run from the framework repository root. Rust 1.96+ and a C toolchain are required. The application and SQLite are compiled into the binary. All 17 PM operations run natively in Rust, including PDF/Office text extraction and OKF export. No Python installation is required to build or run the application. Git records repository revision/dirty state when available; unavailable Git produces an explicit unversioned snapshot.
+Run from the framework repository root. Rust 1.96+ and a C toolchain are required. The application and SQLite are compiled into the binary. All 18 PM operations run natively in Rust, including PDF/Office text extraction and OKF export. No Python installation is required to build or run the application. Git records repository revision/dirty state when available; unavailable Git produces an explicit unversioned snapshot.
 
 ```sh
 cargo build --manifest-path agent/Cargo.toml --locked
@@ -63,6 +63,7 @@ agent/target/debug/pm-agent --vault . chat --stage prd "Review the supplied sour
 | F5 / Planning in Browse | Interactive iteration, capacity and planning-signal views |
 | F7 / Delivery in Browse | Change, UAT, release and benefit records, evidence checks and editors |
 | F8 / Impact and compare in context menu | Recorded downstream chains and explicit baseline/source differences |
+| F9 / Questions in context menu | Question scopes, affected records, response provenance and resolution checks |
 | Enter in Chat | Send the draft when idle; input is ready without pressing i |
 | Alt+Enter / supported Shift+Enter / Ctrl+J | Insert a newline; multiline paste never sends |
 | Esc in transcript | Latest output, resume following, return input focus |
@@ -97,6 +98,9 @@ The [delivery views](Delivery-Workflows.md) show current workflow checks and mis
 | `/pm validate`, `/pm coverage`, `/pm status` | Generate and display actual PM reports |
 | `/pm delivery` | Read current delivery records and missing gate inputs without writing a report |
 | `/pm inspect ID` | Read downstream reference chains; add `--baseline BASE-ID` or `--source` for an explicit comparison |
+| `/pm questions` | Read recorded question scopes and current blockers without a report or model |
+| `/answer QUESTION-ID TEXT` | Associate actual input with one open question; resume its originating session first |
+| `/continue-independent` | Resume supported independent work; pending questions stay open |
 | `/sessions`, `/resume ID` | List or load durable conversations |
 | `/continue` | Explicitly continue a failed, cancelled or completed turn |
 | `/approve`, `/deny` | Decide the exact pending external/import operation |
@@ -112,7 +116,7 @@ Every PM operation uses the compiled Rust implementation. There is no Python dis
 | Capability | Commands |
 |---|---|
 | Analysis sources | `ingest`, `repo-add`, `sync`, `evidence` |
-| Planning and governance | `plan`, `validate`, `coverage`, `status`, `delivery`, `inspect`, `impact`, `baseline`, `fingerprint`, `settings`, `prepare` |
+| Planning and governance | `plan`, `validate`, `coverage`, `status`, `delivery`, `questions`, `inspect`, `impact`, `baseline`, `fingerprint`, `settings`, `prepare` |
 | Knowledge exchange | `okf-export`, `okf-check` |
 
 The original implementation now lives only in `tests/legacy` as an independent regression oracle. Python is a development-test dependency, documented in [test setup](../tests/README.md); the binary does not embed or invoke those files.
@@ -148,7 +152,7 @@ Only tools listed in `allowed_tools` are exposed to the model. Every model-reque
 
 ## Clarification, recovery and persistence
 
-`ask_clarification` creates a project-language Question, displays it, and pauses the run. Other calls in the same model response are blocked. A user response is recorded with source and time; the Agent must assess it with `resolve_clarification` before dependent drafting continues. User messages are retained as exact UTF-8 source assets for citation. The current gate conservatively blocks all draft writes in a session with unresolved questions; dependency-specific parallel progress is a later milestone.
+`ask_clarification` creates a project-language Question, displays it and pauses the run; all later calls in that response are discarded. [Scoped clarification](Clarification.md) records a project-wide or explicit record scope. `/continue-independent` resumes local work without answering the question. Drafts and baseline candidates remain blocked for the specified records and their recorded dependents, across sessions. Actual replies are bound to the current question and scope; receipt alone does not resolve the question. Multiple open questions require `/answer QUESTION-ID TEXT`. MCP calls remain blocked while open question scopes cannot establish their independence. Legacy sessions retain their original conservative draft gate.
 
 Draft writes require typed frontmatter, project language metadata, draft state and current source hashes. Existing documents require the expected content hash. Approved or pinned documents cannot be overwritten. Updates use a temporary file and atomic replacement. The app locks out another PM Agent writer; external editors do not honor that lock, so hash checks reduce conflicts but are not a distributed editing transaction. Avoid editing a file during its Agent write.
 

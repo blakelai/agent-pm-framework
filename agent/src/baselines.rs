@@ -35,6 +35,16 @@ pub fn capture(records: &Records, id: &str, includes: &[String]) -> Result<Value
     for id in includes {
         identifier(id)?;
         let d = records.by_id(id)?;
+        let blocked = crate::clarification::blockers(&records.workspace, &d.path, None, &[])?;
+        ensure!(
+            blocked.is_empty(),
+            "Baseline blocked by unresolved clarification: {}",
+            blocked
+                .iter()
+                .map(|b| b.id.as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
         ensure!(
             DOCUMENT_TYPES.contains(&d.kind.as_str()),
             "Baseline supports controlled documents only: {id}"

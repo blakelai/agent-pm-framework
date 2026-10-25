@@ -73,7 +73,7 @@ pub struct DiffLine {
     pub text: String,
 }
 
-fn graph(records: &Records, id: &str) -> Result<(Vec<Candidate>, Vec<String>)> {
+pub(crate) fn graph(records: &Records, id: &str) -> Result<(Vec<Candidate>, Vec<String>)> {
     let bypath: BTreeMap<_, _> = records
         .active
         .iter()
@@ -95,6 +95,24 @@ fn graph(records: &Records, id: &str) -> Result<(Vec<Candidate>, Vec<String>)> {
                 Err(e) => {
                     unresolved.insert(format!("{consumer}: {raw}: {e}"));
                 }
+            }
+        }
+        // Agent draft citations use exact paths, independently of Wiki links.
+        for path in d.metadata["evidence_paths"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(Value::as_str)
+            .chain(
+                d.metadata["sources"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|s| s["resource"].as_str()),
+            )
+        {
+            if let Some(target) = bypath.get(path) {
+                refs.insert(target.to_string(), format!("recorded source path {path}"));
             }
         }
         if let Some(contexts) = d.metadata.get("contexts") {

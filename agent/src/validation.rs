@@ -638,6 +638,13 @@ fn inspect_record(
 ) {
     let m = &d.metadata;
     let kind = d.kind.as_str();
+    if kind == "question" && m.get("clarification_schema").is_some() {
+        findings.check(
+            "CLARIFICATION_SCOPE",
+            &d.path,
+            crate::clarification::check(records, d),
+        );
+    }
     findings.check(
         "DELIVERY_WORKFLOW",
         &d.path,

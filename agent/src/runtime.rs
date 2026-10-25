@@ -1,4 +1,5 @@
 use crate::{
+    clarification,
     config::Config,
     mcp::Mcp,
     provider::{Call, Event, Provider, ToolSpec},
@@ -40,6 +41,8 @@ pub struct Session {
     pub history: Vec<Value>,
     pub pending: Vec<Call>,
     pub questions: Vec<Question>,
+    #[serde(default)]
+    pub blocked_questions: Vec<String>,
     pub last_output: String,
     pub error: Option<String>,
     pub stage: String,
@@ -77,6 +80,7 @@ impl Session {
             history: vec![],
             pending: vec![],
             questions: vec![],
+            blocked_questions: vec![],
             last_output: String::new(),
             error: None,
             stage: stage.into(),
@@ -111,6 +115,85 @@ impl Runtime {
         self.store.save(&s.id, s)
     }
     pub fn input(&self, s: &mut Session, input: &str) -> Result<()> {
+        self.refresh_questions(s)?;
+        let open: Vec<_> = s.questions.iter().filter(|q| !q.resolved).collect();
+        let target = if s.status == Status::WaitingClarification && !open.is_empty() {
+            ensure!(
+                open.len() == 1,
+                "Several questions remain; use /answer QUESTION-ID TEXT (CLI: --answer QUESTION-ID)"
+            );
+            Some(open[0].path.clone())
+        } else {
+            None
+        };
+        self.accept_input(s, input, target.as_deref())
+    }
+    pub fn answer(&self, s: &mut Session, id: &str, input: &str) -> Result<()> {
+        self.refresh_questions(s)?;
+        ensure!(
+            !matches!(
+                s.status,
+                Status::WaitingApproval | Status::NeedsReconciliation
+            ),
+            "Handle the pending tool before answering"
+        );
+        let records = crate::records::Records::load(&self.workspace)?;
+        let d = records
+            .active
+            .iter()
+            .find(|d| d.path == id || d.id.as_deref() == Some(id))
+            .context("Question ID or exact path not found")?;
+        let path = d.path.clone();
+        if !s.questions.iter().any(|q| q.path == path) {
+            ensure!(
+                d.kind == "question"
+                    && d.metadata.get("clarification_schema").is_some()
+                    && d.metadata["workflow_status"] == "open",
+                "Expected an open scoped question"
+            );
+            ensure!(
+                d.metadata["session_id"].is_null() || d.metadata["session_id"] == s.id,
+                "Resume this question's originating session before answering"
+            );
+            s.questions.push(Question {
+                path: path.clone(),
+                question: d.title.clone(),
+                answer: None,
+                resolved: false,
+            });
+        }
+        ensure!(
+            !s.questions
+                .iter()
+                .find(|q| q.path == path)
+                .unwrap()
+                .resolved,
+            "Question is already resolved"
+        );
+        self.accept_input(s, input, Some(&path))
+    }
+    pub fn continue_independent(&self, s: &mut Session) -> Result<()> {
+        ensure!(
+            s.status == Status::WaitingClarification && s.pending.is_empty(),
+            "No clarification pause to continue"
+        );
+        s.history.push(json!({"role":"user","content":"[Application control: continue only independent work supported by existing evidence. This is not an answer, approval or resolution. Keep pending questions open.]"}));
+        s.status = Status::Ready;
+        self.save(s)
+    }
+    fn refresh_questions(&self, s: &mut Session) -> Result<()> {
+        for q in &mut s.questions {
+            let d = crate::records::read(&self.workspace, &q.path)?;
+            if d.metadata.get("clarification_schema").is_some() {
+                q.resolved = d.metadata["workflow_status"] == "resolved"
+                    && clarification::answer(&self.workspace, &d).is_ok()
+                    && clarification::check(&crate::records::Records::load(&self.workspace)?, &d)
+                        .is_ok();
+            }
+        }
+        Ok(())
+    }
+    fn accept_input(&self, s: &mut Session, input: &str, target: Option<&str>) -> Result<()> {
         ensure!(!input.trim().is_empty(), "Input cannot be empty");
         ensure!(
             !matches!(
@@ -128,33 +211,36 @@ impl Runtime {
                 }
             }
         }
-        if s.status == Status::WaitingClarification {
+        let source = format!("01_Sources/Assets/USER-{}.txt", uuid::Uuid::new_v4());
+        atomic_write(&self.workspace.path(&source)?, input.as_bytes())?;
+        if let Some(target) = target {
             let q = s
                 .questions
                 .iter_mut()
-                .rev()
-                .find(|q| !q.resolved)
+                .find(|q| q.path == target && !q.resolved)
                 .context("Missing pending question")?;
-            q.answer = Some(input.into());
             let text = self.workspace.read(&q.path)?;
             let (mut meta, mut body) = parse_note(&text)?;
-            meta["answer_received_at"] = json!(chrono::Utc::now().to_rfc3339());
-            meta["answer_source"] = json!(format!("local-user/session/{}", s.id));
-            // The answer is source data; the model must explicitly evaluate sufficiency.
-            let heading = if self.workspace.language()? == "zh-TW" {
-                "使用者回覆（尚待確認是否足以釐清）"
+            if meta.get("clarification_schema").is_some() {
+                clarification::record_answer(&self.workspace, &q.path, &s.id, &source)?;
             } else {
-                "User response (resolution pending)"
-            };
-            body.push_str(&format!("\n\n## {heading}\n\n{input}\n"));
-            atomic_write(
-                &self.workspace.path(&q.path)?,
-                note(meta, &body)?.as_bytes(),
-            )?;
+                meta["answer_received_at"] = json!(chrono::Utc::now().to_rfc3339());
+                meta["answer_source"] = json!(format!("local-user/session/{}", s.id));
+                // The answer is source data; the model must explicitly evaluate sufficiency.
+                let heading = if self.workspace.language()? == "zh-TW" {
+                    "使用者回覆（尚待確認是否足以釐清）"
+                } else {
+                    "User response (resolution pending)"
+                };
+                body.push_str(&format!("\n\n## {heading}\n\n{input}\n"));
+                atomic_write(
+                    &self.workspace.path(&q.path)?,
+                    note(meta, &body)?.as_bytes(),
+                )?;
+            }
+            q.answer = Some(input.into());
         }
-        let source = format!("01_Sources/Assets/USER-{}.txt", uuid::Uuid::new_v4());
-        atomic_write(&self.workspace.path(&source)?, input.as_bytes())?;
-        s.history.push(json!({"role":"user","content":format!("{input}\n\n[Application source locator: {source}; SHA256: {}]",hash(input.as_bytes()))}));
+        s.history.push(json!({"role":"user","content":format!("{input}\n\n[Application source locator: {source}; SHA256: {}; answer target: {}]",hash(input.as_bytes()),target.unwrap_or("none"))}));
         s.status = Status::Ready;
         s.error = None;
         self.save(s)
@@ -233,6 +319,7 @@ impl Runtime {
             prompt.push_str(&text);
         }
         prompt.push_str("\nBuilt-in PM command usage:\n");
+        prompt.push_str("Scoped clarification gates remain open until an actual response is sufficient. Use pm questions to inspect scopes. Continue independent local work only when supported by recorded evidence. Do not remove dependencies or choose narrower scopes to evade a question. MCP scope cannot be established locally and is blocked while questions remain.\n");
         prompt.push_str(include_str!("../../tools/README.md"));
         ensure!(
             prompt.len() < 180_000,
@@ -264,6 +351,7 @@ impl Runtime {
             s.provider_fingerprint == fingerprint(&self.config)?,
             "Provider profile changed; start a new session to avoid invalid protocol replay"
         );
+        self.refresh_questions(s)?;
         ensure!(
             matches!(s.status, Status::Ready | Status::Running),
             "This session is paused; answer, approve or reconcile its pending item first"
@@ -356,6 +444,54 @@ impl Runtime {
                     )));
                     return Ok(());
                 }
+                let mut gate = None;
+                if call.name == "write_draft" {
+                    let blocked = clarification::blockers(
+                        &self.workspace,
+                        tools::string(&args, "path")?,
+                        Some(tools::string(&args, "content")?),
+                        args["citations"].as_array().context("Missing citations")?,
+                    )?;
+                    for b in &blocked {
+                        if !s.blocked_questions.contains(&b.path) {
+                            s.blocked_questions.push(b.path.clone());
+                        }
+                    }
+                    if !blocked.is_empty() {
+                        gate =
+                            Some(json!({"status":"blocked_by_clarification","questions":blocked}));
+                    }
+                    for q in s.questions.iter().filter(|q| !q.resolved) {
+                        let (meta, _) = parse_note(&self.workspace.read(&q.path)?)?;
+                        if meta.get("clarification_schema").is_none() {
+                            gate = Some(
+                                json!({"error":"Resolve the legacy session question before writing drafts; no explicit independence scope was recorded","path":q.path}),
+                            );
+                        }
+                    }
+                }
+                if call.name.starts_with("mcp_")
+                    && (s.questions.iter().any(|q| !q.resolved)
+                        || clarification::has_open(&self.workspace)?)
+                {
+                    for entry in clarification::Snapshot::load(&self.workspace).entries {
+                        if (!entry.blocked.is_empty() || entry.problem.is_some())
+                            && !s.blocked_questions.contains(&entry.document.path)
+                        {
+                            s.blocked_questions.push(entry.document.path);
+                        }
+                    }
+                    gate = Some(
+                        json!({"error":"MCP scope cannot be established while clarification questions remain open. Use local source analysis or answer the questions first."}),
+                    );
+                }
+                if let Some(gate) = gate {
+                    self.provider
+                        .append_tool(&mut s.history, &call, &gate.to_string());
+                    s.pending.remove(0);
+                    self.save(s)?;
+                    continue;
+                }
                 if tools::requires_approval(&call.name, &args)
                     && approved.as_deref() != Some(&call.id)
                 {
@@ -383,12 +519,6 @@ impl Runtime {
                     }
                     self.save(s)?;
                     return Ok(());
-                }
-                if call.name == "write_draft" && s.questions.iter().any(|q| !q.resolved) {
-                    self.provider.append_tool(&mut s.history,&call,"{\"error\":\"Resolve recorded questions with actual answers before writing dependent drafts. Independent analysis may continue.\"}");
-                    s.pending.remove(0);
-                    self.save(s)?;
-                    continue;
                 }
                 self.store
                     .begin_call(&s.id, &call.id, &call.name, &call.arguments)?;
@@ -447,11 +577,22 @@ impl Runtime {
             }
             self.save(s)?;
             if s.pending.is_empty() {
-                s.status = if s.questions.iter().any(|q| !q.resolved) {
-                    Status::WaitingClarification
-                } else {
-                    Status::Completed
-                };
+                self.refresh_questions(s)?;
+                s.blocked_questions.retain(|path| {
+                    crate::records::read(&self.workspace, path).map_or(true, |d| {
+                        d.metadata["workflow_status"] != "resolved"
+                            || clarification::answer(&self.workspace, &d).is_err()
+                            || crate::records::Records::load(&self.workspace)
+                                .and_then(|r| clarification::check(&r, &d))
+                                .is_err()
+                    })
+                });
+                s.status =
+                    if s.questions.iter().any(|q| !q.resolved) || !s.blocked_questions.is_empty() {
+                        Status::WaitingClarification
+                    } else {
+                        Status::Completed
+                    };
                 if s.status == Status::WaitingClarification {
                     let _=events.send(Event::Notice("Open questions remain; run is not complete. Review Questions before continuing.".into()));
                 }
@@ -465,7 +606,7 @@ impl Runtime {
         let body = tools::string(args, "body")?;
         let id = format!("QUESTION-{}", uuid::Uuid::new_v4());
         let path = format!("07_Decisions/{id}.md");
-        let meta = json!({"type":"question","title":question,"id":id,"language":self.workspace.language()?,"workflow_status":"open","owner":null,"due_date":null,"asked_at":chrono::Utc::now().to_rfc3339(),"session_id":s.id});
+        let meta = clarification::ask_metadata(&self.workspace, args, &id, &s.id)?;
         atomic_write(
             &self.workspace.path(&path)?,
             note(meta, &format!("# {question}\n\n{body}"))?.as_bytes(),
@@ -478,7 +619,7 @@ impl Runtime {
         });
         s.status = Status::WaitingClarification;
         let _ = events.send(Event::Notice(format!(
-            "Question: {question}\n\n{body}\n\nReply to continue."
+            "Question: {id}\n{question}\n\n{body}\n\nReply with missing information, use /answer {id} TEXT, or /continue-independent to keep this question open."
         )));
         Ok(())
     }
@@ -496,6 +637,11 @@ impl Runtime {
         );
         let text = self.workspace.read(path)?;
         let (mut meta, mut body) = parse_note(&text)?;
+        if meta.get("clarification_schema").is_some() {
+            clarification::resolve(&self.workspace, path, &s.id, resolution)?;
+            q.resolved = true;
+            return Ok(json!({"status":"resolved","path":path,"semantic_review":"required"}));
+        }
         meta["workflow_status"] = json!("resolved");
         meta["resolution_at"] = json!(chrono::Utc::now().to_rfc3339());
         body.push_str(&format!(
@@ -548,6 +694,11 @@ impl Runtime {
             }
         );
         body.push_str("\n## Skill activations\n\n");
+        for path in &s.blocked_questions {
+            body.push_str(&format!(
+                "- Dependent work on hold: [{path}](../../{path})\n"
+            ));
+        }
         for activation in &s.skill_history {
             body.push_str(&format!("- Activated at: {}\n", activation.at));
             for skill in &activation.skills {

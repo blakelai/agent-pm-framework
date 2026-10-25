@@ -45,3 +45,9 @@ New change, uat, release and benefit records use workflow_schema: delivery-v1. [
 Drafts preserve unknown values. Accepted/rejected decisions, actual releases/cancellations and measured benefits are historical; corrections use a new ID and previous_records links. The profile uses explicit actual actors and RFC3339 times, approved requirement versions for UAT, matching acceptance/release scopes and supplied measurement inputs. Native validate and TUI saves share these structural checks. Their success is not proof of an actual event or semantic completeness.
 
 Older Change/Release records without the extension retain their legacy contract and are explicitly marked legacy in the Delivery view. They are not silently upgraded or editable through the new forms. Unknown schema versions fail validation. No baseline approval or project outcome is manufactured by migration.
+
+## Scoped clarification profile
+
+New application questions use `clarification_schema: clarification-v1`, `workflow_status: open|resolved`, `blocking_scope: project|records`, `affected_ids` and `affected_paths`. Project scope uses empty lists; record scope needs at least one existing ID or exact managed Markdown path. Missing scope is never inferred as independent work. Owner and due_date remain null until supplied.
+
+Captured responses record `session_id`, `answer_path`, `answer_sha256`, `answer_source`, `answer_received_at` and `answer_for_sha256`. Resolution additionally requires `resolution` and `resolution_at`. The fingerprint binds the original metadata and question body to the actual response; changed questions or source assets require a fresh response. See [clarification behavior](../agent/Clarification.md) for gates, legacy compatibility and manual questions. Structural validity does not prove semantic sufficiency.

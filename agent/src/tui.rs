@@ -4,6 +4,7 @@ mod form;
 mod inspection;
 mod markdown;
 mod planner;
+mod questions;
 mod refresh;
 mod view;
 use crate::{
@@ -40,6 +41,8 @@ enum Action {
     Message(String),
     Decision(bool),
     Continue,
+    Independent,
+    Answer(String, String),
     Reconcile(String),
 }
 struct InputModes;
@@ -154,6 +157,11 @@ pub async fn run(workspace: Workspace, config_path: PathBuf) -> Result<()> {
                         if let Some(delivery)=&mut app.delivery {delivery.replace(snapshot);} else {app.delivery=Some(delivery::Delivery::new(snapshot));}
                     },
                     Command::CloseDelivery=>app.delivery=None,
+                    Command::Questions=>{
+                        let snapshot=crate::clarification::Snapshot::load(&workspace);
+                        if let Some(q)=&mut app.questions {q.replace(snapshot);} else {app.questions=Some(questions::Questions::new(snapshot));}
+                    }
+                    Command::CloseQuestions=>app.questions=None,
                     Command::Inspect(request)=>{
                         if app.inspector.is_none() {app.inspector=Some(inspection::Inspector::new(request.clone()));}
                         let inspector=app.inspector.as_mut().unwrap();
@@ -410,8 +418,14 @@ fn dispatch(
         "/approve" => Action::Decision(true),
         "/deny" => Action::Decision(false),
         "/continue" => Action::Continue,
+        "/continue-independent" => Action::Independent,
         _ => {
-            if let Some(result) = input.strip_prefix("/reconcile ") {
+            if let Some(answer) = input.strip_prefix("/answer ") {
+                let (id, text) = answer
+                    .split_once(char::is_whitespace)
+                    .context("Use /answer QUESTION-ID TEXT")?;
+                Action::Answer(id.into(), text.trim().into())
+            } else if let Some(result) = input.strip_prefix("/reconcile ") {
                 Action::Reconcile(result.into())
             } else if input.starts_with('/') {
                 bail!("Unknown command; use /help")
@@ -441,6 +455,8 @@ fn dispatch(
             let mut approved = None;
             match action {
                 Action::Message(input) => runtime.input(&mut session, &input)?,
+                Action::Independent => runtime.continue_independent(&mut session)?,
+                Action::Answer(id, text) => runtime.answer(&mut session, &id, &text)?,
                 Action::Decision(yes) => {
                     if yes {
                         approved = session.pending.first().map(|c| c.id.clone());

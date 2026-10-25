@@ -5,7 +5,7 @@ use pm_agent::{
     provider::{Event, Provider},
     runtime::{Runtime, Session, Status},
     tools,
-    workspace::{Workspace, hash, note},
+    workspace::{Workspace, atomic_write, hash, note},
 };
 use serde_json::{Value, json};
 use std::{
@@ -319,6 +319,133 @@ async fn tool_roundtrip_creates_a_sourced_draft_and_preserves_hashes() {
 }
 
 #[tokio::test]
+async fn scoped_question_allows_explicit_independent_work_but_blocks_other_sessions() {
+    let (_dir, w) = fixture();
+    let root = "04_Requirements/REQ-SCOPED.md";
+    atomic_write(&w.path(root).unwrap(),note(json!({"id":"REQ-SCOPED","type":"requirement","title":"Synthetic","language":"en","doc_status":"draft"}),"# Synthetic gap").unwrap().as_bytes()).unwrap();
+    let (url,queue,_,server)=server(vec![chat("",vec![call(0,"ask-scope","ask_clarification",json!({"question":"Which rule applies?","body":"Supply the missing rule for REQ-SCOPED.","blocking_scope":"records","affected_ids":["REQ-SCOPED"]}))])]).await;
+    let cfg = config(url, Protocol::ChatCompletions);
+    let rt = Runtime::open(w.clone(), cfg.clone()).await.unwrap();
+    let mut s = Session::new(&cfg, "prd").unwrap();
+    rt.input(&mut s, "Inspect the synthetic source.").unwrap();
+    rt.run(&mut s, None, &events().0, &CancellationToken::new())
+        .await
+        .unwrap();
+    assert_eq!(s.status, Status::WaitingClarification);
+    let question = s.questions[0].path.clone();
+    let before = w.read(&question).unwrap();
+    rt.continue_independent(&mut s).unwrap();
+    assert!(s.questions[0].answer.is_none());
+    assert_eq!(w.read(&question).unwrap(), before);
+    let content=note(json!({"type":"prd","id":"PRD-FREE","title":"Independent draft","language":"en","doc_status":"draft"}),"# Supported independent draft").unwrap();
+    let args = json!({"path":"04_Requirements/PRD-FREE.md","content":content,"expected_hash":null,"citations":[{"path":"00_Governance/Project.md","sha256":hash(w.read("00_Governance/Project.md").unwrap().as_bytes())}]});
+    queue.lock().unwrap().extend([
+        chat("", vec![call(0, "independent", "write_draft", args)]),
+        chat("Independent work saved; the rule remains unknown.", vec![]),
+    ]);
+    rt.run(&mut s, None, &events().0, &CancellationToken::new())
+        .await
+        .unwrap();
+    assert_eq!(s.status, Status::WaitingClarification);
+    assert!(w.path("04_Requirements/PRD-FREE.md").unwrap().exists());
+    assert_eq!(w.read(&question).unwrap(), before);
+    let mut other = Session::new(&cfg, "prd").unwrap();
+    rt.input(&mut other, "Review the scoped requirement.")
+        .unwrap();
+    let blocked = json!({"path":root,"content":note(json!({"id":"REQ-SCOPED","type":"requirement","title":"Synthetic","language":"en","doc_status":"draft"}),"# Unsupported update").unwrap(),"expected_hash":hash(w.read(root).unwrap().as_bytes()),"citations":[{"path":"00_Governance/Project.md","sha256":hash(w.read("00_Governance/Project.md").unwrap().as_bytes())}]});
+    queue.lock().unwrap().extend([
+        chat("", vec![call(0, "blocked", "write_draft", blocked)]),
+        chat("Blocked by the existing scoped question.", vec![]),
+    ]);
+    rt.run(&mut other, None, &events().0, &CancellationToken::new())
+        .await
+        .unwrap();
+    assert_eq!(other.status, Status::WaitingClarification);
+    assert_eq!(other.blocked_questions, vec![question.clone()]);
+    assert!(!w.read(root).unwrap().contains("Unsupported update"));
+    assert!(rt.answer(&mut other, &question, "Wrong session").is_err());
+    let mut old = serde_json::to_value(&s).unwrap();
+    old.as_object_mut().unwrap().remove("blocked_questions");
+    let restored: Session = serde_json::from_value(old).unwrap();
+    assert!(restored.blocked_questions.is_empty());
+    server.abort();
+}
+
+#[tokio::test]
+async fn multiple_questions_require_explicit_answers_and_stale_answers_cannot_resolve() {
+    let (_dir, w) = fixture();
+    let (url, queue, _, server) = server(vec![chat(
+        "",
+        vec![call(
+            0,
+            "ask-one",
+            "ask_clarification",
+            json!({"question":"First missing fact?","body":"Supply the first fact."}),
+        )],
+    )])
+    .await;
+    let cfg = config(url, Protocol::ChatCompletions);
+    let rt = Runtime::open(w.clone(), cfg.clone()).await.unwrap();
+    let mut s = Session::new(&cfg, "prd").unwrap();
+    rt.input(&mut s, "Inspect gaps.").unwrap();
+    rt.run(&mut s, None, &events().0, &CancellationToken::new())
+        .await
+        .unwrap();
+    rt.continue_independent(&mut s).unwrap();
+    queue.lock().unwrap().push_back(chat(
+        "",
+        vec![call(
+            0,
+            "ask-two",
+            "ask_clarification",
+            json!({"question":"Second missing fact?","body":"Supply the second fact."}),
+        )],
+    ));
+    rt.run(&mut s, None, &events().0, &CancellationToken::new())
+        .await
+        .unwrap();
+    let first = s.questions[0].path.clone();
+    let second = s.questions[1].path.clone();
+    assert!(rt.input(&mut s, "Ambiguous reply").is_err());
+    rt.answer(&mut s, &first, "Actual synthetic first answer.")
+        .unwrap();
+    assert!(s.questions[0].answer.is_some());
+    assert!(s.questions[1].answer.is_none());
+    assert!(!w.read(&second).unwrap().contains("answer_received_at"));
+    let text = w.read(&first).unwrap();
+    let (meta, body) = pm_agent::workspace::parse_note(&text).unwrap();
+    atomic_write(
+        &w.path(&first).unwrap(),
+        note(meta, &format!("{body}\nNew material question."))
+            .unwrap()
+            .as_bytes(),
+    )
+    .unwrap();
+    queue.lock().unwrap().extend([
+        chat(
+            "",
+            vec![call(
+                0,
+                "stale-resolve",
+                "resolve_clarification",
+                json!({"path":first,"resolution":"The old answer is enough."}),
+            )],
+        ),
+        chat("A fresh answer is required.", vec![]),
+    ]);
+    rt.run(&mut s, None, &events().0, &CancellationToken::new())
+        .await
+        .unwrap();
+    assert_eq!(s.status, Status::WaitingClarification);
+    assert!(!s.questions[0].resolved);
+    assert!(s.history.iter().any(|h| {
+        h.to_string()
+            .contains("does not match the current question")
+    }));
+    server.abort();
+}
+
+#[tokio::test]
 async fn responses_adapter_replays_reasoning_and_tool_output() {
     let response = json!({"type":"response.completed","response":{"status":"completed","output":[{"type":"reasoning","id":"r1","encrypted_content":"opaque"},{"type":"function_call","call_id":"call1","name":"list_documents","arguments":"{}"}]}});
     let final_response = json!({"type":"response.completed","response":{"status":"completed","output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Done"}]}]}});
@@ -450,6 +577,83 @@ async fn mcp_stdio_discovers_only_allowlisted_tools_and_calls_them() {
         .unwrap();
     assert_eq!(value["content"][0]["text"], "fixture");
     assert!(client.call("mcp_fixture_hidden", json!({})).await.is_err());
+}
+
+#[tokio::test]
+async fn explicit_answer_adopts_manual_question_and_unresolved_questions_gate_mcp() {
+    let (_dir, w) = fixture();
+    let path = "07_Decisions/Manual/QUESTION-MANUAL.md";
+    atomic_write(&w.path(path).unwrap(),note(json!({"id":"QUESTION-MANUAL","type":"question","title":"Synthetic manual question","language":"en","workflow_status":"open","clarification_schema":"clarification-v1","blocking_scope":"project","affected_ids":[],"affected_paths":[]}),"# Supply the missing source").unwrap().as_bytes()).unwrap();
+    let (url, queue, _, server) = server(vec![
+        chat(
+            "",
+            vec![call(
+                0,
+                "blocked-mcp",
+                "mcp_fixture_echo",
+                json!({"text":"Do not execute"}),
+            )],
+        ),
+        chat("The project question remains open.", vec![]),
+    ])
+    .await;
+    let mut cfg = config(url, Protocol::ChatCompletions);
+    cfg.mcp.insert(
+        "fixture".into(),
+        McpConfig::Stdio {
+            command: std::env::var("PM_TEST_PYTHON").unwrap_or("python3".into()),
+            args: vec![
+                Path::new(env!("CARGO_MANIFEST_DIR"))
+                    .join("tests/mcp_fixture.py")
+                    .to_string_lossy()
+                    .into(),
+            ],
+            env_names: vec![],
+            allowed_tools: vec!["echo".into()],
+        },
+    );
+    let rt = Runtime::open(w.clone(), cfg.clone()).await.unwrap();
+    let mut s = Session::new(&cfg, "prd").unwrap();
+    rt.input(&mut s, "Inspect the synthetic project.").unwrap();
+    rt.run(&mut s, None, &events().0, &CancellationToken::new())
+        .await
+        .unwrap();
+    assert_eq!(s.status, Status::WaitingClarification);
+    assert!(
+        rt.store
+            .call_result(&s.id, "blocked-mcp")
+            .unwrap()
+            .is_none()
+    );
+    rt.answer(
+        &mut s,
+        "QUESTION-MANUAL",
+        "Actual source supplied by the fixture user.",
+    )
+    .unwrap();
+    assert_eq!(s.questions[0].path, path);
+    assert_eq!(
+        pm_agent::records::read(&w, path).unwrap().metadata["session_id"],
+        s.id
+    );
+    queue.lock().unwrap().extend([
+        chat(
+            "",
+            vec![call(
+                0,
+                "manual-resolve",
+                "resolve_clarification",
+                json!({"path":path,"resolution":"The user supplied the requested fixture source."}),
+            )],
+        ),
+        chat("Recorded response resolves this question.", vec![]),
+    ]);
+    rt.run(&mut s, None, &events().0, &CancellationToken::new())
+        .await
+        .unwrap();
+    assert_eq!(s.status, Status::Completed);
+    assert!(s.blocked_questions.is_empty());
+    server.abort();
 }
 
 #[tokio::test]

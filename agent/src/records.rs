@@ -187,6 +187,13 @@ impl Records {
                     continue;
                 }
                 let d = read(workspace, &d.path)?;
+                if d.metadata.get("clarification_schema").is_some() {
+                    ensure!(
+                        d.kind == "question" && d.id.as_deref().is_some_and(|id| !id.is_empty()),
+                        "Scoped clarification requires type=question and a nonempty ID: {}",
+                        d.path
+                    );
+                }
                 if !truth(&d.metadata["id"]) {
                     continue;
                 }

@@ -16,6 +16,7 @@ pub struct Views {
     planning: bool,
     delivery: bool,
     inspecting: bool,
+    questions: bool,
 }
 impl Views {
     pub fn of(app: &App) -> Self {
@@ -23,6 +24,7 @@ impl Views {
             planning: app.planner.is_some(),
             delivery: app.delivery.is_some(),
             inspecting: app.inspector.is_some(),
+            questions: app.questions.is_some(),
         }
     }
 }
@@ -38,6 +40,7 @@ pub struct Update {
     docs: Vec<Document>,
     planning: Option<schedule::Snapshot>,
     delivery: Option<delivery::Snapshot>,
+    questions: Option<crate::clarification::Snapshot>,
 }
 
 /// A manual refresh, save or view switch supersedes any outstanding read.
@@ -108,6 +111,18 @@ fn fingerprint(w: &Workspace, docs: &[Document]) -> Result<String> {
         .iter()
         .map(|d| (d.path.clone(), d.hash.clone()))
         .collect();
+    for d in docs
+        .iter()
+        .filter(|d| d.kind == "question" && d.metadata.get("clarification_schema").is_some())
+    {
+        if let Some(path) = d.metadata["answer_path"].as_str() {
+            let fingerprint = match w.read(path) {
+                Ok(text) => workspace::hash(text.as_bytes()),
+                Err(e) => format!("unavailable: {e}"),
+            };
+            hashes.insert(format!("answer:{path}"), fingerprint);
+        }
+    }
     // Baseline payloads affect acceptance even though they are not browse records.
     // Locale catalogs affect planning. Raw assets, repo checkouts, Git and runtime
     // state are deliberately outside this display refresh contract.
@@ -156,6 +171,10 @@ pub fn scan(w: &Workspace, request: &Request) -> Result<Option<Update>> {
     }
     let planning = request.views.planning.then(|| schedule::Snapshot::load(w));
     let delivery = request.views.delivery.then(|| delivery::Snapshot::load(w));
+    let questions = request
+        .views
+        .questions
+        .then(|| crate::clarification::Snapshot::load(w));
     // A changing tree cannot be represented as one fresh display snapshot.
     // This is an optimistic check, not a filesystem transaction or an attestation.
     ensure!(
@@ -167,6 +186,7 @@ pub fn scan(w: &Workspace, request: &Request) -> Result<Option<Update>> {
         docs,
         planning,
         delivery,
+        questions,
     }))
 }
 
@@ -195,6 +215,9 @@ fn apply(update: Update, app: &mut App, store: &mut Store) -> Result<()> {
     }
     if let (Some(d), Some(snapshot)) = (&mut app.delivery, update.delivery) {
         d.replace(snapshot);
+    }
+    if let (Some(q), Some(snapshot)) = (&mut app.questions, update.questions) {
+        q.replace(snapshot);
     }
     if let Some(form) = &mut app.form {
         form.inputs_changed();
@@ -226,6 +249,13 @@ fn unavailable(problem: String, app: &mut App, store: &mut Store) -> bool {
             people: vec![],
             forecast: None,
             problems: vec![problem.clone()],
+        });
+    }
+    if let Some(q) = &mut app.questions {
+        q.replace(crate::clarification::Snapshot {
+            loaded_at: records::timestamp(),
+            entries: vec![],
+            problem: Some(problem.clone()),
         });
     }
     if let Some(delivery) = &mut app.delivery {
@@ -509,5 +539,26 @@ mod tests {
         assert!(inspector.ticket.is_none());
         assert!(!inspector.finish(1, crate::inspection::load(&w, &request)));
         assert!(inspector.message.contains("Results cleared"));
+    }
+    #[test]
+    fn cited_answer_changes_refresh_questions() {
+        let (_dir, w, mut app, mut store, mut monitor) = fixture();
+        workspace::atomic_write(&w.path("07_Decisions/QUESTION-TEST.md").unwrap(),workspace::note(serde_json::json!({"type":"question","id":"QUESTION-TEST","title":"Synthetic question","clarification_schema":"clarification-v1","workflow_status":"open","blocking_scope":"project","affected_ids":[],"affected_paths":[],"answer_path":"01_Sources/Assets/USER-test.txt"}),"# Missing source").unwrap().as_bytes()).unwrap();
+        workspace::atomic_write(
+            &w.path("01_Sources/Assets/USER-test.txt").unwrap(),
+            b"First actual fixture input",
+        )
+        .unwrap();
+        app.questions = Some(super::super::questions::Questions::new(
+            crate::clarification::Snapshot::load(&w),
+        ));
+        assert!(poll(&w, &mut app, &mut store, &mut monitor));
+        workspace::atomic_write(
+            &w.path("01_Sources/Assets/USER-test.txt").unwrap(),
+            b"Changed fixture input",
+        )
+        .unwrap();
+        assert!(poll(&w, &mut app, &mut store, &mut monitor));
+        assert!(!poll(&w, &mut app, &mut store, &mut monitor));
     }
 }

@@ -41,13 +41,13 @@ pub fn specs() -> Vec<ToolSpec> {
         spec(
             "ask_clarification",
             "Ask the user for unclear, missing, conflicting or unreadable information. This pauses the run. Include an explicit question, needed material, inspected sources and affected work, in the project language. Never fill missing information by guessing.",
-            json!({"question":{"type":"string"},"body":{"type":"string","description":"Complete Markdown explanation in project language: known evidence, material requested, affected work and unknown owner/date."}}),
+            json!({"question":{"type":"string"},"body":{"type":"string","description":"Complete Markdown explanation in project language: known evidence, material requested, affected work and unknown owner/date."},"blocking_scope":{"type":"string","enum":["project","records"],"description":"Defaults to project. Choose records only with evidence for a bounded scope; dependencies are also blocked."},"affected_ids":{"type":"array","items":{"type":"string"},"uniqueItems":true},"affected_paths":{"type":"array","items":{"type":"string"},"uniqueItems":true}}),
             &["question", "body"],
         ),
         spec(
             "pm",
             "Execute a deterministic built-in project-management operation. Read tools/README.md for arguments. Local reports, work packets, registered snapshots, evidence and baseline candidates run directly. New external sources, language changes and exports require exact-call confirmation. Unknown scheduling inputs remain unknown.",
-            json!({"command":{"type":"string","enum":["validate","coverage","plan","status","delivery","inspect","impact","fingerprint","settings","ingest","repo-add","sync","evidence","prepare","baseline","okf-export","okf-check"]},"args":{"type":"array","items":{"type":"string"}}}),
+            json!({"command":{"type":"string","enum":["validate","coverage","plan","status","delivery","questions","inspect","impact","fingerprint","settings","ingest","repo-add","sync","evidence","prepare","baseline","okf-export","okf-check"]},"args":{"type":"array","items":{"type":"string"}}}),
             &["command", "args"],
         ),
     ]
@@ -78,6 +78,7 @@ pub fn requires_approval(name: &str, args: &Value) -> bool {
                         | "plan"
                         | "status"
                         | "delivery"
+                        | "questions"
                         | "inspect"
                         | "impact"
                         | "fingerprint"
@@ -188,6 +189,7 @@ pub async fn run_pm(workspace: &Workspace, command: &str, args: &[String]) -> Re
             "plan",
             "status",
             "delivery",
+            "questions",
             "inspect",
             "impact",
             "fingerprint",

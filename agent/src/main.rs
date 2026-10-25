@@ -60,6 +60,12 @@ enum Command {
         deny: bool,
         #[arg(long)]
         reconcile: Option<String>,
+        /// Continue evidence-backed independent work without answering open questions.
+        #[arg(long, requires = "session", conflicts_with_all = ["prompt","answer","approve","deny","reconcile"])]
+        independent: bool,
+        /// Associate the prompt with this question ID or exact path.
+        #[arg(long, requires_all = ["session","prompt"], conflicts_with_all = ["approve","deny","reconcile"])]
+        answer: Option<String>,
     },
     /// Validate configuration and local prerequisites without making model requests.
     Doctor,
@@ -133,7 +139,14 @@ async fn main() -> Result<()> {
                 );
                 println!("API key environment variable: present (value hidden)");
             }
-            println!("PM operations: native Rust (15 commands)");
+            let commands = tools::specs().into_iter().find(|t| t.name == "pm").unwrap();
+            println!(
+                "PM operations: native Rust ({} commands)",
+                commands.parameters["properties"]["command"]["enum"]
+                    .as_array()
+                    .unwrap()
+                    .len()
+            );
             println!(
                 "Local configuration passed. Provider/MCP live compatibility has NOT been tested."
             );
@@ -146,6 +159,8 @@ async fn main() -> Result<()> {
             approve,
             deny,
             reconcile,
+            independent,
+            answer,
         } => {
             let config = Config::load(&config_path)?;
             let runtime = Runtime::open(workspace, config).await?;
@@ -175,8 +190,14 @@ async fn main() -> Result<()> {
             if let Some(result) = reconcile {
                 runtime.reconcile(&mut s, &result)?;
             }
-            if let Some(prompt) = prompt {
-                runtime.input(&mut s, &prompt)?;
+            if independent {
+                runtime.continue_independent(&mut s)?;
+            } else if let Some(prompt) = prompt {
+                if let Some(id) = answer {
+                    runtime.answer(&mut s, &id, &prompt)?;
+                } else {
+                    runtime.input(&mut s, &prompt)?;
+                }
             } else if matches!(
                 s.status,
                 Status::Failed | Status::Cancelled | Status::Completed

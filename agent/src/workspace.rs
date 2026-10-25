@@ -225,6 +225,10 @@ impl Workspace {
             "Expected a Markdown draft under 2 MiB"
         );
         let (m, body) = parse_note(content)?;
+        ensure!(
+            m["type"] != "question" && m.get("clarification_schema").is_none(),
+            "Use ask_clarification to surface questions to the user"
+        );
         for key in ["type", "title", "id", "language"] {
             ensure!(
                 m[key].as_str().is_some_and(|v| !v.trim().is_empty()),
@@ -279,6 +283,10 @@ impl Workspace {
             let old = fs::read_to_string(&dest)?;
             let (meta, _) = parse_note(&old)?;
             ensure!(
+                meta["type"] != "question" && meta.get("clarification_schema").is_none(),
+                "Question scope and responses cannot be overwritten through write_draft"
+            );
+            ensure!(
                 meta["doc_status"] == "draft",
                 "Only existing draft documents can be edited by the Agent"
             );
@@ -324,6 +332,7 @@ impl Workspace {
             ),
         );
         let output = note(Value::Object(properties), &body)?;
+        crate::clarification::ensure_draft(self, relative, &output, citations)?;
         atomic_write(&dest, output.as_bytes())?;
         Ok(hash(output.as_bytes()))
     }

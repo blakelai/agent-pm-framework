@@ -17,6 +17,7 @@ The approved direction is a local Rust TUI for macOS/Linux, sharing project docu
 | File refresh | Background content polling for knowledge documents, baselines and catalogs; automatic browse/planning/delivery updates, retained drafts and stale-preview invalidation |
 | Structured editing | Human-operated forms for allocations, iterations, forecast dates, PBIs, risks and draft decisions; reviewed diffs, existing readiness/planning checks, optimistic conflict checks and edit records |
 | Provider | Responses and Chat Completions SSE adapters, fragmented UTF-8 and function arguments, local conversation replay, error/cancellation handling |
+| Clarification | Explicit project/record scopes, transitive draft/baseline gates across sessions, independent continuation, answer provenance and read-only Questions view |
 | Agent runtime | Stage Skill/Playbook plus explicit custom Skills, dependency/reference validation and activation fingerprints; tool loop, persisted questions and sourced draft writes |
 | Planning | Native Rust estimates/capacity/dependencies, localized Markdown reports and structured forecast data; no interpreter required |
 | Interactive planning | Iteration-filtered PBIs, role capacity/demand, supplied allocations and project-wide signals; reviewed single-item scheduling with before/after planning impact |
@@ -30,7 +31,7 @@ The approved direction is a local Rust TUI for macOS/Linux, sharing project docu
 | Store | SQLite sessions, tool ledger and document projection; unknown outcomes require reconciliation |
 | Distribution | Cargo lockfile, local configuration example, operating guide and macOS/Linux CI jobs |
 
-The executable workbench now has 17 native PM commands. Production execution and packaging no longer use Python, an embedded toolkit or an interpreter setting. Existing workflow procedures cover intake through operations. Structured editors, interactive scheduling/resource views and initial dedicated delivery workflows are implemented; visual artifact review, advanced planning and broader live-project evaluation remain on the product roadmap.
+The executable workbench now has 18 native PM commands. Production execution and packaging no longer use Python, an embedded toolkit or an interpreter setting. Existing workflow procedures cover intake through operations. Structured editors, interactive scheduling/resource views and initial dedicated delivery workflows are implemented; visual artifact review, advanced planning and broader live-project evaluation remain on the product roadmap.
 
 ## Delivery sequence and acceptance
 
@@ -46,7 +47,7 @@ The executable workbench now has 17 native PM commands. Production execution and
 ## Next engineering work
 
 1. Extend [delivery workflows](Delivery-Workflows.md) after real-project evaluation: multi-baseline or non-requirement release contracts, cost aggregation, explicit history migration and richer evidence navigation. Existing forms and scheduling are described in [Editing](Editing.md) and [Planning view](Planning-View.md). Bulk schedule scenarios and a calendar-duration model need separate requirements; person-days alone cannot establish task dates.
-2. Add dependency-scoped clarification gates and extend [impact and comparison](Inspection.md) after usage feedback: material revision contracts, broader relationship types and richer evidence navigation. [Automatic refresh](Automatic-Refresh.md) now uses background content polling; operating-system notifications and automatic conflict reconciliation remain possible reliability improvements.
+2. Evaluate [scoped clarification](Clarification.md) with real project questions and extend [impact and comparison](Inspection.md) after usage feedback: material revision contracts, broader relationship types and richer evidence navigation. [Automatic refresh](Automatic-Refresh.md) now uses background content polling; operating-system notifications and automatic conflict reconciliation remain possible reliability improvements.
 3. Add explicit provider capability probes, provider capacity and budget controls beyond reported token counts, tested retry policies for proven idempotent reads, MCP OAuth, and reviewed visual extraction.
 4. Expand the live provider matrix using user-specified endpoints/models and evaluate a real repository/OpenWiki/source workflow. Installed model names, business sources and semantic decisions must not be inferred.
 

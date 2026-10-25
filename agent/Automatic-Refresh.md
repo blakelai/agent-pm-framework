@@ -6,7 +6,7 @@ language: "en"
 
 # Automatic file refresh
 
-The TUI checks local project files every two seconds while it is open. Edits made in Obsidian or another editor update the document browser and any open Planning or Delivery view. R still requests an immediate refresh. No model connection is needed.
+The TUI checks local project files every two seconds while it is open. Edits made in Obsidian or another editor update the document browser and any open Planning, Delivery or Questions view. R still requests an immediate refresh. No model connection is needed.
 
 ## What updates
 
@@ -14,7 +14,7 @@ Content hashes detect new, changed, renamed and deleted Markdown documents in th
 
 The reader runs in the background with one scan at a time. Slow scans do not queue additional work; the two-second interval is a polling cadence, not a freshness guarantee. Changed inputs are checked again after loading the views. A conflicting read is retried instead of being displayed as a coherent snapshot. Manual refreshes, saves and view changes supersede outstanding reads so an older result cannot overwrite their display.
 
-The browser retains its category, filter, selected path, focus, layout and reading position when that path remains visible. Category bookmarks follow paths instead of old list indexes. A removed selection falls back to the first visible record and resets its reading position. Planning and Delivery retain the selected record and reading position when possible. Scroll positions are clamped to the updated rendered content.
+The browser retains its category, filter, selected path, focus, layout and reading position when that path remains visible. Category bookmarks follow paths instead of old list indexes. A removed selection falls back to the first visible record and resets its reading position. Planning, Delivery and Questions retain the selected record and reading position when possible. Scroll positions are clamped to the updated rendered content.
 
 Properties, link menus and document actions close on a refresh because their choices describe the old snapshot. An open scheduling destination picker closes with a message to reopen it against the current iteration list. Conversation input, transcript reading position, service-reported usage and active operations remain unchanged.
 
@@ -28,7 +28,7 @@ A malformed or unreadable input produces a visible Files unavailable message. Th
 
 ## Boundaries
 
-This feature uses content polling, not operating-system filesystem notifications. It reads knowledge documents under the same scope and size limits as browsing, plus baseline payloads and local catalogs. It excludes runtime data, Git metadata, raw assets, extracted originals and repository/OpenWiki snapshot payloads. Symlinks are not followed; linked auxiliary inputs and oversized baseline/catalog files are rejected. External registered repositories are not scanned or synchronized automatically; use the existing source operations and validation for provenance checks.
+This feature uses content polling, not operating-system filesystem notifications. It reads knowledge documents under the same scope and size limits as browsing, plus baseline payloads and local catalogs. It includes exact user-answer assets explicitly cited by scoped questions, to invalidate changed responses. Other raw assets remain excluded. It excludes runtime data, Git metadata, extracted originals and repository/OpenWiki snapshot payloads. Symlinks are not followed; linked auxiliary inputs and oversized baseline/catalog files are rejected. External registered repositories are not scanned or synchronized automatically; use the existing source operations and validation for provenance checks.
 
 Only the local document index and in-memory views change. No project report, edit audit, approval, test result, release event or measured benefit is generated. Historical reports retain their recorded timestamps until explicitly regenerated. These optimistic reads are not filesystem transactions, source-integrity certification or semantic verification. Backup/restore and automatic conflict reconciliation remain separate milestones.
 

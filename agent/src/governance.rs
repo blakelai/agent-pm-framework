@@ -15,6 +15,7 @@ const COMMANDS: &[&str] = &[
     "coverage",
     "status",
     "delivery",
+    "questions",
     "inspect",
     "impact",
     "baseline",
@@ -87,6 +88,7 @@ enum Command {
     Coverage,
     Status,
     Delivery,
+    Questions,
     Inspect {
         id: String,
         #[arg(long, conflicts_with = "source")]
@@ -345,6 +347,9 @@ fn execute(workspace: &Workspace, command: Command) -> Result<Value> {
         Command::Coverage => traceability::report(&records),
         Command::Status => status(&records),
         Command::Delivery => Ok(crate::delivery::Snapshot::load(workspace).value()),
+        Command::Questions => Ok(serde_json::to_value(crate::clarification::Snapshot::load(
+            workspace,
+        ))?),
         Command::Inspect {
             id,
             baseline,
