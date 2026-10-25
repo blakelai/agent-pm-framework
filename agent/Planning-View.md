@@ -8,7 +8,7 @@ language: "en"
 
 Press F5 in Browse or click Planning to open the planning view. It is a local project view and needs no model connection. Finish an active operation first. Esc returns to the document browser; the unfinished chat draft remains intact.
 
-The view reads the current project records and calculates a snapshot using the same native engine as /pm plan. It shows the supplied forecast as_of and the actual load time. Opening or refreshing the view does not save records or replace a historical Plan-Report. Press R after external edits; automatic file watching is a separate milestone.
+The view reads the current project records and calculates a snapshot using the same native engine as /pm plan. It shows the supplied forecast as_of and the actual load time. Opening or refreshing the view does not save records or replace a historical Plan-Report. [Automatic refresh](Automatic-Refresh.md) detects external knowledge edits; R requests an immediate refresh. The selected record and reading position are retained when possible. A destination picker closes after changes so its choices can be reviewed again.
 
 ## Views and navigation
 

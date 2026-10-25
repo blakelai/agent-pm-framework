@@ -49,9 +49,13 @@ impl Delivery {
         let path = self.current().map(|e| e.document.path.clone());
         self.snapshot = snapshot;
         self.selected = path
-            .and_then(|p| self.items().iter().position(|e| e.document.path == p))
+            .as_ref()
+            .and_then(|p| self.items().iter().position(|e| &e.document.path == p))
             .unwrap_or(0);
-        self.scroll = 0;
+        if path != self.current().map(|e| e.document.path.clone()) {
+            self.scroll = 0;
+        }
+        self.message = "Refreshed from project files".into();
     }
     pub fn select_path(&mut self, path: &str) {
         if let Some(n) = self.items().iter().position(|e| e.document.path == path) {
@@ -396,6 +400,23 @@ mod tests {
     fn draw(d: &mut Delivery, w: u16, h: u16) {
         let mut t = ratatui::Terminal::new(ratatui::backend::TestBackend::new(w, h)).unwrap();
         t.draw(|f| d.draw(f)).unwrap();
+    }
+    #[test]
+    fn refresh_keeps_selected_record_and_reading_position() {
+        let mut d = Delivery::new(snapshot());
+        d.detail_focus = true;
+        d.scroll = 10;
+        let mut next = snapshot();
+        next.entries[0].document.title = "Updated fixture".into();
+        d.replace(next);
+        assert!(d.details().contains("Updated fixture"));
+        assert!(d.detail_focus);
+        assert_eq!(d.scroll, 10);
+        let mut next = snapshot();
+        next.entries.clear();
+        d.replace(next);
+        assert_eq!(d.scroll, 0);
+        assert!(d.items().is_empty());
     }
     fn mouse(d: &mut Delivery, kind: MouseEventKind, p: Rect) -> Command {
         d.event(Event::Mouse(MouseEvent {

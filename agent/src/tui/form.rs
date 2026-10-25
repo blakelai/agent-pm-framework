@@ -34,6 +34,10 @@ pub struct Form {
     review_scroll: usize,
 }
 impl Form {
+    pub fn inputs_changed(&mut self) {
+        self.preview = None;
+        self.message = "Project files changed. Your draft is retained; review again. If this record changed, discard and reopen it to reconcile.".into();
+    }
     pub fn proposed(edit: Edit) -> Self {
         let mut form = Self::new(edit);
         form.dirty = true;
@@ -512,6 +516,44 @@ mod tests {
             KeyCode::Char(c),
             KeyModifiers::CONTROL,
         )))
+    }
+    #[test]
+    fn external_changes_invalidate_review_without_replacing_the_draft_or_active_field() {
+        let (_d, w) = workspace();
+        let mut e = Edit::create(&w, "risk").unwrap();
+        for (k, v) in [("id", "RISK-TEST"), ("title", "Synthetic risk")] {
+            e.apply(&Target::Property(k.into()), v).unwrap();
+        }
+        e.apply(&Target::Body, "# Synthetic risk\n\nOnly test data.")
+            .unwrap();
+        let mut f = Form::proposed(e);
+        f.preview = Some(f.edit.preview(&w).unwrap());
+        let entries = f
+            .edit
+            .entries()
+            .iter()
+            .map(|e| e.value.clone())
+            .collect::<Vec<_>>();
+        f.inputs_changed();
+        assert!(f.preview.is_none());
+        assert_eq!(control(&mut f, 's'), Action::Review);
+        assert_eq!(
+            entries,
+            f.edit
+                .entries()
+                .iter()
+                .map(|e| e.value.clone())
+                .collect::<Vec<_>>()
+        );
+        key(&mut f, KeyCode::Enter);
+        f.event(Event::Paste("-UNSAVED".into()));
+        let buffer = f.input.text.clone();
+        let selected = f.selected;
+        f.inputs_changed();
+        assert!(f.editing && f.dirty);
+        assert_eq!(f.input.text, buffer);
+        assert_eq!(f.selected, selected);
+        assert!(!w.path("07_Decisions/RISK-TEST.md").unwrap().exists());
     }
     #[test]
     fn fields_discard_and_paste_do_not_write_or_escape_the_form() {

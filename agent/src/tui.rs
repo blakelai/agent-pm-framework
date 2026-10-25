@@ -3,6 +3,7 @@ mod editor;
 mod form;
 mod markdown;
 mod planner;
+mod refresh;
 mod view;
 use crate::{
     config::Config,
@@ -59,6 +60,7 @@ pub async fn run(workspace: Workspace, config_path: PathBuf) -> Result<()> {
     }
     let mut store = Store::open(&workspace.path(".pm-agent/runtime.sqlite3")?)?;
     store.reindex(&app.docs)?;
+    let mut monitor = refresh::Monitor::new(&workspace, &app.docs);
     let mut terminal = ratatui::init();
     let _modes = InputModes;
     execute!(
@@ -76,8 +78,26 @@ pub async fn run(workspace: Workspace, config_path: PathBuf) -> Result<()> {
     let mut cancellation = CancellationToken::new();
     let mut repaint = tokio::time::interval(std::time::Duration::from_millis(33));
     let mut dirty = true;
+    let mut polling = tokio::time::interval(refresh::INTERVAL);
+    polling.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    let (refresh_tx, mut refresh_rx) = mpsc::unbounded_channel();
     loop {
         tokio::select! {
+            _ = polling.tick() => {
+                if let Some(request) = monitor.request(refresh::Views::of(&app), app.refresh_error.is_some()) {
+                    let workspace = workspace.clone();
+                    let sender = refresh_tx.clone();
+                    tokio::spawn(async move {
+                        let read = request.clone();
+                        let result = tokio::task::spawn_blocking(move || refresh::scan(&workspace, &read))
+                            .await.context("Refresh worker failed").and_then(|r| r);
+                        let _ = sender.send((request, result));
+                    });
+                }
+            },
+            Some((request, result)) = refresh_rx.recv() => {
+                dirty |= monitor.finish(&request, result, &mut app, &mut store);
+            },
             _ = repaint.tick() => {
                 if dirty { terminal.draw(|f| app.draw(f))?; dirty = false; }
             },
@@ -88,6 +108,7 @@ pub async fn run(workspace: Workspace, config_path: PathBuf) -> Result<()> {
             }},
             Some(outcome)=done_rx.recv()=>{
                 dirty = true;
+                monitor.invalidate();
                 app.busy=false;
                 match outcome {
                     Outcome::Session(s)=>{
@@ -103,7 +124,9 @@ pub async fn run(workspace: Workspace, config_path: PathBuf) -> Result<()> {
             event=events.next()=>{
                 dirty = true;
                 let Some(event)=event else {break;};
-                match app.event(event?) {
+                let command = app.event(event?);
+                if command != Command::None { monitor.invalidate(); }
+                match command {
                     Command::None=>{},
                     Command::Quit=>break,
                     Command::Cancel=>{cancellation.cancel();app.status="Cancelling — waiting for the operation outcome".into();},
@@ -164,8 +187,8 @@ pub async fn run(workspace: Workspace, config_path: PathBuf) -> Result<()> {
                                 if !app.visible().iter().any(|d|d.path==saved.path) {app.tab=0;app.filter.clear();}
                                 app.selected=app.visible().iter().position(|d|d.path==saved.path).unwrap_or(0);
                                 app.scroll=0;
-                                if let Some(planner)=&mut app.planner {planner.replace(crate::schedule::Snapshot::load(&workspace));planner.message=app.status.clone();}
-                                if let Some(delivery)=&mut app.delivery {delivery.replace(crate::delivery::Snapshot::load(&workspace));delivery.select_path(&saved.path);delivery.message=app.status.clone();}
+                                if let Some(planner)=&mut app.planner {planner.message=app.status.clone();}
+                                if let Some(delivery)=&mut app.delivery {delivery.select_path(&saved.path);delivery.message=app.status.clone();}
                             },
                             Some(Err(e))=>if let Some(form)=&mut app.form {form.preview=None;form.message=format!("{e:#}");},
                             None=>{},
@@ -189,23 +212,7 @@ pub async fn run(workspace: Workspace, config_path: PathBuf) -> Result<()> {
     Ok(())
 }
 fn refresh(workspace: &Workspace, app: &mut App, store: &mut Store) {
-    let selected = app.selected_path();
-    match workspace.documents() {
-        Ok(docs) => {
-            app.docs = docs;
-            if let Some(path) = selected {
-                app.selected = app
-                    .visible()
-                    .iter()
-                    .position(|d| d.path == path)
-                    .unwrap_or(0);
-            }
-            if let Err(e) = store.reindex(&app.docs) {
-                app.status = format!("Index failed: {e}");
-            }
-        }
-        Err(e) => app.status = format!("Refresh failed: {e}"),
-    }
+    refresh::manual(workspace, app, store);
 }
 
 fn session_transcript(s: &Session) -> String {

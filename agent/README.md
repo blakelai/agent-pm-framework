@@ -74,6 +74,8 @@ The transcript and composer are borderless; the input has a gray background and 
 
 See the [interaction contract](Interaction.md) for focus priority, terminal compatibility, link handling and cancellation semantics.
 
+[Automatic refresh](Automatic-Refresh.md) detects local knowledge edits every two seconds without a model call. Browse, Planning and Delivery update while retaining selection and drafts. Changed inputs invalidate an open form's preview; unreadable files show an error and retry automatically. Historical reports are not regenerated.
+
 [Structured editing](Editing.md) covers staffing, iterations, forecast dates, PBIs, risks and draft decisions. Ctrl+S first validates and previews changes; a separate Ctrl+S saves the reviewed result. Missing values remain unknown. Status changes require the existing evidence contracts, and stale documents or changed preview inputs are rejected.
 
 Views include BRD, PRD/REQ, domain knowledge, systems, questions, people/schedules, backlog, progress/risks, verification and Agent runs. They show real Markdown records and metadata. Requirement views recognize document types even outside conventional subfolders. Templates appear in All, not project-specific views. Empty views remain empty; no progress, people or risk scores are synthesized for presentation.

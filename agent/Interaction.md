@@ -16,13 +16,15 @@ Browse uses Alt+1–9 for the first nine categories, Alt+0 for the complete elev
 
 Selecting a document previews it. Enter moves focus to its content. Esc restores the document list and focus. F3 collapses/expands the list; F4 maximizes/restores the document. Right-click opens document actions: desktop opening, properties/provenance, links, reference in chat and list visibility. P opens properties, L opens numbered links, O opens the original and R refreshes from disk.
 
+[Automatic refresh](Automatic-Refresh.md) polls local knowledge files in the background every two seconds. It preserves selected paths, reading positions and chat drafts. Snapshot menus and scheduling pickers close when their inputs change; form drafts remain intact and reviewed previews become invalid. A visible error replaces unavailable data until the files can be read again.
+
 E opens the [structured editor](Editing.md) for a supported project record. N starts a PBI, risk or decision. The editor consumes its own keyboard/mouse input; Ctrl+S reviews, then saves on a separate action. Esc in a field reverts that field; Esc in preview returns to the form. Ctrl+D closes with confirmation when changes would be discarded. Editing is available only when no operation is running.
 
 ## Reading and Markdown
 
 F7 or Delivery opens [Change, UAT, Release and Benefit workflows](Delivery-Workflows.md). Select a tab with 1–4, Alt+1–4 or a click; N creates a draft and E/right-click edits a supported record. Enter focuses details, Esc returns to the record list, and another Esc returns to Browse. Mouse scrolling and the detail scrollbar remain available; F6 toggles emoji. The same preview/save and discard controls apply. Current checks never create decisions or release events.
 
-F5 or the Planning button in Browse opens [interactive scheduling](Planning-View.md). Its Schedule, Capacity and Signals tabs support keyboard and mouse navigation. M/right-click proposes a PBI move and opens a reviewed editor; selecting an iteration alone never saves it. Esc closes the target picker first, then returns to Browse. Existing form discard controls apply to any proposed change. R explicitly refreshes the planning snapshot; P/I/A edit People, Iterations and the forecast date.
+F5 or the Planning button in Browse opens [interactive scheduling](Planning-View.md). Its Schedule, Capacity and Signals tabs support keyboard and mouse navigation. M/right-click proposes a PBI move and opens a reviewed editor; selecting an iteration alone never saves it. Esc closes the target picker first, then returns to Browse. Existing form discard controls apply to any proposed change. R refreshes the planning snapshot immediately; P/I/A edit People, Iterations and the forecast date.
 
 The browser and transcript share a terminal Markdown renderer: headings, emphasis, lists, task markers, quotes, fenced/inline code, tables and links. Obsidian links navigate to an unambiguous local document. Links in code remain literal. Images and diagrams are not visually rendered; linked originals can be opened using the desktop application. Metadata is shown through Properties instead of raw frontmatter.
 

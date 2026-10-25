@@ -7,6 +7,7 @@ okf_version: "0.2"
 - [PM Agent application](agent/README.md) - Reference
 - [PM Agent implementation milestones](agent/Implementation.md) - Reference
 - [Delivery workflows](agent/Delivery-Workflows.md) - Reference
+- [Automatic file refresh](agent/Automatic-Refresh.md) - Reference
 
 - [Baselines and change](00_Governance/Baselines-and-Changes.md) - Reference
 - [Discovery and prioritization](00_Governance/Discovery-and-Prioritization.md) - Reference

@@ -104,11 +104,18 @@ impl Planner {
             .position(|(_, b)| *b == bucket)
             .unwrap_or(0);
         self.selected = selected
-            .and_then(|path| self.items().iter().position(|d| d.path == path))
+            .as_ref()
+            .and_then(|path| self.items().iter().position(|d| &d.path == path))
             .unwrap_or(0);
-        self.picker = None;
-        self.scroll = 0;
-        self.message = "Refreshed from project files".into();
+        if selected != self.selected_item().map(|d| d.path.clone()) {
+            self.scroll = 0;
+        }
+        self.message = if self.picker.take().is_some() {
+            "Project files refreshed; reopen the destination picker to review current iterations"
+        } else {
+            "Refreshed from project files"
+        }
+        .into();
     }
     fn items(&self) -> Vec<&Document> {
         self.snapshot
@@ -762,6 +769,23 @@ mod tests {
     fn draw(p: &mut Planner, w: u16, h: u16) {
         let mut t = ratatui::Terminal::new(ratatui::backend::TestBackend::new(w, h)).unwrap();
         t.draw(|f| p.draw(f)).unwrap();
+    }
+    #[test]
+    fn refresh_preserves_reading_but_closes_a_stale_destination_picker() {
+        let mut p = Planner::new(snapshot());
+        p.focus = Focus::Detail;
+        p.scroll = 12;
+        p.pick();
+        assert!(p.picker.is_some());
+        p.replace(snapshot());
+        assert!(p.picker.is_none());
+        assert!(p.message.contains("reopen"));
+        assert_eq!(p.focus, Focus::Detail);
+        assert_eq!(p.scroll, 12);
+        let mut next = snapshot();
+        next.items.clear();
+        p.replace(next);
+        assert_eq!(p.scroll, 0);
     }
     #[test]
     fn moving_emits_a_proposal_and_escape_closes_only_the_destination_picker() {

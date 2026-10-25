@@ -31,7 +31,7 @@ pub const TABS: &[(&str, &str)] = &[
     ("✅", "Verification"),
     ("🤖", "Agent Runs"),
 ];
-pub const HELP: &str = "# PM Agent\n\nF2 switches Browse / Chat. F1 opens help. Ctrl+Q exits when idle.\n\n## Browse\nAlt+1…9 selects a category; Alt+0 lists all categories. Alt+Left/Right cycles categories.\nEnter opens the selected document; Esc returns to the list. F3 collapses the list; F4 maximizes the document. F6 toggles emoji.\nTab switches focus. PgUp/PgDn scroll. Mouse wheel scrolls the pointed pane; drag the right scrollbar. Right-click opens actions. L shows document links. P shows properties. O opens the original in the desktop application. R refreshes. E edits supported project fields; N creates a PBI, risk or decision. F5 or Planning opens the local planning view: 1 Schedule, 2 Capacity, 3 Signals; M proposes an iteration move; P/I/A edit allocations, iterations and forecast date; R refreshes; Esc returns. F7 or Delivery opens Changes, UAT, Releases and Benefits: 1-4/Alt+1-4 select tabs, N creates a draft, E edits, O opens the document, R refreshes, Enter focuses details, Esc returns.\n\n## Editing\nEnter/Tab edits fields; lists use one value per line. Use left/right to select enum values. Ctrl+S reviews changes, then Ctrl+S saves the reviewed result. Esc reverts the active field or returns from preview. Ctrl+D discards with confirmation.\n\n## Chat\nType immediately. Enter sends; Alt+Enter, Shift+Enter or Ctrl+J inserts a newline. Multiline paste never submits.\nScroll the conversation to read history. Esc returns to the latest message and input. A separate Esc in the input cancels an active operation. Ctrl+C clears only the draft.\n\n## Commands\n/help, /status, /skills, /skills clear, /search TEXT, /stage prd, /pm plan, /sessions, /resume ID, /continue, /approve, /deny, /reconcile ACTUAL_OUTCOME, /new, /quit.\nUse a leading $skill-name to explicitly enable a project Skill. Skills remain selected in the session until cleared. Context values come only from the service; missing values remain unavailable.";
+pub const HELP: &str = "# PM Agent\n\nF2 switches Browse / Chat. F1 opens help. Ctrl+Q exits when idle.\n\n## Browse\nAlt+1…9 selects a category; Alt+0 lists all categories. Alt+Left/Right cycles categories.\nEnter opens the selected document; Esc returns to the list. F3 collapses the list; F4 maximizes the document. F6 toggles emoji.\nTab switches focus. PgUp/PgDn scroll. Mouse wheel scrolls the pointed pane; drag the right scrollbar. Right-click opens actions. L shows document links. P shows properties. O opens the original in the desktop application. R refreshes immediately. Local knowledge files also refresh automatically every two seconds; drafts are retained and changed inputs require a new preview. E edits supported project fields; N creates a PBI, risk or decision. F5 or Planning opens the local planning view: 1 Schedule, 2 Capacity, 3 Signals; M proposes an iteration move; P/I/A edit allocations, iterations and forecast date; R refreshes; Esc returns. F7 or Delivery opens Changes, UAT, Releases and Benefits: 1-4/Alt+1-4 select tabs, N creates a draft, E edits, O opens the document, R refreshes, Enter focuses details, Esc returns.\n\n## Editing\nEnter/Tab edits fields; lists use one value per line. Use left/right to select enum values. Ctrl+S reviews changes, then Ctrl+S saves the reviewed result. Esc reverts the active field or returns from preview. Ctrl+D discards with confirmation.\n\n## Chat\nType immediately. Enter sends; Alt+Enter, Shift+Enter or Ctrl+J inserts a newline. Multiline paste never submits.\nScroll the conversation to read history. Esc returns to the latest message and input. A separate Esc in the input cancels an active operation. Ctrl+C clears only the draft.\n\n## Commands\n/help, /status, /skills, /skills clear, /search TEXT, /stage prd, /pm plan, /sessions, /resume ID, /continue, /approve, /deny, /reconcile ACTUAL_OUTCOME, /new, /quit.\nUse a leading $skill-name to explicitly enable a project Skill. Skills remain selected in the session until cleared. Context values come only from the service; missing values remain unavailable.";
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Mode {
@@ -125,6 +125,8 @@ pub struct App {
     pub input: Editor,
     pub output: String,
     pub status: String,
+    pub(super) refresh_status: String,
+    pub(super) refresh_error: Option<String>,
     pub session: Option<Session>,
     pub stage: String,
     pub busy: bool,
@@ -164,6 +166,8 @@ impl App {
             input: Editor::default(),
             output: HELP.into(),
             status: "Ready — browsing is local".into(),
+            refresh_status: "Automatic file refresh enabled (2s polling)".into(),
+            refresh_error: None,
             session: None,
             stage: "workflow".into(),
             busy: false,
@@ -191,10 +195,13 @@ impl App {
         }
     }
     pub fn visible(&self) -> Vec<&Document> {
+        self.visible_in(self.tab)
+    }
+    fn visible_in(&self, tab: usize) -> Vec<&Document> {
         self.docs
             .iter()
-            .filter(|d| self.tab == 0 || !d.path.starts_with("80_Templates/"))
-            .filter(|d| match self.tab {
+            .filter(|d| tab == 0 || !d.path.starts_with("80_Templates/"))
+            .filter(|d| match tab {
                 1 => d.kind == "brd" || d.path.starts_with("04_Requirements/BRD"),
                 2 => {
                     matches!(d.kind.as_str(), "prd" | "requirement")
@@ -225,6 +232,39 @@ impl App {
     }
     pub fn selected_path(&self) -> Option<String> {
         self.visible().get(self.selected).map(|d| d.path.clone())
+    }
+    pub(super) fn replace_documents(&mut self, docs: Vec<Document>) {
+        let selected = self.selected_path();
+        let bookmarks = self
+            .bookmarks
+            .iter()
+            .map(|(tab, (n, scroll))| {
+                (
+                    *tab,
+                    self.visible_in(*tab).get(*n).map(|d| d.path.clone()),
+                    *scroll,
+                )
+            })
+            .collect::<Vec<_>>();
+        self.docs = docs;
+        self.selected = selected
+            .as_ref()
+            .and_then(|path| self.visible().iter().position(|d| &d.path == path))
+            .unwrap_or(0);
+        if self.selected_path() != selected {
+            self.scroll = 0;
+            self.restore_scroll = None;
+            self.list_state = ListState::default();
+        }
+        for (tab, path, scroll) in bookmarks {
+            let n = path.and_then(|p| self.visible_in(tab).iter().position(|d| d.path == p));
+            self.bookmarks
+                .insert(tab, (n.unwrap_or(0), if n.is_some() { scroll } else { 0 }));
+        }
+        // Properties, links and context actions are snapshots of the old record.
+        // Close them rather than keep stale choices attached to a new selection.
+        self.menu = None;
+        self.doc_cache = (String::new(), 0);
     }
     pub(super) fn read_document(&mut self, path: &str) {
         if !self.docs.iter().any(|d| d.path == path) {
@@ -287,7 +327,7 @@ impl App {
     }
     pub fn status_details(&self) -> String {
         format!(
-            "# Session\n\nModel: {}\n\nState: {}\n\nSession: {}\n\n{}\n\nSelected Skills: {}\n\n{}",
+            "# Session\n\nModel: {}\n\nState: {}\n\nSession: {}\n\n{}\n\nSelected Skills: {}\n\n{}\n\n{}",
             self.model,
             if self.busy { "running" } else { "idle" },
             self.session
@@ -300,7 +340,10 @@ impl App {
                 .map(|s| s.selected_skills.join(", "))
                 .filter(|s| !s.is_empty())
                 .unwrap_or("stage default".into()),
-            self.status
+            self.status,
+            self.refresh_error
+                .as_deref()
+                .unwrap_or(&self.refresh_status)
         )
     }
     fn switch(&mut self, mode: Mode) {
@@ -939,6 +982,20 @@ impl App {
         Command::None
     }
     pub fn draw(&mut self, f: &mut ratatui::Frame) {
+        self.draw_content(f);
+        if let Some(error) = &self.refresh_error {
+            let area = f.area();
+            let row = Rect::new(area.x, area.y, area.width, area.height.min(1));
+            f.render_widget(
+                Paragraph::new(format!(
+                    "Files unavailable — {error} — retrying automatically"
+                ))
+                .style(Style::default().fg(Color::Black).bg(Color::Yellow)),
+                row,
+            );
+        }
+    }
+    fn draw_content(&mut self, f: &mut ratatui::Frame) {
         if let Some(form) = &mut self.form {
             form.draw(f);
             return;
@@ -1047,8 +1104,8 @@ impl App {
             format!("{model} | {rest}")
         } else {
             format!(
-                "F2 Chat  F5 Plan  E Edit  N New  F3 List  F4 Max  F1 Help | {}",
-                self.status
+                "Auto refresh: 2s | F1 Help | {} | {}",
+                self.status, self.refresh_status
             )
         };
         f.render_widget(
@@ -1430,6 +1487,58 @@ mod tests {
             row: area.y,
             modifiers: KeyModifiers::NONE,
         })
+    }
+    #[test]
+    fn refresh_preserves_document_identity_category_bookmarks_and_chat_reading_state() {
+        let doc = |id: &str| Document {
+            path: format!("04_Requirements/BRD/{id}.md"),
+            title: id.into(),
+            kind: "brd".into(),
+            id: Some(id.into()),
+            hash: id.into(),
+            metadata: serde_json::json!({}),
+            body: "# Fixture\n\nBody\n\n".repeat(60),
+        };
+        let mut a = App::new(vec![doc("B"), doc("C")]);
+        a.category(1);
+        a.selected = 1;
+        a.scroll = 12;
+        a.category(0);
+        a.selected = 1;
+        a.scroll = 10;
+        a.focus = Focus::Content;
+        a.maximized = true;
+        a.replace_documents(vec![doc("A"), doc("B"), doc("C")]);
+        assert_eq!(a.selected, 2);
+        assert_eq!(a.scroll, 10);
+        assert!(a.maximized);
+        assert_eq!(a.focus, Focus::Content);
+        a.category(1);
+        assert_eq!((a.selected, a.scroll), (2, 12));
+        a.switch(Mode::Chat);
+        a.input.insert("Draft 中文");
+        draw(&mut a, 80, 24);
+        a.scroll_by(false, 5);
+        let reading = a.transcript_scroll;
+        let history = a.output.clone();
+        a.replace_documents(vec![doc("A"), doc("B"), doc("C")]);
+        draw(&mut a, 80, 24);
+        assert_eq!(a.mode, Mode::Chat);
+        assert_eq!(a.focus, Focus::Transcript);
+        assert!(!a.follow);
+        assert_eq!(a.transcript_scroll, reading);
+        assert_eq!(a.input.text, "Draft 中文");
+        assert_eq!(a.output, history);
+        a.replace_documents(vec![doc("A")]);
+        assert_eq!(a.selected, 0);
+        assert_eq!(a.scroll, 0);
+        a.refresh_error = Some("Synthetic malformed input".into());
+        let rendered = draw(&mut a, 120, 24)
+            .content
+            .iter()
+            .map(|c| c.symbol())
+            .collect::<String>();
+        assert!(rendered.contains("Files unavailable"));
     }
     #[test]
     fn delivery_entry_preserves_chat_and_blocks_while_running() {
