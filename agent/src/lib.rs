@@ -10,6 +10,7 @@ mod locale;
 pub mod mcp;
 pub mod okf;
 pub mod planning;
+pub mod probe;
 pub mod profile;
 pub mod provider;
 pub mod records;

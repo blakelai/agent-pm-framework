@@ -35,7 +35,7 @@ Edit `.pm-agent/config.toml` locally. Select the provider profile, its actual mo
 | OpenAI | Responses | `https://api.openai.com/v1` | Protocol fixture tested; live account/model pending |
 | Ollama | Chat Completions | `http://127.0.0.1:11434/v1` | Protocol fixture tested; installed model pending |
 | vLLM | Chat Completions | `http://127.0.0.1:8000/v1` | Protocol fixture tested; model/parser configuration pending |
-| CLIProxyAPI | Chat Completions | configurable local gateway | Live `gemini-3.8-flash-high` route: streaming, tools, clarification/resume, draft chain and synthetic forecast tested |
+| CLIProxyAPI | Chat Completions | configurable local gateway | Live `gemini-3.8-flash-high` route: streaming, tools, clarification/resume, draft chain and synthetic forecast tested; explicit text/call/result probe and service-reported usage observed on 2026-10-26 |
 | OpenRouter | Chat Completions | `https://openrouter.ai/api/v1` | Protocol fixture tested; selected route/model pending |
 
 The example local ports are editable configuration examples, not discovered services. Both adapters stream output and preserve function-call/result context. Responses uses local history and requests encrypted reasoning for stateless continuation. Compatible implementations that reject an optional Responses field should use their tested Chat Completions profile; there is no automatic protocol fallback. `tools = true` enables function declarations but does not certify a model's tool capability. Set it to false for text-only assistance.
@@ -44,6 +44,8 @@ The example local ports are editable configuration examples, not discovered serv
 agent/target/debug/pm-agent --vault . doctor
 agent/target/debug/pm-agent --vault . chat --stage prd "Review the supplied sources and ask about missing requirements."
 ```
+
+[Explicit provider probes](Provider-Probes.md) are available through `probe` / `probe --last` in the CLI and `/probe` / `/probe last` in Chat. They test completed SSE text, one synthetic function call and a tool-result receipt, with service-reported usage. An explicit run sends at most three synthetic requests and may incur service charges; saved observations are private and bound to the selected configuration.
 
 `doctor` checks local configuration and key presence. It does not send a live model request. Endpoint authentication, route availability, model quality, tool support and usage accounting still require live acceptance tests. HTTPS is required for remote endpoints; HTTP is allowed on loopback.
 
@@ -91,6 +93,7 @@ The [delivery views](Delivery-Workflows.md) show current workflow checks and mis
 | Command | Purpose |
 |---|---|
 | `/skills`, `/skills clear` | Select project Skills / clear additional selections |
+| `/probe [PROFILE]`, `/probe last [PROFILE]` | Explicit synthetic provider check / local observation replay; leaves the current Agent session unchanged |
 | `/status` | Full session, active selection and service-reported usage details |
 | `/search text` | Literal search, including Chinese and code identifiers; `/search` clears it |
 | `/stage prd` | Select a workflow capability before starting a session |

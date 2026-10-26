@@ -35,6 +35,7 @@ use view::{Command, HELP};
 enum Outcome {
     Session(Box<Session>),
     Pm(String),
+    Probe(crate::probe::Observation),
     Error(String),
 }
 enum Action {
@@ -128,6 +129,10 @@ pub async fn run(workspace: Workspace, config_path: PathBuf) -> Result<()> {
                         app.session=Some(*s);
                     },
                     Outcome::Pm(text)=>app.notice(&format!("PM operation finished; inspect exit_code and reports\n\n{text}")),
+                    Outcome::Probe(observation)=>{
+                        app.notice(&observation.markdown());
+                        app.status=if observation.report.cancelled() {"Probe cancelled; partial observations saved"} else {"Probe finished; review individual observations"}.into();
+                    },
                     Outcome::Error(text)=>app.notice(&format!("Error: {text}")),
                 }
                 refresh(&workspace,&mut app,&mut store);
@@ -390,6 +395,47 @@ fn dispatch(
         app.session = Some(s);
         return Ok(None);
     }
+    if input == "/probe" || input.starts_with("/probe ") {
+        let args = input
+            .strip_prefix("/probe")
+            .unwrap()
+            .split_whitespace()
+            .collect::<Vec<_>>();
+        let (last, profile) = match args.as_slice() {
+            [] => (false, None),
+            ["last"] => (true, None),
+            ["last", name] => (true, Some(*name)),
+            [name] => (false, Some(*name)),
+            _ => bail!("Use /probe [PROFILE] or /probe last [PROFILE]"),
+        };
+        let config = Config::read(config_path)?;
+        if last {
+            app.notice(&crate::probe::last(workspace, &config, profile)?.markdown());
+            return Ok(None);
+        }
+        // Isolated diagnostics cannot enter Runtime, append conversation history,
+        // change the session's usage/model or initialize configured MCP servers.
+        let profile = profile.map(String::from);
+        let workspace = workspace.clone();
+        let config_path = config_path.to_owned();
+        let tx = tx.clone();
+        let done = done.clone();
+        let cancel = CancellationToken::new();
+        let signal = cancel.clone();
+        tokio::spawn(async move {
+            let result = async {
+                let report = crate::probe::run(&config, profile.as_deref(), &tx, &signal).await?;
+                let path = crate::probe::save(&workspace, &report)?;
+                Ok::<_, anyhow::Error>(crate::probe::current(&config_path, report, path))
+            }
+            .await;
+            let _ = done.send(match result {
+                Ok(observation) => Outcome::Probe(observation),
+                Err(e) => Outcome::Error(e.to_string()),
+            });
+        });
+        return Ok(Some(cancel));
+    }
     let config = Config::load(config_path);
     if let Some(command) = input.strip_prefix("/pm ") {
         let parts = command
@@ -488,6 +534,73 @@ fn dispatch(
 mod tests {
     use super::*;
     use crate::workspace::Document;
+    #[tokio::test]
+    async fn probe_cancel_and_local_replay_preserve_session_model_and_usage() {
+        let dir = tempfile::tempdir().unwrap();
+        crate::workspace::atomic_write(&dir.path().join("00_Governance/Project.md"),crate::workspace::note(serde_json::json!({"type":"project","id":"PROJECT-TEST","language":"en","title":"Synthetic"}),"# Synthetic").unwrap().as_bytes()).unwrap();
+        let w = Workspace::open(dir.path()).unwrap();
+        let config = Config {
+            provider: "fixture".into(),
+            max_steps: 32,
+            providers: std::collections::BTreeMap::from([(
+                "fixture".into(),
+                crate::config::ProviderConfig {
+                    protocol: crate::config::Protocol::ChatCompletions,
+                    base_url: "http://127.0.0.1:9/v1".into(),
+                    model: "fixture-model".into(),
+                    api_key_env: None,
+                    tools: true,
+                    request_usage: true,
+                    timeout_seconds: 1,
+                },
+            )]),
+            mcp: Default::default(),
+        };
+        let path = w.path(".pm-agent/config.toml").unwrap();
+        crate::workspace::atomic_write(&path, toml::to_string(&config).unwrap().as_bytes())
+            .unwrap();
+        let store = Store::open(&w.path(".pm-agent/runtime.sqlite3").unwrap()).unwrap();
+        let mut app = App::new(vec![]);
+        app.session = Some(Session::new(&config, "prd").unwrap());
+        app.model = "current-session-model".into();
+        app.usage = Some(crate::provider::Usage {
+            input_tokens: Some(123),
+            output_tokens: None,
+            total_tokens: None,
+        });
+        app.input.insert("Unsent 中文");
+        let before = serde_json::to_value(&app.session).unwrap();
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let (done, mut finished) = mpsc::unbounded_channel();
+        let cancel = dispatch(&w, &path, &mut app, &store, "/probe".into(), &tx, &done)
+            .unwrap()
+            .unwrap();
+        cancel.cancel();
+        let Outcome::Probe(o) = finished.recv().await.unwrap() else {
+            panic!("Expected isolated probe observation");
+        };
+        assert!(o.report.cancelled());
+        assert_eq!(o.configuration_matches, Some(true));
+        assert!(std::iter::from_fn(|| rx.try_recv().ok()).all(|e| matches!(e, Event::Notice(_))));
+        assert!(
+            dispatch(
+                &w,
+                &path,
+                &mut app,
+                &store,
+                "/probe last".into(),
+                &tx,
+                &done
+            )
+            .unwrap()
+            .is_none()
+        );
+        assert_eq!(serde_json::to_value(&app.session).unwrap(), before);
+        assert_eq!(app.model, "current-session-model");
+        assert_eq!(app.usage.unwrap().input_tokens, Some(123));
+        assert_eq!(app.input.text, "Unsent 中文");
+        assert!(store.sessions().unwrap().is_empty());
+    }
     #[test]
     fn project_views_follow_types_and_exclude_templates() {
         let doc = |path: &str, kind: &str| Document {

@@ -16,6 +16,7 @@ The approved direction is a local Rust TUI for macOS/Linux, sharing project docu
 | TUI | Separate Browse/Chat modes, eleven document categories, shared Markdown rendering, mouse/scrollbars, collapsible/maximized reading, multiline input and focus-aware cancellation |
 | File refresh | Background content polling for knowledge documents, baselines and catalogs; automatic browse/planning/delivery updates, retained drafts and stale-preview invalidation |
 | Structured editing | Human-operated forms for allocations, iterations, forecast dates, PBIs, risks and draft decisions; reviewed diffs, existing readiness/planning checks, optimistic conflict checks and edit records |
+| Provider probes | Explicit isolated CLI/Chat checks for completed SSE text, schema-matched function calls and tool-result continuation; private observations, configuration freshness and service-only usage |
 | Provider | Responses and Chat Completions SSE adapters, fragmented UTF-8 and function arguments, local conversation replay, error/cancellation handling |
 | Clarification | Explicit project/record scopes, transitive draft/baseline gates across sessions, independent continuation, answer provenance and read-only Questions view |
 | Agent runtime | Stage Skill/Playbook plus explicit custom Skills, dependency/reference validation and activation fingerprints; tool loop, persisted questions and sourced draft writes |
@@ -48,7 +49,7 @@ The executable workbench now has 18 native PM commands. Production execution and
 
 1. Extend [delivery workflows](Delivery-Workflows.md) after real-project evaluation: multi-baseline or non-requirement release contracts, cost aggregation, explicit history migration and richer evidence navigation. Existing forms and scheduling are described in [Editing](Editing.md) and [Planning view](Planning-View.md). Bulk schedule scenarios and a calendar-duration model need separate requirements; person-days alone cannot establish task dates.
 2. Evaluate [scoped clarification](Clarification.md) with real project questions and extend [impact and comparison](Inspection.md) after usage feedback: material revision contracts, broader relationship types and richer evidence navigation. [Automatic refresh](Automatic-Refresh.md) now uses background content polling; operating-system notifications and automatic conflict reconciliation remain possible reliability improvements.
-3. Add explicit provider capability probes, provider capacity and budget controls beyond reported token counts, tested retry policies for proven idempotent reads, MCP OAuth, and reviewed visual extraction.
+3. Extend [provider probes](Provider-Probes.md) with provider capacity and budget controls beyond reported token counts, tested retry policies for proven idempotent reads, MCP OAuth, and reviewed visual extraction.
 4. Expand the live provider matrix using user-specified endpoints/models and evaluate a real repository/OpenWiki/source workflow. Installed model names, business sources and semantic decisions must not be inferred.
 
 ## Validation boundary

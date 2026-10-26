@@ -69,6 +69,15 @@ enum Command {
     },
     /// Validate configuration and local prerequisites without making model requests.
     Doctor,
+    /// Explicit synthetic provider check (up to 3 requests; service charges may apply).
+    Probe {
+        /// Select a configured profile for this check without changing the active profile.
+        #[arg(long)]
+        profile: Option<String>,
+        /// Show the latest local observation without making requests.
+        #[arg(long)]
+        last: bool,
+    },
 }
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -91,6 +100,43 @@ async fn main() -> Result<()> {
     )?;
     let config_path = cli.config.unwrap_or_else(|| state_dir.join("config.toml"));
     match cli.command.unwrap_or(Command::Tui) {
+        Command::Probe { profile, last } => {
+            let config = Config::read(&config_path)?;
+            if last {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&pm_agent::probe::last(
+                        &workspace,
+                        &config,
+                        profile.as_deref()
+                    )?)?
+                );
+            } else {
+                let cancel = CancellationToken::new();
+                let signal = cancel.clone();
+                tokio::spawn(async move {
+                    let _ = tokio::signal::ctrl_c().await;
+                    signal.cancel();
+                });
+                let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+                let printer = tokio::spawn(async move {
+                    while let Some(Event::Notice(text)) = rx.recv().await {
+                        eprintln!("{text}");
+                    }
+                });
+                let report =
+                    pm_agent::probe::run(&config, profile.as_deref(), &tx, &cancel).await?;
+                drop(tx);
+                printer.await?;
+                let passed = report.passed();
+                let path = pm_agent::probe::save(&workspace, &report)?;
+                let observation = pm_agent::probe::current(&config_path, report, path);
+                println!("{}", serde_json::to_string_pretty(&observation)?);
+                if !passed {
+                    std::process::exit(2);
+                }
+            }
+        }
         Command::Tui => {
             ensure!(
                 std::io::stdin().is_terminal(),

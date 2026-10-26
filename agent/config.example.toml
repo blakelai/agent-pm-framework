@@ -2,6 +2,8 @@
 # Chat Completions profiles request service usage by default. Add request_usage = false
 # inside a provider profile only when its gateway rejects stream_options.include_usage.
 # Missing usage stays unavailable; no token or context estimation is performed.
+# Explicit `probe` sends up to three synthetic requests; `probe --last` reads the
+# latest local result without requests. Probes do not modify these settings.
 provider = "ollama"
 max_steps = 32
 
