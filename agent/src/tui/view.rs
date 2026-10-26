@@ -33,7 +33,7 @@ pub const TABS: &[(&str, &str)] = &[
 ];
 pub const HELP: &str = "# PM Agent\n\nF2 switches Browse / Chat. F1 opens help. Ctrl+Q exits when idle.\n\n## Browse\nAlt+1…9 selects a category; Alt+0 lists all categories. Alt+Left/Right cycles categories.\nEnter opens the selected document; Esc returns to the list. F3 collapses the list; F4 maximizes the document. F6 toggles emoji.\nTab switches focus. PgUp/PgDn scroll. Mouse wheel scrolls the pointed pane; drag the right scrollbar. Right-click opens actions. L shows document links. P shows properties. O opens the original in the desktop application. R refreshes immediately. Local knowledge files also refresh automatically every two seconds; drafts are retained and changed inputs require a new preview. E edits supported project fields; N creates a PBI, risk or decision. F5 or Planning opens the local planning view: 1 Schedule, 2 Capacity, 3 Signals; M proposes an iteration move; P/I/A edit allocations, iterations and forecast date; R refreshes; Esc returns. F7 or Delivery opens Changes, UAT, Releases and Benefits: 1-4/Alt+1-4 select tabs, N creates a draft, E edits, O opens the document, R refreshes, Enter focuses details, Esc returns.\n\nF8 or the document context menu opens Impact and Compare: 1 references, 2 baseline diff, 3 source diff; Enter explicitly compares a baseline; O opens a candidate; R revalidates; F4 maximizes; Esc returns. Changed project inputs clear results. Source comparisons use captured snapshots only.
 
-F10 opens Materials: Enter/R checks the selected original and extracted text; 1/2/3 switch Overview/Text/Evidence; O opens a rechecked original, N opens the current note, [/] cycle claims, F4 maximizes.\n\nF9 opens Questions: scope, affected files, recorded answers and resolution checks. Enter focuses details; Esc returns; O opens the note; R refreshes.\n\n## Editing\nEnter/Tab edits fields; lists use one value per line. Use left/right to select enum values. Ctrl+S reviews changes, then Ctrl+S saves the reviewed result. Esc reverts the active field or returns from preview. Ctrl+D discards with confirmation.\n\n## Chat\nType immediately. Enter sends; Alt+Enter, Shift+Enter or Ctrl+J inserts a newline. Multiline paste never submits.\nScroll the conversation to read history. Esc returns to the latest message and input. A separate Esc in the input cancels an active operation. Ctrl+C clears only the draft.\n\n## Commands\n/help, /status, /budget, /probe [PROFILE], /probe last [PROFILE], /skills, /skills clear, /search TEXT, /stage prd, /pm plan, /sessions, /resume ID, /continue, /continue-independent, /answer QUESTION-ID TEXT, /approve, /deny, /reconcile ACTUAL_OUTCOME, /new, /quit.\n/budget shows configured session limits and saved request usage without a model request.\n/probe explicitly sends up to three synthetic requests (service charges may apply); /probe last reads local observations. Use a leading $skill-name to explicitly enable a project Skill. Skills remain selected in the session until cleared. Context values come only from the service; missing values remain unavailable.";
+F10 opens Materials: Enter/R checks the selected original and extracted text; 1/2/3/4 switch Overview/Text/Evidence/Reviews; V starts a review, E edits a draft; O opens a rechecked original, N opens the current note, [/] cycle claims, F4 maximizes.\n\nF9 opens Questions: scope, affected files, recorded answers and resolution checks. Enter focuses details; Esc returns; O opens the note; R refreshes.\n\n## Editing\nEnter/Tab edits fields; lists use one value per line. Use left/right to select enum values. Ctrl+S reviews changes, then Ctrl+S saves the reviewed result. Esc reverts the active field or returns from preview. Ctrl+D discards with confirmation.\n\n## Chat\nType immediately. Enter sends; Alt+Enter, Shift+Enter or Ctrl+J inserts a newline. Multiline paste never submits.\nScroll the conversation to read history. Esc returns to the latest message and input. A separate Esc in the input cancels an active operation. Ctrl+C clears only the draft.\n\n## Commands\n/help, /status, /budget, /probe [PROFILE], /probe last [PROFILE], /skills, /skills clear, /search TEXT, /stage prd, /pm plan, /sessions, /resume ID, /continue, /continue-independent, /answer QUESTION-ID TEXT, /approve, /deny, /reconcile ACTUAL_OUTCOME, /new, /quit.\n/budget shows configured session limits and saved request usage without a model request.\n/probe explicitly sends up to three synthetic requests (service charges may apply); /probe last reads local observations. Use a leading $skill-name to explicitly enable a project Skill. Skills remain selected in the session until cleared. Context values come only from the service; missing values remain unavailable.";
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Mode {
@@ -70,6 +70,10 @@ pub enum Command {
     Materials,
     CloseMaterials,
     MaterialInspect(String),
+    MaterialReview {
+        id: String,
+        hash: String,
+    },
     MaterialOpen {
         id: String,
         note_hash: String,
@@ -705,6 +709,14 @@ impl App {
         }
     }
     pub fn event(&mut self, event: Event) -> Command {
+        if let Some(form) = &mut self.form {
+            return match form.event(event) {
+                super::form::Action::None => Command::None,
+                super::form::Action::Review => Command::ReviewEdit,
+                super::form::Action::Save => Command::SaveEdit,
+                super::form::Action::Close => Command::CloseEdit,
+            };
+        }
         if let Some(panel) = &mut self.materials {
             return panel.event(event);
         }
@@ -713,14 +725,6 @@ impl App {
         }
         if let Some(inspector) = &mut self.inspector {
             return inspector.event(event);
-        }
-        if let Some(form) = &mut self.form {
-            return match form.event(event) {
-                super::form::Action::None => Command::None,
-                super::form::Action::Review => Command::ReviewEdit,
-                super::form::Action::Save => Command::SaveEdit,
-                super::form::Action::Close => Command::CloseEdit,
-            };
         }
         if let Some(planner) = &mut self.planner {
             return planner.event(event);
@@ -1045,6 +1049,10 @@ impl App {
         Command::None
     }
     pub fn draw(&mut self, f: &mut ratatui::Frame) {
+        if let Some(form) = &mut self.form {
+            form.draw(f);
+            return;
+        }
         if let Some(panel) = &mut self.materials {
             panel.draw(f);
             return;
@@ -1531,6 +1539,7 @@ fn icon(doc: &Document) -> &'static str {
         "iteration" | "milestone" => "📅 ",
         "pbi" => "🗂️ ",
         "risk" => "⚠️ ",
+        "material_review" => "🔎 ",
         "change" => "🔁 ",
         "uat" => "☑️ ",
         "release" => "🚀 ",
@@ -1688,6 +1697,33 @@ mod tests {
         ));
         draw(&mut a, 90, 24);
         assert_eq!(key(&mut a, KeyCode::Esc), Command::CloseQuestions);
+        assert_eq!(a.input.text, "Unsent 中文 draft");
+    }
+    #[test]
+    fn form_takes_focus_above_materials_and_preserves_chat_draft() {
+        let dir = tempfile::tempdir().unwrap();
+        let w = crate::workspace::Workspace {
+            root: dir.path().into(),
+        };
+        crate::workspace::atomic_write(&w.path("00_Governance/Settings.md").unwrap(),crate::workspace::note(serde_json::json!({"type":"project_settings","title":"Settings","language":"en","document_language":"en","agent_language":"en"}),"# Settings").unwrap().as_bytes()).unwrap();
+        let mut a = App::new(vec![]);
+        a.input.insert("Unsent 中文 draft");
+        a.materials = Some(super::super::materials::Materials::new(
+            crate::materials::Catalog {
+                loaded_at: "synthetic".into(),
+                entries: vec![],
+                problem: None,
+            },
+        ));
+        a.form = Some(super::super::form::Form::new(
+            crate::editing::Edit::create(&w, "risk").unwrap(),
+        ));
+        let buffer = draw(&mut a, 100, 28);
+        let text: String = buffer.content.iter().map(|c| c.symbol()).collect();
+        assert!(text.contains("Edit 07_Decisions/"));
+        assert_eq!(key(&mut a, KeyCode::Esc), Command::CloseEdit);
+        a.form = None;
+        assert_eq!(key(&mut a, KeyCode::Esc), Command::CloseMaterials);
         assert_eq!(a.input.text, "Unsent 中文 draft");
     }
     #[test]

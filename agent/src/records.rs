@@ -9,6 +9,7 @@ pub const MANAGED: &[&str] = &[
     "00_Governance",
     "01_Sources/Notes",
     "01_Sources/Evidence",
+    "01_Sources/Reviews",
     "02_Domain",
     "03_Systems/Repositories",
     "03_Systems/Analysis",
@@ -187,6 +188,16 @@ impl Records {
                     continue;
                 }
                 let d = read(workspace, &d.path)?;
+                if d.kind == crate::reviews::KIND
+                    || d.metadata["workflow_schema"] == crate::reviews::PROFILE
+                {
+                    ensure!(
+                        d.kind == crate::reviews::KIND
+                            && d.id.as_deref().is_some_and(|id| !id.is_empty()),
+                        "Material reviews require type=material_review and a nonempty ID: {}",
+                        d.path
+                    );
+                }
                 if d.metadata.get("clarification_schema").is_some() {
                     ensure!(
                         d.kind == "question" && d.id.as_deref().is_some_and(|id| !id.is_empty()),

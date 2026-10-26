@@ -52,7 +52,7 @@ Commands containing paths and IDs are interface examples; replace them with actu
 | plan | Project-language forecast from remaining effort and capacity; no optimization or delivery probability |
 | status / impact | English management-state or downstream-review report; no automatic decision or external sending |
 | questions | Read-only question scopes, dependency blockers and response checks; see [clarification contract](../agent/Clarification.md) |
-| materials | Read-only catalog or explicit original/extraction/evidence inspection; recorded review is not verification; see [Materials](../agent/Materials.md) |
+| materials | Read-only catalog or original/extraction/evidence inspection, review history and current version/scope assessment; see [Materials](../agent/Materials.md) and [review records](../agent/Material-Reviews.md) |
 | inspect | Read-only reference chains and explicit baseline/source snapshot comparisons; no report or semantic verdict; see [inspection contract](../agent/Inspection.md) |
 | delivery | Read-only structured Change/UAT/Release/Benefit overview with current problems and next-gate inputs; no generated report, state transition or approval; see [delivery contract](../agent/Delivery-Workflows.md) |
 | baseline | Exact candidate snapshots; no identity or approval enforcement |

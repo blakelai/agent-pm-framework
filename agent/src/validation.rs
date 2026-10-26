@@ -531,7 +531,8 @@ fn source(records: &Records, d: &Document, findings: &mut Findings) {
         {
             findings.error("SOURCE_CHANGED", &d.path, "Archived source hash mismatch");
         }
-        if m["review_status"] != "verified" {
+        let review = crate::reviews::summary(records, d);
+        if !review.verified {
             findings.warn(
                 "SOURCE_REVIEW",
                 &d.path,
@@ -545,7 +546,7 @@ fn source(records: &Records, d: &Document, findings: &mut Findings) {
     if d.kind != "evidence" {
         return;
     }
-    let verified = m["workflow_status"] == "verified";
+    let verified = crate::reviews::summary(records, d).verified;
     if !truth(&m["locator"]) || !truth(&m["assertion_type"]) {
         findings.error(
             "EVIDENCE_METADATA",
@@ -613,7 +614,7 @@ fn source(records: &Records, d: &Document, findings: &mut Findings) {
                     "Source version differs from evidence",
                 );
             }
-            if verified && source.metadata["review_status"] != "verified" {
+            if verified && !crate::reviews::summary(records, source).verified {
                 findings.error(
                     "VISUAL_REVIEW_REQUIRED",
                     &d.path,
@@ -638,6 +639,18 @@ fn inspect_record(
 ) {
     let m = &d.metadata;
     let kind = d.kind.as_str();
+    if kind == crate::reviews::KIND
+        && findings
+            .check(
+                "MATERIAL_REVIEW",
+                &d.path,
+                crate::reviews::check(records, d),
+            )
+            .is_some()
+        && let Err(e) = crate::reviews::current(records, d)
+    {
+        findings.warn("MATERIAL_REVIEW_STALE", &d.path, e.to_string());
+    }
     if kind == "question" && m.get("clarification_schema").is_some() {
         findings.check(
             "CLARIFICATION_SCOPE",
@@ -662,6 +675,7 @@ fn inspect_record(
             "decision",
             "contract",
             "design",
+            "material_review",
         ]
         .contains(&kind)
     {
@@ -767,7 +781,7 @@ fn inspect_record(
                 if e.kind != "evidence" {
                     findings.error("EVIDENCE_TYPE", &d.path, "Evidence field must link to EVD");
                 } else if m["doc_status"] == "approved"
-                    && e.metadata["workflow_status"] != "verified"
+                    && !crate::reviews::summary(records, &e).verified
                 {
                     findings.error("UNVERIFIED_EVIDENCE", &d.path, e.id.unwrap_or_default());
                 }

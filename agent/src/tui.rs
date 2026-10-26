@@ -180,6 +180,10 @@ pub async fn run(workspace: Workspace, config_path: PathBuf) -> Result<()> {
                         if let Some(panel)=&mut app.materials {panel.replace(catalog);} else {app.materials=Some(materials::Materials::new(catalog));}
                     },
                     Command::CloseMaterials=>app.materials=None,
+                    Command::MaterialReview{id,hash}=>match crate::editing::Edit::material_review(&workspace,&id,&hash) {
+                        Ok(edit)=>app.form=Some(form::Form::new(edit)),
+                        Err(e)=>if let Some(panel)=&mut app.materials {panel.message=format!("Review unavailable: {e:#}");},
+                    },
                     Command::MaterialInspect(id)=>{
                         if let Some(panel)=&mut app.materials {
                             if material_running {panel.message="Previous check is finishing; R retries.".into();}
@@ -235,6 +239,7 @@ pub async fn run(workspace: Workspace, config_path: PathBuf) -> Result<()> {
                             app.status=format!("Edit unavailable: {e}");
                             if let Some(planner)=&mut app.planner {planner.message=app.status.clone();}
                             if let Some(delivery)=&mut app.delivery {delivery.message=app.status.clone();}
+                            if let Some(panel)=&mut app.materials {panel.message=app.status.clone();}
                         },
                     },
                     Command::New(kind)=>match crate::editing::Edit::create(&workspace,&kind) {
@@ -262,6 +267,7 @@ pub async fn run(workspace: Workspace, config_path: PathBuf) -> Result<()> {
                                 app.scroll=0;
                                 if let Some(planner)=&mut app.planner {planner.message=app.status.clone();}
                                 if let Some(delivery)=&mut app.delivery {delivery.select_path(&saved.path);delivery.message=app.status.clone();}
+                                if let Some(panel)=&mut app.materials {panel.message=format!("{} · R reloads review history",app.status);}
                             },
                             Some(Err(e))=>if let Some(form)=&mut app.form {form.preview=None;form.message=format!("{e:#}");},
                             None=>{},

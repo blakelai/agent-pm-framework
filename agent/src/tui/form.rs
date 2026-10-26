@@ -322,7 +322,7 @@ impl Form {
                 Constraint::Length(1),
             ])
             .split(area);
-        f.render_widget(Paragraph::new(format!("{} {}\nEnter/Tab edits a field · Esc reverts current field / returns · blank values stay unknown",if self.preview.is_some(){"Review"}else{"Edit"},self.edit.path)),parts[0]);
+        f.render_widget(Paragraph::new(format!("{} {}\nEnter/Tab edits a field · Esc reverts current field / returns · blank values stay unknown",if self.preview.is_some(){"Review"}else{"Edit"},self.edit.description())),parts[0]);
         let buttons = Layout::default()
             .direction(Direction::Horizontal)
             .constraints([Constraint::Percentage(55), Constraint::Percentage(45)])

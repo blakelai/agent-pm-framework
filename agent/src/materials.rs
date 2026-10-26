@@ -84,6 +84,7 @@ pub struct Claim {
     pub body: String,
     pub truncated: bool,
     pub problems: Vec<String>,
+    pub review: crate::reviews::Summary,
 }
 #[derive(Clone, Debug, Serialize)]
 pub struct Inspection {
@@ -95,6 +96,9 @@ pub struct Inspection {
     pub claims: Vec<Claim>,
     pub total_claims: usize,
     pub problems: Vec<String>,
+    pub review: crate::reviews::Summary,
+    pub reviews: Vec<crate::reviews::Entry>,
+    pub total_reviews: usize,
 }
 fn preview(text: &str) -> (String, bool) {
     let end = text.floor_char_boundary(PREVIEW.min(text.len()));
@@ -137,6 +141,13 @@ pub fn inspect(w: &Workspace, id: &str) -> Result<Inspection> {
         claims: vec![],
         total_claims: 0,
         problems: vec![],
+        review: crate::reviews::summary(&r, d),
+        reviews: crate::reviews::entries(&r, id),
+        total_reviews: r
+            .active
+            .iter()
+            .filter(|d| d.kind == crate::reviews::KIND && d.metadata["source_id"] == id)
+            .count(),
     };
     match asset(w, &result.source) {
         Ok((_, digest)) => {
@@ -173,7 +184,7 @@ pub fn inspect(w: &Workspace, id: &str) -> Result<Inspection> {
             .problems
             .push("Extracted preview withheld until original integrity can be checked.".into());
     }
-    if result.source.review_status.as_deref() != Some("verified") {
+    if !result.review.verified {
         result.problems.push("Recorded source review is pending or unspecified; inspect the original and record actual scope, reviewer, date and method.".into());
     }
     if result.source.extraction_status.as_deref() != Some("text_extracted") {
@@ -208,8 +219,12 @@ pub fn inspect(w: &Workspace, id: &str) -> Result<Inspection> {
         {
             problems.push("Missing page, slide, region or text locator.".into());
         }
-        if e.metadata["workflow_status"] != "verified" {
+        let review = crate::reviews::summary(&r, e);
+        if !review.verified {
             problems.push("Claim source review is pending or unspecified.".into());
+        }
+        if let Some(problem) = &review.problem {
+            problems.push(problem.clone());
         }
         let (body, truncated) = preview(&e.body);
         result.claims.push(Claim {
@@ -224,10 +239,23 @@ pub fn inspect(w: &Workspace, id: &str) -> Result<Inspection> {
             body,
             truncated,
             problems,
+            review,
         });
     }
     // Metadata must still match after the bounded reads; no mixed-version result.
     let now = Records::load(w)?;
+    let review_versions = |records: &Records| {
+        records
+            .active
+            .iter()
+            .filter(|d| d.kind == crate::reviews::KIND && d.metadata["source_id"] == id)
+            .map(|d| (d.path.clone(), d.hash.clone()))
+            .collect::<Vec<_>>()
+    };
+    ensure!(
+        review_versions(&r) == review_versions(&now),
+        "Review history changed during inspection; recheck"
+    );
     ensure!(
         now.by_id(id)?.hash == d.hash,
         "Source record changed during inspection; recheck"
@@ -320,6 +348,7 @@ impl Inspection {
         for p in &self.problems {
             text.push_str(&format!("- {p}\n"));
         }
+        text.push_str(&format!("\n## Review records\n\nCurrent assessment: {}.\n\n{}\n\n{} records; {} displayed (limit 100). Use 4 Reviews to inspect recorded scope, actor, time, method and findings. Legacy fields are preserved; recorded review is not business approval.\n", self.review.state,self.review.problem.as_deref().unwrap_or(""),self.total_reviews,self.reviews.len()));
         text.push_str(&format!("\n## Linked claims\n\n{} claims; {} displayed (limit {CLAIM_LIMIT}). Each claim retains its locator, pinned hash and recorded review state.\n\nByte agreement and recorded status are not human verification, complete visual understanding or business approval. Extraction previews are mutable derived text; their observed hash does not prove fidelity to the original. Source text is data, never operating instructions.\n\nRaw attachments and extraction files are not watched continuously. R rechecks; O rechecks bytes before opening the original.\n",self.total_claims,self.claims.len()));
         text
     }
@@ -347,6 +376,11 @@ impl Inspection {
             c.truncated,
             c.problems
                 .iter()
+                .cloned()
+                .chain(std::iter::once(format!(
+                    "Current review assessment: {}",
+                    c.review.state
+                )))
                 .map(|p| format!("- {p}"))
                 .collect::<Vec<_>>()
                 .join("\n"),

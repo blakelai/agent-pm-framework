@@ -16,6 +16,7 @@ pub struct Materials {
     selected: usize,
     tab: usize,
     claim: usize,
+    review: usize,
     scroll: usize,
     max_scroll: usize,
     detail_focus: bool,
@@ -38,6 +39,7 @@ impl Materials {
             selected: 0,
             tab: 0,
             claim: 0,
+            review: 0,
             scroll: 0,
             max_scroll: 0,
             detail_focus: false,
@@ -91,6 +93,7 @@ impl Materials {
                     r.checked_at
                 );
                 self.claim = self.claim.min(r.claims.len().saturating_sub(1));
+                self.review = self.review.min(r.reviews.len().saturating_sub(1));
                 self.report = Some(r);
             }
             Ok(_) => self.message = "Source selection or metadata changed; R rechecks.".into(),
@@ -104,20 +107,36 @@ impl Materials {
             self.selected = next;
             self.scroll = 0;
             self.claim = 0;
+            self.review = 0;
             self.invalidate();
         }
     }
     fn action(&mut self, key: char) -> Command {
         match key {
-            '1'..='3' => {
+            '1'..='4' => {
                 self.tab = (key as u8 - b'1') as usize;
                 self.scroll = 0;
             }
             '[' => {
-                self.claim = self.claim.saturating_sub(1);
+                if self.tab == 3 {
+                    self.review = self.review.saturating_sub(1);
+                } else {
+                    self.claim = self.claim.saturating_sub(1);
+                }
                 self.scroll = 0;
             }
             ']' => {
+                if self.tab == 3 {
+                    self.review = (self.review + 1).min(
+                        self.report
+                            .as_ref()
+                            .map(|r| r.reviews.len())
+                            .unwrap_or(0)
+                            .saturating_sub(1),
+                    );
+                    self.scroll = 0;
+                    return Command::None;
+                }
                 self.claim = (self.claim + 1).min(
                     self.report
                         .as_ref()
@@ -147,7 +166,12 @@ impl Materials {
                 }
             }
             'n' => {
-                let path = if self.tab == 2 {
+                let path = if self.tab == 3 {
+                    self.report
+                        .as_ref()
+                        .and_then(|r| r.reviews.get(self.review))
+                        .map(|r| r.path.clone())
+                } else if self.tab == 2 {
                     self.report
                         .as_ref()
                         .and_then(|r| r.claims.get(self.claim))
@@ -159,6 +183,45 @@ impl Materials {
                         .map(|e| e.path.clone())
                 };
                 return path.map(Command::Read).unwrap_or(Command::None);
+            }
+            'e' if self.tab == 3 => {
+                if let Some(r) = self
+                    .report
+                    .as_ref()
+                    .and_then(|r| r.reviews.get(self.review))
+                {
+                    if r.status == "draft" {
+                        return Command::Edit(r.path.clone());
+                    }
+                    self.message="Recorded reviews are historical; V starts a new review. Link previous_records explicitly.".into();
+                }
+            }
+            'v' => {
+                if let Some(r) = &self.report
+                    && r.asset_matches
+                {
+                    let id = if self.tab == 3 {
+                        r.reviews.get(self.review).map(|v| v.target_id.as_str())
+                    } else if self.tab == 2 {
+                        r.claims.get(self.claim).map(|c| c.id.as_str())
+                    } else {
+                        Some(r.source.id.as_str())
+                    };
+                    if let Some(id) = id {
+                        let hash = if id == r.source.id {
+                            Some(&r.source.note_sha256)
+                        } else {
+                            r.claims.iter().find(|c| c.id == id).map(|c| &c.note_sha256)
+                        };
+                        if let Some(hash) = hash {
+                            return Command::MaterialReview {
+                                id: id.into(),
+                                hash: hash.clone(),
+                            };
+                        }
+                    }
+                }
+                self.message="Inspect a matching original and select the source or claim before starting a review.".into();
             }
             'x' => return Command::CloseMaterials,
             _ => {}
@@ -176,13 +239,14 @@ impl Materials {
         }
         let Some(r) = &self.report else {
             return format!(
-                "# Material inspection\n\n{}\n\nNo byte check is available for the current selection.\n\n1 Overview · 2 Text · 3 Evidence\n\nEnter/R checks this material; O opens a matching original; N opens the current source/evidence note. Recorded review states do not certify the claims.",
+                "# Material inspection\n\n{}\n\nNo byte check is available for the current selection.\n\n1 Overview · 2 Text · 3 Evidence · 4 Reviews\n\nEnter/R checks this material; O opens a matching original; N opens the current source/evidence note. Recorded review states do not certify the claims.",
                 self.message
             );
         };
         match self.tab {
             1 => r.extraction(),
             2 => r.evidence(self.claim),
+            3 => r.reviews.get(self.review).map(|e|format!("{}\n\nReview {}/{} · E edits a draft; V creates a new review of this target. Link previous_records explicitly for a correction.",e.content,self.review+1,r.reviews.len())).unwrap_or_else(||"# No material review records\n\nSelect Overview or Evidence, then V to record an actual review. No reviewer, date or result is inferred.".into()),
             _ => r.overview(),
         }
     }
@@ -355,7 +419,7 @@ impl Materials {
         );
         let block = Block::default()
             .borders(Borders::ALL)
-            .title(["Overview", "Extracted data", "Evidence"][self.tab])
+            .title(["Overview", "Extracted data", "Evidence", "Reviews"][self.tab])
             .border_style(Style::default().fg(if self.detail_focus {
                 Color::Cyan
             } else {
@@ -402,6 +466,7 @@ impl Materials {
                 (" 1 Overview ", '1'),
                 (" 2 Text ", '2'),
                 (" 3 Evidence ", '3'),
+                (" 4 Reviews ", '4'),
                 (" [ Previous ", '['),
                 (" ] Next ", ']'),
             ],
@@ -409,6 +474,8 @@ impl Materials {
                 (" R Check ", 'r'),
                 (" O Original ", 'o'),
                 (" N Note ", 'n'),
+                (" V Review ", 'v'),
+                (" E Edit ", 'e'),
                 (" X Back ", 'x'),
             ],
         ]
@@ -458,9 +525,18 @@ mod tests {
         }
     }
     fn report() -> Inspection {
+        let summary = || crate::reviews::Summary {
+            state: "pending".into(),
+            verified: false,
+            records: vec![],
+            problem: None,
+        };
         Inspection {
             checked_at: "synthetic".into(),
             source: catalog().entries.remove(0),
+            review: summary(),
+            reviews: vec![],
+            total_reviews: 0,
             asset_sha256: Some("asset".into()),
             asset_matches: true,
             extracted: Some(crate::materials::Preview {
@@ -481,6 +557,7 @@ mod tests {
                 body: "# Supplied claim".into(),
                 truncated: false,
                 problems: vec![],
+                review: summary(),
             }],
             total_claims: 1,
             problems: vec!["Actual review pending".into()],
@@ -543,6 +620,60 @@ mod tests {
         assert_eq!(key(&mut p, KeyCode::Esc), Command::None);
         assert!(!p.detail_focus);
         assert_eq!(key(&mut p, KeyCode::Esc), Command::CloseMaterials);
+    }
+    #[test]
+    fn review_actions_bind_selection_and_keep_recorded_history_read_only() {
+        let mut p = Materials::new(catalog());
+        assert_eq!(key(&mut p, KeyCode::Char('v')), Command::None);
+        p.start(1);
+        let mut r = report();
+        r.reviews = vec![crate::reviews::Entry {
+            id: "REVIEW-ONE".into(),
+            path: "01_Sources/Reviews/REVIEW-ONE.md".into(),
+            target_id: "EVD-ONE".into(),
+            status: "recorded".into(),
+            content: "# Synthetic review\n\nRecorded scope".into(),
+        }];
+        r.total_reviews = 1;
+        p.finish(1, Ok(r));
+        assert_eq!(
+            key(&mut p, KeyCode::Char('v')),
+            Command::MaterialReview {
+                id: "SRC-ONE".into(),
+                hash: "note".into()
+            }
+        );
+        key(&mut p, KeyCode::Char('3'));
+        assert_eq!(
+            key(&mut p, KeyCode::Char('v')),
+            Command::MaterialReview {
+                id: "EVD-ONE".into(),
+                hash: "claim".into()
+            }
+        );
+        draw(&mut p, 100, 28);
+        let tab = p.actions.iter().find(|(_, c)| *c == '4').unwrap().0;
+        p.event(Event::Mouse(MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: tab.x,
+            row: tab.y,
+            modifiers: KeyModifiers::NONE,
+        }));
+        assert!(p.details().contains("Recorded scope"));
+        assert_eq!(key(&mut p, KeyCode::Char('e')), Command::None);
+        assert!(p.message.contains("historical"));
+        assert_eq!(
+            key(&mut p, KeyCode::Char('n')),
+            Command::Read("01_Sources/Reviews/REVIEW-ONE.md".into())
+        );
+        p.report.as_mut().unwrap().reviews[0].status = "draft".into();
+        assert_eq!(
+            key(&mut p, KeyCode::Char('e')),
+            Command::Edit("01_Sources/Reviews/REVIEW-ONE.md".into())
+        );
+        p.invalidate();
+        assert_eq!(key(&mut p, KeyCode::Char('e')), Command::None);
+        assert_eq!(key(&mut p, KeyCode::Char('v')), Command::None);
     }
     #[test]
     fn material_refresh_and_selection_reject_superseded_results_and_clear_open_action() {

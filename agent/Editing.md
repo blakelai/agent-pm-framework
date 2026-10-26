@@ -40,7 +40,7 @@ Once a PBI has left proposed state, its work type cannot be changed here. Refine
 
 Ordinary decisions can record accepted, rejected or rescinded outcomes only with supplied actor, date and resolvable decision-evidence links. Previously recorded decisions are read-only here: create a new linked decision to preserve history. Baseline-approval decisions and approved/retired documents use their separate procedures. Closing a risk requires evidence links. These checks establish structure and references, not whether a human decision or event actually occurred; the user remains responsible for the supplied facts.
 
-Sources, snapshots, immutable baselines, templates, Skills and general governance documents are outside this editing surface. Agent write_draft keeps its separate, existing draft-only restrictions; the model cannot call the human editor's save operation.
+Original source/evidence notes, snapshots, immutable baselines, templates, Skills and general governance documents are outside this editing surface. The [material review editor](Material-Reviews.md) creates separate version-bound records under 01_Sources/Reviews and edits their drafts; recorded outcomes remain historical. Agent write_draft keeps its separate, existing draft-only restrictions; the model cannot call the human editor's save operation.
 
 ## Conflicts and audit
 

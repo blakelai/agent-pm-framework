@@ -16,6 +16,7 @@ pub mod probe;
 pub mod profile;
 pub mod provider;
 pub mod records;
+pub mod reviews;
 pub mod runtime;
 pub mod schedule;
 pub mod skills;

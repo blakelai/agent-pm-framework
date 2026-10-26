@@ -86,7 +86,7 @@ F8 or the document context menu opens [Impact and Compare](Inspection.md). Follo
 
 [Structured editing](Editing.md) covers staffing, iterations, forecast dates, PBIs, risks and draft decisions. Ctrl+S first validates and previews changes; a separate Ctrl+S saves the reviewed result. Missing values remain unknown. Status changes require the existing evidence contracts, and stale documents or changed preview inputs are rejected.
 
-F10 or the document context menu opens the [Materials workbench](Materials.md) for original-file checks, extracted previews, evidence locators and recorded review gaps. Enter/R checks the selection; 1/2/3 switches Overview/Text/Evidence; O rechecks and opens the original; N opens the source or claim note.
+F10 or the document context menu opens the [Materials workbench](Materials.md) for original-file checks, extracted previews, evidence locators and review history. Enter/R checks the selection; 1/2/3/4 switches Overview/Text/Evidence/Reviews; O rechecks and opens the original; N opens the selected note. V starts a [version-bound human review](Material-Reviews.md); E edits a review draft. Recorded outcomes retain their history and require a new linked correction.
 
 Views include BRD, PRD/REQ, domain knowledge, systems, questions, people/schedules, backlog, progress/risks, verification and Agent runs. They show real Markdown records and metadata. Requirement views recognize document types even outside conventional subfolders. Templates appear in All, not project-specific views. Empty views remain empty; no progress, people or risk scores are synthesized for presentation.
 

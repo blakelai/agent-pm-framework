@@ -136,6 +136,9 @@ fn fields(kind: &str) -> Vec<(&'static str, FieldType)> {
     use FieldType::*;
     let mut result = vec![("title", Text), ("owner", Text)];
     result.extend(delivery::fields(kind));
+    if kind == crate::reviews::KIND {
+        result.extend(crate::reviews::fields());
+    }
     match kind {
         "pbi" => result.extend([
             (
@@ -261,6 +264,9 @@ fn editable(path: &str, m: &Value) -> Result<()> {
         path,
         "06_Delivery/People.md" | "06_Delivery/Iterations.md" | "06_Delivery/Planning.md"
     ) || path.starts_with("05_Backlog/") && m["type"] == "pbi"
+        || path.starts_with(crate::reviews::FOLDER)
+            && m["type"] == crate::reviews::KIND
+            && m["workflow_schema"] == crate::reviews::PROFILE
         || path.starts_with("07_Decisions/")
             && matches!(m["type"].as_str(), Some("risk" | "decision"))
         || delivery::folder(m["type"].as_str().unwrap_or(""))
@@ -268,7 +274,7 @@ fn editable(path: &str, m: &Value) -> Result<()> {
             && m["workflow_schema"] == delivery::PROFILE;
     ensure!(
         allowed && path.ends_with(".md"),
-        "Structured editing supports planning, PBIs, risks, decisions and delivery-v1 records in their project folders"
+        "Structured editing supports planning, PBIs, risks, decisions, delivery-v1 and material-review-v1 records in their project folders"
     );
     ensure!(
         !path
@@ -296,6 +302,10 @@ impl Edit {
         let original = w.read(path)?;
         let (metadata, body) = records::parse_project_note(&original)?;
         editable(path, &metadata)?;
+        ensure!(
+            metadata["type"] != crate::reviews::KIND || metadata["workflow_status"] == "draft",
+            "Recorded material reviews are historical; create a new review linked through previous_records"
+        );
         let tables = tables(path, metadata["type"].as_str().unwrap_or(""), &body)?;
         ensure!(
             metadata["type"] != "decision" || metadata["workflow_status"] == "draft",
@@ -312,6 +322,27 @@ impl Edit {
             body,
             tables,
         })
+    }
+    pub fn material_review(w: &Workspace, id: &str, expected_hash: &str) -> Result<Self> {
+        Ok(Self {
+            path: crate::reviews::FOLDER.into(),
+            original: None,
+            metadata: crate::reviews::prepare(w, id, expected_hash)?,
+            body: String::new(),
+            tables: vec![],
+        })
+    }
+    pub fn description(&self) -> String {
+        if self.metadata["type"] == crate::reviews::KIND {
+            format!(
+                "{} · target {} · source {}",
+                self.path,
+                self.metadata["target_id"].as_str().unwrap_or("?"),
+                self.metadata["source_id"].as_str().unwrap_or("?")
+            )
+        } else {
+            self.path.clone()
+        }
     }
     pub fn create(w: &Workspace, kind: &str) -> Result<Self> {
         ensure!(
@@ -607,6 +638,11 @@ impl Edit {
             }
         }
         let record_set = records::Records::load(w)?;
+        if d.kind == crate::reviews::KIND {
+            crate::reviews::check(&record_set, &d)?;
+            crate::reviews::current(&record_set, &d)?;
+            warnings.push("This records supplied review facts, not an authenticated identity or business approval. Partial and follow-up reviews do not clear source-review gates. Existing source/evidence bytes remain unchanged.".into());
+        }
         if d.kind == "decision" && d.metadata["workflow_status"] != "draft" {
             for key in ["decided_by", "decided_at"] {
                 records::string(&d.metadata, key)?;
