@@ -47,6 +47,8 @@ agent/target/debug/pm-agent --vault . chat --stage prd "Review the supplied sour
 
 [Explicit provider probes](Provider-Probes.md) are available through `probe` / `probe --last` in the CLI and `/probe` / `/probe last` in Chat. They test completed SSE text, one synthetic function call and a tool-result receipt, with service-reported usage. An explicit run sends at most three synthetic requests and may incur service charges; saved observations are private and bound to the selected configuration.
 
+[Session limits](Session-Limits.md) optionally cap cumulative request attempts and service-reported total tokens across resumes. `/budget` or CLI `budget --session ID` shows local observations. Limits are unset by default; missing totals remain unknown, and a token guard pauses when a complete total is unavailable. An in-flight request can exceed the threshold; this is not a hard cost cap.
+
 `doctor` checks local configuration and key presence. It does not send a live model request. Endpoint authentication, route availability, model quality, tool support and usage accounting still require live acceptance tests. HTTPS is required for remote endpoints; HTTP is allowed on loopback.
 
 ## Use the terminal workbench
@@ -95,6 +97,7 @@ The [delivery views](Delivery-Workflows.md) show current workflow checks and mis
 | `/skills`, `/skills clear` | Select project Skills / clear additional selections |
 | `/probe [PROFILE]`, `/probe last [PROFILE]` | Explicit synthetic provider check / local observation replay; leaves the current Agent session unchanged |
 | `/status` | Full session, active selection and service-reported usage details |
+| `/budget` | Current operator limits and cumulative session observations; local query without a model request |
 | `/search text` | Literal search, including Chinese and code identifiers; `/search` clears it |
 | `/stage prd` | Select a workflow capability before starting a session |
 | `/pm plan` | Recalculate a staffing forecast from recorded inputs |
@@ -105,7 +108,7 @@ The [delivery views](Delivery-Workflows.md) show current workflow checks and mis
 | `/answer QUESTION-ID TEXT` | Associate actual input with one open question; resume its originating session first |
 | `/continue-independent` | Resume supported independent work; pending questions stay open |
 | `/sessions`, `/resume ID` | List or load durable conversations |
-| `/continue` | Explicitly continue a failed, cancelled or completed turn |
+| `/continue` | Explicitly continue a failed, cancelled, completed or limit-paused turn; current limits are checked again |
 | `/approve`, `/deny` | Decide the exact pending external/import operation |
 | `/reconcile actual outcome` | Record what happened to an interrupted operation without repeating it |
 | `/new` | Start a separate session, retaining the previous one |

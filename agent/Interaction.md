@@ -57,6 +57,8 @@ Usage is parsed from the completed Responses response or Chat Completions usage 
 
 Chat Completions profiles request `stream_options.include_usage` by default. Set `request_usage = false` inside a provider profile if the gateway rejects that optional request field. There is no automatic retry or protocol fallback. This opt-out still accepts usage when a service sends it.
 
+`/budget` displays [session request and reported-token limits](Session-Limits.md) separately from Context. It is a local query that preserves input, model and session state. A `LimitReached` notice identifies the pause and retains pending tools. After reviewing or changing operator limits, `/continue` checks them again; missing usage is never estimated or reset.
+
 The [OpenAI streaming reference](https://developers.openai.com/api/reference/resources/chat/subresources/completions/streaming-events) defines usage chunks separately from content deltas. Compatible services require their own live verification.
 
 ## Terminal compatibility

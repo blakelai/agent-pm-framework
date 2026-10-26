@@ -7,6 +7,13 @@
 provider = "ollama"
 max_steps = 32
 
+# Optional, per-session guards. Omitted limits are disabled; 0 pauses immediately.
+# Totals use only service-reported total_tokens, never input + output estimates.
+# A request already sent can exceed the threshold; this is not a hard cost cap.
+# [session_limits]
+# max_requests = 20
+# max_total_tokens = 50000
+
 [providers.openai]
 protocol = "responses"
 base_url = "https://api.openai.com/v1"

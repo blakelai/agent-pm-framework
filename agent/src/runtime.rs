@@ -25,6 +25,7 @@ pub enum Status {
     Completed,
     Failed,
     Cancelled,
+    LimitReached,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Question {
@@ -52,6 +53,9 @@ pub struct Session {
     pub skill_history: Vec<Activation>,
     #[serde(default)]
     pub usage: Option<crate::provider::Usage>,
+    /// Absent in legacy sessions; historical request counts must not be inferred.
+    #[serde(default)]
+    pub request_ledger: Option<crate::budget::Ledger>,
 }
 pub const STAGES: &[(&str, &str, &str)] = &[
     ("workflow", "pm-workflow", ""),
@@ -87,6 +91,7 @@ impl Session {
             selected_skills: vec![],
             skill_history: vec![],
             usage: None,
+            request_ledger: Some(crate::budget::Ledger::default()),
         })
     }
 }
@@ -195,6 +200,10 @@ impl Runtime {
     }
     fn accept_input(&self, s: &mut Session, input: &str, target: Option<&str>) -> Result<()> {
         ensure!(!input.trim().is_empty(), "Input cannot be empty");
+        ensure!(
+            s.status != Status::LimitReached || s.pending.is_empty(),
+            "Limit-paused tools are pending; review limits and use /continue before sending another message"
+        );
         ensure!(
             !matches!(
                 s.status,
@@ -382,6 +391,9 @@ impl Runtime {
         events: &UnboundedSender<Event>,
         cancel: &CancellationToken,
     ) -> Result<()> {
+        if self.pause_for_limit(s, events)? {
+            return Ok(());
+        }
         let system = self.system(s)?;
         let active = s
             .skill_history
@@ -401,6 +413,9 @@ impl Runtime {
         for _ in 0..self.config.max_steps {
             if cancel.is_cancelled() {
                 bail!("Cancelled");
+            }
+            if self.pause_for_limit(s, events)? {
+                return Ok(());
             }
             while !s.pending.is_empty() {
                 let call = s.pending[0].clone();
@@ -561,11 +576,31 @@ impl Runtime {
                 "Session context limit reached; start a new scoped session. No history was silently dropped."
             );
             s.usage = None;
+            // Persist the attempt before dispatch. A crash or missing usage cannot
+            // silently restore capacity or fabricate a zero-token request.
+            s.request_ledger
+                .get_or_insert_with(|| crate::budget::Ledger {
+                    prior_requests_unknown: true,
+                    requests: vec![],
+                })
+                .begin();
             self.save(s)?;
-            let completion = self
+            let result = self
                 .provider
                 .complete(&system, &s.history, &specs, events, cancel)
-                .await?;
+                .await;
+            let state = if result.is_ok() {
+                crate::budget::State::Completed
+            } else if cancel.is_cancelled() {
+                crate::budget::State::Cancelled
+            } else {
+                crate::budget::State::Failed
+            };
+            s.request_ledger
+                .as_mut()
+                .unwrap()
+                .finish(state, result.as_ref().ok().and_then(|c| c.usage.clone()));
+            let completion = result?;
             s.usage = completion.usage.clone();
             s.last_output = completion.text.clone();
             self.provider.append_completion(&mut s.history, &completion);
@@ -576,6 +611,9 @@ impl Runtime {
                 s.pending.insert(0, c);
             }
             self.save(s)?;
+            if !s.pending.is_empty() && self.pause_for_limit(s, events)? {
+                return Ok(());
+            }
             if s.pending.is_empty() {
                 self.refresh_questions(s)?;
                 s.blocked_questions.retain(|path| {
@@ -600,6 +638,20 @@ impl Runtime {
             }
         }
         bail!("Step limit reached; inspect saved work and resume explicitly")
+    }
+    fn pause_for_limit(&self, s: &mut Session, events: &UnboundedSender<Event>) -> Result<bool> {
+        if let Some(reason) =
+            crate::budget::blocked(&self.config.session_limits, s.request_ledger.as_ref())
+        {
+            s.status = Status::LimitReached;
+            s.error = Some(reason.clone());
+            self.save(s)?;
+            let _ = events.send(Event::Notice(format!(
+                "{reason} Progress and pending tools are saved. Review /budget (CLI: budget --session ID), change limits explicitly if appropriate, then continue."
+            )));
+            return Ok(true);
+        }
+        Ok(false)
     }
     fn ask(&self, s: &mut Session, args: &Value, events: &UnboundedSender<Event>) -> Result<()> {
         let question = tools::string(args, "question")?;
@@ -692,6 +744,12 @@ impl Runtime {
             } else {
                 "No execution error recorded."
             }
+        );
+        body.push('\n');
+        body.push_str(
+            &crate::budget::Report::new(&self.config.session_limits, Some(s))
+                .markdown()
+                .replacen("# Session limits", "## Session limits", 1),
         );
         body.push_str("\n## Skill activations\n\n");
         for path in &s.blocked_questions {

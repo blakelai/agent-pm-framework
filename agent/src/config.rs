@@ -66,6 +66,8 @@ pub struct Config {
     pub provider: String,
     #[serde(default = "steps")]
     pub max_steps: usize,
+    #[serde(default)]
+    pub session_limits: crate::budget::Limits,
     pub providers: BTreeMap<String, ProviderConfig>,
     #[serde(default)]
     pub mcp: BTreeMap<String, McpConfig>,

@@ -336,6 +336,13 @@ fn dispatch(
         app.append(&app.status_details());
         return Ok(None);
     }
+    if input == "/budget" {
+        let config = Config::read(config_path)?;
+        app.notice(
+            &crate::budget::Report::new(&config.session_limits, app.session.as_ref()).markdown(),
+        );
+        return Ok(None);
+    }
     if input == "/help" {
         app.append(&format!("\n{HELP}\n"));
         return Ok(None);
@@ -512,7 +519,10 @@ fn dispatch(
                 Action::Continue => {
                     if matches!(
                         session.status,
-                        Status::Failed | Status::Cancelled | Status::Completed
+                        Status::Failed
+                            | Status::Cancelled
+                            | Status::Completed
+                            | Status::LimitReached
                     ) {
                         session.status = Status::Ready;
                     }
@@ -534,6 +544,55 @@ fn dispatch(
 mod tests {
     use super::*;
     use crate::workspace::Document;
+    #[test]
+    fn budget_query_is_local_and_preserves_chat_input_context_and_session() {
+        let dir = tempfile::tempdir().unwrap();
+        crate::workspace::atomic_write(&dir.path().join("00_Governance/Project.md"),crate::workspace::note(serde_json::json!({"type":"project","id":"PROJECT-TEST","language":"en","title":"Synthetic"}),"# Synthetic").unwrap().as_bytes()).unwrap();
+        let w = Workspace::open(dir.path()).unwrap();
+        let path = w.path(".pm-agent/config.toml").unwrap();
+        crate::workspace::atomic_write(
+            &path,
+            br#"
+provider = "fixture"
+[session_limits]
+max_requests = 0
+[providers.fixture]
+protocol = "chat_completions"
+base_url = "http://127.0.0.1:9/v1"
+model = ""
+[mcp.invalid]
+transport = "stdio"
+command = "this-command-must-not-run"
+"#,
+        )
+        .unwrap();
+        let config = Config::read(&path).unwrap();
+        let mut app = App::new(vec![]);
+        app.session = Some(Session::new(&config, "prd").unwrap());
+        app.input.insert("保留中文草稿");
+        app.usage = Some(crate::provider::Usage {
+            input_tokens: Some(77),
+            output_tokens: None,
+            total_tokens: None,
+        });
+        let session = serde_json::to_value(&app.session).unwrap();
+        let store = Store::open(&w.path(".pm-agent/runtime.sqlite3").unwrap()).unwrap();
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let (done, mut finished) = mpsc::unbounded_channel();
+        assert!(
+            dispatch(&w, &path, &mut app, &store, "/budget".into(), &tx, &done)
+                .unwrap()
+                .is_none()
+        );
+        assert!(app.output.contains("Request limit: 0"));
+        assert!(app.output.contains("limit reached"));
+        assert_eq!(app.input.text, "保留中文草稿");
+        assert_eq!(app.usage.unwrap().input_tokens, Some(77));
+        assert_eq!(serde_json::to_value(&app.session).unwrap(), session);
+        assert!(store.sessions().unwrap().is_empty());
+        assert!(rx.try_recv().is_err());
+        assert!(finished.try_recv().is_err());
+    }
     #[tokio::test]
     async fn probe_cancel_and_local_replay_preserve_session_model_and_usage() {
         let dir = tempfile::tempdir().unwrap();
@@ -542,6 +601,7 @@ mod tests {
         let config = Config {
             provider: "fixture".into(),
             max_steps: 32,
+            session_limits: Default::default(),
             providers: std::collections::BTreeMap::from([(
                 "fixture".into(),
                 crate::config::ProviderConfig {

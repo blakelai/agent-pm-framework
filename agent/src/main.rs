@@ -36,6 +36,11 @@ enum Command {
     Scan,
     /// Show durable Agent sessions.
     Sessions,
+    /// Inspect operator limits and saved session usage without a model or MCP connection.
+    Budget {
+        #[arg(long)]
+        session: Option<String>,
+    },
     /// Discover project Skills and report invalid dependencies without contacting a model.
     Skills,
     /// Execute a deterministic native PM command without contacting a model.
@@ -100,6 +105,24 @@ async fn main() -> Result<()> {
     )?;
     let config_path = cli.config.unwrap_or_else(|| state_dir.join("config.toml"));
     match cli.command.unwrap_or(Command::Tui) {
+        Command::Budget { session } => {
+            let config = Config::read(&config_path)?;
+            let saved = match session {
+                Some(id) => {
+                    let path = workspace.path(".pm-agent/runtime.sqlite3")?;
+                    ensure!(path.is_file(), "No saved sessions in this workspace");
+                    Some(Store::open(&path)?.load::<Session>(&id)?)
+                }
+                None => None,
+            };
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&pm_agent::budget::Report::new(
+                    &config.session_limits,
+                    saved.as_ref()
+                ))?
+            );
+        }
         Command::Probe { profile, last } => {
             let config = Config::read(&config_path)?;
             if last {
@@ -246,7 +269,7 @@ async fn main() -> Result<()> {
                 }
             } else if matches!(
                 s.status,
-                Status::Failed | Status::Cancelled | Status::Completed
+                Status::Failed | Status::Cancelled | Status::Completed | Status::LimitReached
             ) {
                 s.status = Status::Ready;
             }
@@ -278,7 +301,10 @@ async fn main() -> Result<()> {
             );
             if matches!(
                 s.status,
-                Status::Failed | Status::Cancelled | Status::NeedsReconciliation
+                Status::Failed
+                    | Status::Cancelled
+                    | Status::NeedsReconciliation
+                    | Status::LimitReached
             ) {
                 std::process::exit(2);
             }

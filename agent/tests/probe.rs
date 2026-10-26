@@ -190,6 +190,7 @@ fn config(url: String, protocol: Protocol) -> Config {
     Config {
         provider: "fixture".into(),
         max_steps: 32,
+        session_limits: Default::default(),
         providers: BTreeMap::from([(
             "fixture".into(),
             ProviderConfig {
