@@ -8,6 +8,7 @@ mod extraction;
 pub mod governance;
 pub mod inspection;
 mod locale;
+pub mod materials;
 pub mod mcp;
 pub mod okf;
 pub mod planning;

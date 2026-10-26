@@ -3,6 +3,7 @@ mod editor;
 mod form;
 mod inspection;
 mod markdown;
+mod materials;
 mod planner;
 mod questions;
 mod refresh;
@@ -89,6 +90,9 @@ pub async fn run(workspace: Workspace, config_path: PathBuf) -> Result<()> {
     let (inspect_tx, mut inspect_rx) = mpsc::unbounded_channel();
     let mut inspection_running = false;
     let mut inspection_ticket = 0u64;
+    let (material_tx, mut material_rx) = mpsc::unbounded_channel();
+    let mut material_running = false;
+    let mut material_ticket = 0u64;
     loop {
         tokio::select! {
             _ = polling.tick() => {
@@ -109,6 +113,10 @@ pub async fn run(workspace: Workspace, config_path: PathBuf) -> Result<()> {
             Some((ticket, result)) = inspect_rx.recv() => {
                 inspection_running = false;
                 if let Some(inspector) = &mut app.inspector { dirty |= inspector.finish(ticket, result); }
+            },
+            Some((ticket, result)) = material_rx.recv() => {
+                material_running = false;
+                if let Some(panel) = &mut app.materials {dirty |= panel.finish(ticket, result);}
             },
             _ = repaint.tick() => {
                 if dirty { terminal.draw(|f| app.draw(f))?; dirty = false; }
@@ -167,6 +175,32 @@ pub async fn run(workspace: Workspace, config_path: PathBuf) -> Result<()> {
                         if let Some(q)=&mut app.questions {q.replace(snapshot);} else {app.questions=Some(questions::Questions::new(snapshot));}
                     }
                     Command::CloseQuestions=>app.questions=None,
+                    Command::Materials=>{
+                        let catalog=crate::materials::Catalog::load(&workspace);
+                        if let Some(panel)=&mut app.materials {panel.replace(catalog);} else {app.materials=Some(materials::Materials::new(catalog));}
+                    },
+                    Command::CloseMaterials=>app.materials=None,
+                    Command::MaterialInspect(id)=>{
+                        if let Some(panel)=&mut app.materials {
+                            if material_running {panel.message="Previous check is finishing; R retries.".into();}
+                            else {
+                                material_running=true;material_ticket=material_ticket.wrapping_add(1);
+                                let ticket=material_ticket;panel.start(ticket);
+                                let workspace=workspace.clone();let sender=material_tx.clone();
+                                tokio::spawn(async move {
+                                    let result=tokio::task::spawn_blocking(move || crate::materials::inspect(&workspace,&id))
+                                        .await.context("Material inspection worker failed").and_then(|r|r);
+                                    let _=sender.send((ticket,result));
+                                });
+                            }
+                        }
+                    },
+                    Command::MaterialOpen{id,note_hash,sha256}=>{
+                        let result=crate::materials::open_original(&workspace,&id,&note_hash,&sha256).and_then(open_document);
+                        if let Err(e)=result && let Some(panel)=&mut app.materials {
+                            panel.invalidate();panel.message=format!("Original not opened: {e}");
+                        }
+                    },
                     Command::Inspect(request)=>{
                         if app.inspector.is_none() {app.inspector=Some(inspection::Inspector::new(request.clone()));}
                         let inspector=app.inspector.as_mut().unwrap();

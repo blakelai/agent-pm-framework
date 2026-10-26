@@ -63,7 +63,7 @@ fn scoped(root: &Path, raw: &str) -> Result<PathBuf> {
     }
     Workspace { root: root.into() }.path(raw)
 }
-fn bytes(path: &Path, limit: u64) -> Result<Vec<u8>> {
+pub(crate) fn bytes(path: &Path, limit: u64) -> Result<Vec<u8>> {
     let mut file = fs::File::open(path)?;
     ensure!(
         file.metadata()?.is_file() && file.metadata()?.len() <= limit,

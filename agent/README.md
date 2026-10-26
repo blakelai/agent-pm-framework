@@ -10,7 +10,7 @@ A working first implementation of the local Rust terminal agent. It browses the 
 
 ## Build and start
 
-Run from the framework repository root. Rust 1.96+ and a C toolchain are required. The application and SQLite are compiled into the binary. All 18 PM operations run natively in Rust, including PDF/Office text extraction and OKF export. No Python installation is required to build or run the application. Git records repository revision/dirty state when available; unavailable Git produces an explicit unversioned snapshot.
+Run from the framework repository root. Rust 1.96+ and a C toolchain are required. The application and SQLite are compiled into the binary. All 19 PM operations run natively in Rust, including PDF/Office text extraction and OKF export. No Python installation is required to build or run the application. Git records repository revision/dirty state when available; unavailable Git produces an explicit unversioned snapshot.
 
 ```sh
 cargo build --manifest-path agent/Cargo.toml --locked
@@ -86,6 +86,8 @@ F8 or the document context menu opens [Impact and Compare](Inspection.md). Follo
 
 [Structured editing](Editing.md) covers staffing, iterations, forecast dates, PBIs, risks and draft decisions. Ctrl+S first validates and previews changes; a separate Ctrl+S saves the reviewed result. Missing values remain unknown. Status changes require the existing evidence contracts, and stale documents or changed preview inputs are rejected.
 
+F10 or the document context menu opens the [Materials workbench](Materials.md) for original-file checks, extracted previews, evidence locators and recorded review gaps. Enter/R checks the selection; 1/2/3 switches Overview/Text/Evidence; O rechecks and opens the original; N opens the source or claim note.
+
 Views include BRD, PRD/REQ, domain knowledge, systems, questions, people/schedules, backlog, progress/risks, verification and Agent runs. They show real Markdown records and metadata. Requirement views recognize document types even outside conventional subfolders. Templates appear in All, not project-specific views. Empty views remain empty; no progress, people or risk scores are synthesized for presentation.
 
 The [planning view](Planning-View.md) filters actual PBIs by iteration, shows capacity and remaining demand by role, and exposes supplied allocations across projects. M proposes a PBI move; review its before/after planning impact before saving. P, I and A open the existing allocation, iteration and forecast-date editors. Missing inputs keep calculations unavailable, and refreshing the view never replaces a historical forecast report.
@@ -105,6 +107,7 @@ The [delivery views](Delivery-Workflows.md) show current workflow checks and mis
 | `/pm delivery` | Read current delivery records and missing gate inputs without writing a report |
 | `/pm inspect ID` | Read downstream reference chains; add `--baseline BASE-ID` or `--source` for an explicit comparison |
 | `/pm questions` | Read recorded question scopes and current blockers without a report or model |
+| `/pm materials [SRC-ID]` | Read the material catalog or explicitly inspect original/extraction/evidence without a model |
 | `/answer QUESTION-ID TEXT` | Associate actual input with one open question; resume its originating session first |
 | `/continue-independent` | Resume supported independent work; pending questions stay open |
 | `/sessions`, `/resume ID` | List or load durable conversations |
@@ -121,7 +124,7 @@ Every PM operation uses the compiled Rust implementation. There is no Python dis
 
 | Capability | Commands |
 |---|---|
-| Analysis sources | `ingest`, `repo-add`, `sync`, `evidence` |
+| Analysis sources | `ingest`, `materials`, `repo-add`, `sync`, `evidence` |
 | Planning and governance | `plan`, `validate`, `coverage`, `status`, `delivery`, `questions`, `inspect`, `impact`, `baseline`, `fingerprint`, `settings`, `prepare` |
 | Knowledge exchange | `okf-export`, `okf-check` |
 

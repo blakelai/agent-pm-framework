@@ -6,7 +6,7 @@ title: "Local tools"
 
 # Local tools
 
-All 18 operations run in the Rust application through `pm-agent --vault /path/to/vault pm COMMAND ...` or the Agent's `pm` tool. Install or build the binary using [application setup](../agent/README.md). No Python runtime or model is needed for deterministic operations.
+All 19 operations run in the Rust application through `pm-agent --vault /path/to/vault pm COMMAND ...` or the Agent's `pm` tool. Install or build the binary using [application setup](../agent/README.md). No Python runtime or model is needed for deterministic operations.
 
 The examples assume `pm-agent` is on PATH. Otherwise substitute `agent/target/debug/pm-agent` from the framework root. `--vault` precedes `pm`; relative source paths are resolved against that Vault.
 
@@ -27,6 +27,8 @@ pm-agent --vault . pm status
 pm-agent --vault . pm delivery
 pm-agent --vault . pm impact REQ-001
 pm-agent --vault . pm questions
+pm-agent --vault . pm materials
+pm-agent --vault . pm materials SRC-001
 pm-agent --vault . pm inspect REQ-001
 pm-agent --vault . pm inspect REQ-001 --baseline BASE-001
 pm-agent --vault . pm inspect EVD-102 --source
@@ -50,6 +52,7 @@ Commands containing paths and IDs are interface examples; replace them with actu
 | plan | Project-language forecast from remaining effort and capacity; no optimization or delivery probability |
 | status / impact | English management-state or downstream-review report; no automatic decision or external sending |
 | questions | Read-only question scopes, dependency blockers and response checks; see [clarification contract](../agent/Clarification.md) |
+| materials | Read-only catalog or explicit original/extraction/evidence inspection; recorded review is not verification; see [Materials](../agent/Materials.md) |
 | inspect | Read-only reference chains and explicit baseline/source snapshot comparisons; no report or semantic verdict; see [inspection contract](../agent/Inspection.md) |
 | delivery | Read-only structured Change/UAT/Release/Benefit overview with current problems and next-gate inputs; no generated report, state transition or approval; see [delivery contract](../agent/Delivery-Workflows.md) |
 | baseline | Exact candidate snapshots; no identity or approval enforcement |

@@ -17,6 +17,7 @@ pub struct Views {
     delivery: bool,
     inspecting: bool,
     questions: bool,
+    materials: bool,
 }
 impl Views {
     pub fn of(app: &App) -> Self {
@@ -25,6 +26,7 @@ impl Views {
             delivery: app.delivery.is_some(),
             inspecting: app.inspector.is_some(),
             questions: app.questions.is_some(),
+            materials: app.materials.is_some(),
         }
     }
 }
@@ -41,6 +43,7 @@ pub struct Update {
     planning: Option<schedule::Snapshot>,
     delivery: Option<delivery::Snapshot>,
     questions: Option<crate::clarification::Snapshot>,
+    materials: Option<crate::materials::Catalog>,
 }
 
 /// A manual refresh, save or view switch supersedes any outstanding read.
@@ -175,6 +178,10 @@ pub fn scan(w: &Workspace, request: &Request) -> Result<Option<Update>> {
         .views
         .questions
         .then(|| crate::clarification::Snapshot::load(w));
+    let materials = request
+        .views
+        .materials
+        .then(|| crate::materials::Catalog::load(w));
     // A changing tree cannot be represented as one fresh display snapshot.
     // This is an optimistic check, not a filesystem transaction or an attestation.
     ensure!(
@@ -187,6 +194,7 @@ pub fn scan(w: &Workspace, request: &Request) -> Result<Option<Update>> {
         planning,
         delivery,
         questions,
+        materials,
     }))
 }
 
@@ -219,6 +227,9 @@ fn apply(update: Update, app: &mut App, store: &mut Store) -> Result<()> {
     if let (Some(q), Some(snapshot)) = (&mut app.questions, update.questions) {
         q.replace(snapshot);
     }
+    if let (Some(panel), Some(catalog)) = (&mut app.materials, update.materials) {
+        panel.replace(catalog);
+    }
     if let Some(form) = &mut app.form {
         form.inputs_changed();
     }
@@ -233,6 +244,13 @@ fn unavailable(problem: String, app: &mut App, store: &mut Store) -> bool {
         return false;
     }
     app.replace_documents(vec![]);
+    if let Some(panel) = &mut app.materials {
+        panel.replace(crate::materials::Catalog {
+            loaded_at: records::timestamp(),
+            entries: vec![],
+            problem: Some(problem.clone()),
+        });
+    }
     if let Some(inspector) = &mut app.inspector {
         inspector.invalidate();
     }
@@ -560,5 +578,36 @@ mod tests {
         .unwrap();
         assert!(poll(&w, &mut app, &mut store, &mut monitor));
         assert!(!poll(&w, &mut app, &mut store, &mut monitor));
+    }
+    #[test]
+    fn material_metadata_poll_invalidates_outstanding_checks_and_recovers() {
+        let (_dir, w, mut app, mut store, mut monitor) = fixture();
+        app.input.insert("Unsaved 中文 draft");
+        let path = "01_Sources/Notes/SRC-TEST.md";
+        let text=workspace::note(serde_json::json!({"id":"SRC-TEST","type":"source","title":"Synthetic","language":"en","asset":"01_Sources/Assets/one.txt","sha256":workspace::hash(b"one"),"review_status":"pending","extraction_status":"text_extracted"}),"# Source").unwrap();
+        workspace::atomic_write(&w.path(path).unwrap(), text.as_bytes()).unwrap();
+        workspace::atomic_write(&w.path("01_Sources/Assets/one.txt").unwrap(), b"one").unwrap();
+        app.materials = Some(super::super::materials::Materials::new(
+            crate::materials::Catalog::load(&w),
+        ));
+        assert!(poll(&w, &mut app, &mut store, &mut monitor));
+        app.materials.as_mut().unwrap().start(4);
+        let report = crate::materials::inspect(&w, "SRC-TEST");
+        workspace::atomic_write(
+            &w.path(path).unwrap(),
+            format!("{text}\nChanged note").as_bytes(),
+        )
+        .unwrap();
+        assert!(poll(&w, &mut app, &mut store, &mut monitor));
+        let panel = app.materials.as_mut().unwrap();
+        assert!(!panel.finish(4, report));
+        assert!(panel.report.is_none());
+        workspace::atomic_write(&w.path(path).unwrap(), b"---\ntype: [bad").unwrap();
+        assert!(poll(&w, &mut app, &mut store, &mut monitor));
+        assert!(app.materials.as_ref().unwrap().catalog.problem.is_some());
+        workspace::atomic_write(&w.path(path).unwrap(), text.as_bytes()).unwrap();
+        assert!(poll(&w, &mut app, &mut store, &mut monitor));
+        assert_eq!(app.materials.as_ref().unwrap().catalog.entries.len(), 1);
+        assert_eq!(app.input.text, "Unsaved 中文 draft");
     }
 }
