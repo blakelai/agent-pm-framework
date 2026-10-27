@@ -32,6 +32,10 @@ The browser and transcript share a terminal Markdown renderer: headings, emphasi
 
 The right scrollbar uses rendered rows after wrapping. Wheel events operate on the pointed pane; scrollbar clicks and drags change its position. Scrolling the conversation enters reading focus and pauses following new output. New streamed text does not pull the reader to the bottom.
 
+## Recovery
+
+Browse offers F11 Recovery, a top-bar action and a document context-menu entry. The [Recovery panel](Backup-and-Restore.md#tui-recovery-panel) uses Alt+1/2/3 or mouse tabs, directly editable absolute paths and a session checkbox. Ctrl+S reviews, then a separate Ctrl+S executes a write. Esc/right-click returns or requests cancellation; the panel waits for the actual background result. It keeps the current Vault and unsent Chat input intact.
+
 ## Chat input and cancellation
 
 The transcript and composer are borderless. Only the composer has a gray background. Input is immediately editable; Enter submits. Alt+Enter, supported Shift+Enter and Ctrl+J insert a newline. Bracketed multiline paste inserts text without submitting. Arrow/Home/End and grapheme-aware deletion edit the draft; clicking the composer places the cursor. The input grows to a bounded height and then scrolls internally.

@@ -56,6 +56,7 @@ agent/target/debug/pm-agent --vault . chat --stage prd "Review the supplied sour
 | Control | Action |
 |---|---|
 | F2 / click mode label | Switch Browse and Agent Chat, preserving drafts and reading state |
+| F11 / click Recovery | Open local backup/check/restore with reviewed writes and optional saved sessions |
 | Alt+1–9 / Alt+0 | Select the first nine categories / open all eleven categories |
 | Alt+Left / Alt+Right | Previous / next category |
 | Enter in document list / Esc in document | Focus document / return to the list |

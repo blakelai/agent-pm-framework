@@ -6,11 +6,31 @@ language: "en"
 
 # Project backup and restore
 
-Use the operator CLI to save and recover the working Obsidian Vault. Recovery is local Rust code and needs no model, MCP server, Python, Git or original provider configuration. These commands are separate from the 19 Agent PM operations; they are not model tools or TUI slash commands.
+Use the operator CLI or the TUI Recovery panel to save and recover the working Obsidian Vault. Recovery is local Rust code and needs no model, MCP server, Python or Git. These operations are separate from the 19 Agent PM operations; they are not model tools. The standalone CLI also works when the original Vault and provider configuration are gone.
+
+## TUI Recovery panel
+
+In Browse, press F11, click Recovery in the top bar, or choose F11 Recovery from the document context menu. The panel is unavailable while an Agent or PM operation is running. Existing Chat input, session, model and usage remain unchanged.
+
+| Control | Behavior |
+|---|---|
+| Alt+1 / Alt+2 / Alt+3 or click a tab | Select Backup / Check / Restore; paths are retained and session inclusion resets when changing operation |
+| Tab / Shift+Tab or click a field | Select the archive path, restore parent, optional sessions checkbox or action |
+| Space / Enter on the checkbox | Explicitly include saved sessions for this operation |
+| Ctrl+S or click Review | Review the supplied backup destination, or check the selected archive before reviewing a restore |
+| Ctrl+S or click Execute from review | Perform the reviewed write as a separate action |
+| Esc / right-click | Return from review, close the idle panel, or request cancellation of running work |
+| Wheel / PageUp / PageDown / scrollbar | Read the scope, review or result |
+
+Enter absolute paths; the panel does not expand shell variables or `~`. Pasting a path never submits it. The backup destination must be a new archive outside the current Vault. The restore parent must already exist outside all project Vaults. The new directory is shown on completion; the app keeps the current Vault open. To recover without any working Vault, use the standalone CLI below.
+
+Checks and writes run in one background worker. The panel holds its inputs fixed until the worker returns, retains the process writer lock, and blocks duplicate operations. Restore review records a canonical manifest hash covering paths, sizes, content hashes and runtime inclusion. Changed manifest content requires another check; every file is checked again during restoration. Checks establish integrity, not authenticity.
+
+Cancellation is cooperative between bounded file/database steps and before publishing. The panel waits for the actual outcome and cleanup. A completed publication is reported as completed even if a cancellation arrived too late; cancellation never removes an already published backup or restored Vault. Normal panel/terminal teardown signals cancellation to an outstanding worker. Unsent Chat drafts are not part of the optional persisted-session snapshot.
 
 ## Create and verify
 
-Close other PM Agent processes for this Vault and pause edits in Obsidian or other editors. Choose an existing backup directory outside the Vault and a new filename:
+For CLI creation, close other PM Agent processes for this Vault. In the TUI, the background worker shares its existing writer lock. Pause edits in Obsidian or other editors for either interface. Choose an existing backup directory outside the Vault and a new filename:
 
 ```sh
 pm-agent --vault /projects/example backup create --output /backups/example.pmbak
@@ -21,7 +41,7 @@ Add `--include-sessions` to `backup create` to include the private SQLite runtim
 
 Creation obtains the normal workspace writer lock, inventories the supported scope, hashes each file and rechecks project bytes and inventory before publishing. A private temporary archive is published without overwriting any existing destination. An external editor does not participate in the lock: these checks reduce conflicts but do not create a transaction across all project files. Pause external editing for a coherent snapshot.
 
-`backup check` reads archive structure, limits, the manifest and every included file. It does not create runtime state or modify the archive. The JSON report contains the archive path, file count, total uncompressed bytes, format and session inclusion. A checksum proves correspondence with the supplied manifest, not authorship, business correctness or authenticity. SQLite schema/integrity checks also run when restoring sessions.
+`backup check` reads archive structure, limits, the manifest and every included file. It does not create runtime state or modify the archive. The JSON report contains the archive path, file count, total uncompressed bytes, format, session inclusion and canonical manifest SHA-256. A checksum proves correspondence with the supplied manifest, not authorship, business correctness or authenticity. SQLite schema/integrity checks also run when restoring sessions.
 
 ## Included scope
 

@@ -33,7 +33,7 @@ pub const TABS: &[(&str, &str)] = &[
 ];
 pub const HELP: &str = "# PM Agent\n\nF2 switches Browse / Chat. F1 opens help. Ctrl+Q exits when idle.\n\n## Browse\nAlt+1…9 selects a category; Alt+0 lists all categories. Alt+Left/Right cycles categories.\nEnter opens the selected document; Esc returns to the list. F3 collapses the list; F4 maximizes the document. F6 toggles emoji.\nTab switches focus. PgUp/PgDn scroll. Mouse wheel scrolls the pointed pane; drag the right scrollbar. Right-click opens actions. L shows document links. P shows properties. O opens the original in the desktop application. R refreshes immediately. Local knowledge files also refresh automatically every two seconds; drafts are retained and changed inputs require a new preview. E edits supported project fields; N creates a PBI, risk or decision. F5 or Planning opens the local planning view: 1 Schedule, 2 Capacity, 3 Signals; M proposes an iteration move; P/I/A edit allocations, iterations and forecast date; R refreshes; Esc returns. F7 or Delivery opens Changes, UAT, Releases and Benefits: 1-4/Alt+1-4 select tabs, N creates a draft, E edits, O opens the document, R refreshes, Enter focuses details, Esc returns.\n\nF8 or the document context menu opens Impact and Compare: 1 references, 2 baseline diff, 3 source diff; Enter explicitly compares a baseline; O opens a candidate; R revalidates; F4 maximizes; Esc returns. Changed project inputs clear results. Source comparisons use captured snapshots only.
 
-F10 opens Materials: Enter/R checks the selected original and extracted text; 1/2/3/4 switch Overview/Text/Evidence/Reviews; V starts a review, E edits a draft; O opens a rechecked original, N opens the current note, [/] cycle claims, F4 maximizes.\n\nF9 opens Questions: scope, affected files, recorded answers and resolution checks. Enter focuses details; Esc returns; O opens the note; R refreshes.\n\n## Editing\nEnter/Tab edits fields; lists use one value per line. Use left/right to select enum values. Ctrl+S reviews changes, then Ctrl+S saves the reviewed result. Esc reverts the active field or returns from preview. Ctrl+D discards with confirmation.\n\n## Chat\nType immediately. Enter sends; Alt+Enter, Shift+Enter or Ctrl+J inserts a newline. Multiline paste never submits.\nScroll the conversation to read history. Esc returns to the latest message and input. A separate Esc in the input cancels an active operation. Ctrl+C clears only the draft.\n\n## Commands\n/help, /status, /budget, /probe [PROFILE], /probe last [PROFILE], /skills, /skills clear, /search TEXT, /stage prd, /pm plan, /sessions, /resume ID, /continue, /continue-independent, /answer QUESTION-ID TEXT, /approve, /deny, /reconcile ACTUAL_OUTCOME, /new, /quit.\n/budget shows configured session limits and saved request usage without a model request.\n/probe explicitly sends up to three synthetic requests (service charges may apply); /probe last reads local observations. Use a leading $skill-name to explicitly enable a project Skill. Skills remain selected in the session until cleared. Context values come only from the service; missing values remain unavailable.";
+F11 opens Recovery: Alt+1/2/3 or mouse selects Backup/Check/Restore. Enter absolute paths; Tab selects fields and session inclusion. Ctrl+S reviews, then Ctrl+S executes writes. Esc/right-click backs out or requests cancellation. Unsent Chat input is preserved.\n\nF10 opens Materials: Enter/R checks the selected original and extracted text; 1/2/3/4 switch Overview/Text/Evidence/Reviews; V starts a review, E edits a draft; O opens a rechecked original, N opens the current note, [/] cycle claims, F4 maximizes.\n\nF9 opens Questions: scope, affected files, recorded answers and resolution checks. Enter focuses details; Esc returns; O opens the note; R refreshes.\n\n## Editing\nEnter/Tab edits fields; lists use one value per line. Use left/right to select enum values. Ctrl+S reviews changes, then Ctrl+S saves the reviewed result. Esc reverts the active field or returns from preview. Ctrl+D discards with confirmation.\n\n## Chat\nType immediately. Enter sends; Alt+Enter, Shift+Enter or Ctrl+J inserts a newline. Multiline paste never submits.\nScroll the conversation to read history. Esc returns to the latest message and input. A separate Esc in the input cancels an active operation. Ctrl+C clears only the draft.\n\n## Commands\n/help, /status, /budget, /probe [PROFILE], /probe last [PROFILE], /skills, /skills clear, /search TEXT, /stage prd, /pm plan, /sessions, /resume ID, /continue, /continue-independent, /answer QUESTION-ID TEXT, /approve, /deny, /reconcile ACTUAL_OUTCOME, /new, /quit.\n/budget shows configured session limits and saved request usage without a model request.\n/probe explicitly sends up to three synthetic requests (service charges may apply); /probe last reads local observations. Use a leading $skill-name to explicitly enable a project Skill. Skills remain selected in the session until cleared. Context values come only from the service; missing values remain unavailable.";
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Mode {
@@ -49,6 +49,9 @@ pub enum Focus {
 }
 #[derive(Debug, PartialEq)]
 pub enum Command {
+    Recovery,
+    CloseRecovery,
+    RecoveryJob(super::recovery::Job),
     None,
     Submit(String),
     Cancel,
@@ -90,6 +93,7 @@ pub enum Command {
 }
 #[derive(Clone)]
 enum Choice {
+    Recovery,
     Materials,
     Inspect,
     Delivery,
@@ -119,6 +123,7 @@ struct Menu {
 }
 #[derive(Default)]
 struct Regions {
+    recovery: Rect,
     delivery: Rect,
     planning: Rect,
     browse: Rect,
@@ -135,6 +140,7 @@ struct Regions {
     bar: Rect,
 }
 pub struct App {
+    pub(super) recovery: Option<super::recovery::Recovery>,
     pub(super) inspector: Option<super::inspection::Inspector>,
     pub(super) questions: Option<super::questions::Questions>,
     pub(super) materials: Option<super::materials::Materials>,
@@ -179,6 +185,7 @@ pub struct App {
 impl App {
     pub fn new(docs: Vec<Document>) -> Self {
         Self {
+            recovery: None,
             inspector: None,
             delivery: None,
             questions: None,
@@ -455,6 +462,7 @@ impl App {
             | Choice::Inspect
             | Choice::Questions
             | Choice::Materials
+            | Choice::Recovery
                 if self.busy =>
             {
                 self.status = "Wait for the active operation before editing project records".into()
@@ -470,6 +478,7 @@ impl App {
             Choice::Delivery => return Command::Delivery,
             Choice::Questions => return Command::Questions,
             Choice::Materials => return Command::Materials,
+            Choice::Recovery => return Command::Recovery,
             Choice::Inspect => {
                 if let Some(id) = self.visible().get(self.selected).and_then(|d| d.id.clone()) {
                     return Command::Inspect(crate::inspection::Request {
@@ -642,6 +651,7 @@ impl App {
                     ("F8 Impact / compare".into(), Choice::Inspect),
                     ("F9 Questions".into(), Choice::Questions),
                     ("F10 Materials".into(), Choice::Materials),
+                    ("F11 Recovery".into(), Choice::Recovery),
                     ("Open link".into(), Choice::Links),
                     ("Reference in chat".into(), Choice::Reference),
                     ("Collapse / expand list".into(), Choice::Collapse),
@@ -709,6 +719,9 @@ impl App {
         }
     }
     pub fn event(&mut self, event: Event) -> Command {
+        if let Some(panel) = &mut self.recovery {
+            return panel.event(event);
+        }
         if let Some(form) = &mut self.form {
             return match form.event(event) {
                 super::form::Action::None => Command::None,
@@ -780,6 +793,11 @@ impl App {
                     }
                     MouseEventKind::Down(MouseButton::Left) if self.regions.chat.contains(p) => {
                         self.switch(Mode::Chat)
+                    }
+                    MouseEventKind::Down(MouseButton::Left)
+                        if self.regions.recovery.contains(p) =>
+                    {
+                        return self.action(Choice::Recovery);
                     }
                     MouseEventKind::Down(MouseButton::Left)
                         if self.regions.delivery.contains(p) =>
@@ -962,6 +980,7 @@ impl App {
                 KeyCode::F(8) => return self.action(Choice::Inspect),
                 KeyCode::F(9) => return self.action(Choice::Questions),
                 KeyCode::F(10) => return self.action(Choice::Materials),
+                KeyCode::F(11) => return self.action(Choice::Recovery),
                 KeyCode::F(3) => return self.action(Choice::Collapse),
                 KeyCode::F(4) => return self.action(Choice::Maximize),
                 KeyCode::F(6) => self.icons = !self.icons,
@@ -1049,6 +1068,10 @@ impl App {
         Command::None
     }
     pub fn draw(&mut self, f: &mut ratatui::Frame) {
+        if let Some(panel) = &mut self.recovery {
+            panel.draw(f);
+            return;
+        }
         if let Some(form) = &mut self.form {
             form.draw(f);
             return;
@@ -1150,6 +1173,16 @@ impl App {
                 self.regions.delivery,
             );
             self.draw_browser(f, outer[1]);
+            self.regions.recovery = Rect::new(
+                outer[0].x + outer[0].width.min(76),
+                outer[0].y,
+                outer[0].width.saturating_sub(76).min(20),
+                outer[0].height,
+            );
+            f.render_widget(
+                Paragraph::new(" F11 Recovery ").style(Style::default().fg(Color::Gray)),
+                self.regions.recovery,
+            );
         } else {
             self.draw_chat(f, outer[1]);
         }
@@ -1746,6 +1779,26 @@ mod tests {
         ));
         draw(&mut a, 90, 24);
         assert_eq!(key(&mut a, KeyCode::Esc), Command::CloseMaterials);
+        assert_eq!(a.input.text, "Unsent 中文 draft");
+    }
+    #[test]
+    fn recovery_entry_and_modal_preserve_chat_and_block_active_work() {
+        let mut a = App::new(vec![]);
+        a.input.insert("Unsent 中文 draft");
+        assert_eq!(key(&mut a, KeyCode::F(11)), Command::Recovery);
+        a.busy = true;
+        assert_eq!(key(&mut a, KeyCode::F(11)), Command::None);
+        a.busy = false;
+        a.switch(Mode::Chat);
+        assert_eq!(key(&mut a, KeyCode::F(11)), Command::None);
+        a.switch(Mode::Browse);
+        draw(&mut a, 110, 28);
+        assert_eq!(a.action(Choice::Recovery), Command::Recovery);
+        a.recovery = Some(super::super::recovery::Recovery::default());
+        draw(&mut a, 110, 28);
+        assert_eq!(key(&mut a, KeyCode::F(2)), Command::None);
+        assert_eq!(a.mode, Mode::Browse);
+        assert_eq!(key(&mut a, KeyCode::Esc), Command::CloseRecovery);
         assert_eq!(a.input.text, "Unsent 中文 draft");
     }
     #[test]

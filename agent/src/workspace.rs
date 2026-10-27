@@ -30,6 +30,41 @@ const FOLDERS: &[&str] = &[
 pub struct Workspace {
     pub root: PathBuf,
 }
+/// Shared ownership of one process-level writer lock, including background recovery work.
+#[derive(Clone)]
+pub struct WorkspaceLock {
+    root: PathBuf,
+    _file: std::sync::Arc<fs::File>,
+}
+impl WorkspaceLock {
+    pub fn acquire(workspace: &Workspace) -> Result<Self> {
+        let state = workspace.path(".pm-agent")?;
+        fs::create_dir_all(&state)?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&state, fs::Permissions::from_mode(0o700))?;
+        }
+        let file = fs::OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .write(true)
+            .open(workspace.path(".pm-agent/workspace.lock")?)?;
+        file.try_lock()
+            .context("Close other PM Agent processes before opening another writer")?;
+        Ok(Self {
+            root: workspace.root.clone(),
+            _file: std::sync::Arc::new(file),
+        })
+    }
+    pub(crate) fn verify(&self, workspace: &Workspace) -> Result<()> {
+        ensure!(
+            self.root == workspace.root,
+            "Workspace lock belongs to another Vault"
+        );
+        Ok(())
+    }
+}
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Document {
     pub path: String,

@@ -1,4 +1,4 @@
-use anyhow::{Context, Result, ensure};
+use anyhow::{Result, ensure};
 use clap::{Parser, Subcommand};
 use pm_agent::{
     config::Config,
@@ -6,10 +6,9 @@ use pm_agent::{
     runtime::{Runtime, Session, Status},
     store::Store,
     tools, tui,
-    workspace::Workspace,
+    workspace::{Workspace, WorkspaceLock},
 };
 use std::{
-    fs::OpenOptions,
     io::{IsTerminal, Write},
     path::PathBuf,
 };
@@ -133,21 +132,8 @@ async fn main() -> Result<()> {
         return Ok(());
     }
     let workspace = Workspace::open(&cli.vault)?;
+    let lock = WorkspaceLock::acquire(&workspace)?;
     let state_dir = workspace.path(".pm-agent")?;
-    std::fs::create_dir_all(&state_dir)?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&state_dir, std::fs::Permissions::from_mode(0o700))?;
-    }
-    let lock = OpenOptions::new()
-        .create(true)
-        .truncate(false)
-        .write(true)
-        .open(workspace.path(".pm-agent/workspace.lock")?)?;
-    lock.try_lock().context(
-        "Another PM Agent process is using this workspace; close it before opening another writer",
-    )?;
     let config_path = cli.config.unwrap_or_else(|| state_dir.join("config.toml"));
     match cli.command.unwrap_or(Command::Tui) {
         Command::Backup { .. } => unreachable!("Backup is dispatched before opening runtime state"),
@@ -211,7 +197,7 @@ async fn main() -> Result<()> {
                 std::io::stdin().is_terminal(),
                 "TUI requires a terminal; use scan or chat for noninteractive access"
             );
-            tui::run(workspace, config_path).await?;
+            tui::run(workspace, config_path, lock).await?;
         }
         Command::Scan => {
             println!("{}", serde_json::to_string_pretty(&workspace.documents()?)?);

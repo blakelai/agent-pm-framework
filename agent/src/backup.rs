@@ -1,5 +1,5 @@
 //! Operator-only recovery. Private runtime configuration is outside the archived scope.
-use crate::workspace::{Workspace, hash};
+use crate::workspace::{Workspace, WorkspaceLock, hash};
 use anyhow::{Context, Result, bail, ensure};
 use rusqlite::{Connection, OpenFlags, backup::StepResult};
 use serde::{Deserialize, Serialize};
@@ -11,6 +11,7 @@ use std::{
     time::{Duration, Instant},
 };
 use tempfile::NamedTempFile;
+use tokio_util::sync::CancellationToken;
 use walkdir::WalkDir;
 use zip::{ZipArchive, ZipWriter, write::SimpleFileOptions};
 
@@ -56,13 +57,21 @@ pub struct Manifest {
     pub includes_sessions: bool,
     pub files: Vec<Entry>,
 }
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct Report {
     pub path: PathBuf,
     pub files: usize,
     pub bytes: u64,
     pub includes_sessions: bool,
     pub format: String,
+    pub manifest_sha256: String,
+}
+fn cancelled(cancel: &CancellationToken) -> Result<()> {
+    ensure!(
+        !cancel.is_cancelled(),
+        "Recovery operation cancelled before publication"
+    );
+    Ok(())
 }
 
 fn private(path: &Path, directory: bool) -> Result<()> {
@@ -189,6 +198,9 @@ fn report(path: PathBuf, manifest: &Manifest, sessions: bool) -> Report {
             .sum(),
         includes_sessions: sessions,
         format: manifest.format.clone(),
+        manifest_sha256: hash(
+            &serde_json::to_vec(manifest).expect("Manifest contains serializable scalar fields"),
+        ),
     }
 }
 fn check_database(path: &Path) -> Result<()> {
@@ -209,7 +221,7 @@ fn check_database(path: &Path) -> Result<()> {
     );
     Ok(())
 }
-fn snapshot_database(source: &Path, target: &Path) -> Result<()> {
+fn snapshot_database(source: &Path, target: &Path, cancel: &CancellationToken) -> Result<()> {
     let meta = fs::symlink_metadata(source)?;
     ensure!(
         meta.is_file() && meta.len() <= MAX_FILE,
@@ -223,6 +235,7 @@ fn snapshot_database(source: &Path, target: &Path) -> Result<()> {
         let backup = rusqlite::backup::Backup::new(&source, &mut destination)?;
         let deadline = Instant::now() + Duration::from_secs(10);
         loop {
+            cancelled(cancel)?;
             ensure!(
                 Instant::now() < deadline,
                 "Runtime backup timed out; close active database writers and retry"
@@ -253,6 +266,24 @@ fn snapshot_database(source: &Path, target: &Path) -> Result<()> {
 
 /// Create a new archive outside the Vault. Close TUI/Chat first; other PM Agent writers are locked out.
 pub fn create(workspace: &Workspace, output: &Path, include_sessions: bool) -> Result<Report> {
+    let lock = WorkspaceLock::acquire(workspace)?;
+    create_locked(
+        workspace,
+        output,
+        include_sessions,
+        &lock,
+        &CancellationToken::new(),
+    )
+}
+pub(crate) fn create_locked(
+    workspace: &Workspace,
+    output: &Path,
+    include_sessions: bool,
+    lock: &WorkspaceLock,
+    cancel: &CancellationToken,
+) -> Result<Report> {
+    lock.verify(workspace)?;
+    cancelled(cancel)?;
     let parent = output
         .parent()
         .filter(|p| !p.as_os_str().is_empty())
@@ -271,16 +302,6 @@ pub fn create(workspace: &Workspace, output: &Path, include_sessions: bool) -> R
         !output.try_exists()? && fs::symlink_metadata(&output).is_err(),
         "Backup output already exists"
     );
-    let state = workspace.path(".pm-agent")?;
-    fs::create_dir_all(&state)?;
-    private(&state, true)?;
-    let lock = FileOptions::new()
-        .create(true)
-        .truncate(false)
-        .write(true)
-        .open(workspace.path(".pm-agent/workspace.lock")?)?;
-    lock.try_lock()
-        .context("Close other PM Agent processes before creating a backup")?;
     let paths = inventory(workspace)?;
     let temporary = NamedTempFile::new_in(&parent)?;
     private(temporary.path(), false)?;
@@ -317,6 +338,7 @@ pub fn create(workspace: &Workspace, output: &Path, include_sessions: bool) -> R
         Ok(())
     };
     for path in &paths {
+        cancelled(cancel)?;
         append(path, &read_file(&workspace.path(path)?, MAX_FILE)?)?;
     }
     if include_sessions {
@@ -325,7 +347,7 @@ pub fn create(workspace: &Workspace, output: &Path, include_sessions: bool) -> R
         }
         let snapshot = tempfile::tempdir_in(&parent)?;
         let db = snapshot.path().join("runtime.sqlite3");
-        snapshot_database(&workspace.path(RUNTIME)?, &db)?;
+        snapshot_database(&workspace.path(RUNTIME)?, &db, cancel)?;
         append(RUNTIME, &read_file(&db, MAX_FILE)?)?;
     }
     let data = serde_json::to_vec_pretty(&manifest)?;
@@ -342,13 +364,15 @@ pub fn create(workspace: &Workspace, output: &Path, include_sessions: bool) -> R
         "Project files changed during backup; retry with editors paused"
     );
     for entry in manifest.files.iter().filter(|e| e.path != RUNTIME) {
+        cancelled(cancel)?;
         ensure!(
             hash(&read_file(&workspace.path(&entry.path)?, MAX_FILE)?) == entry.sha256,
             "Project file changed during backup: {}",
             entry.path
         );
     }
-    check(temporary.path())?;
+    check_cancellable(temporary.path(), cancel)?;
+    cancelled(cancel)?;
     temporary
         .persist_noclobber(&output)
         .context("Cannot publish backup without overwriting an existing file")?;
@@ -492,8 +516,10 @@ fn verify(
     zip: &mut ZipArchive<File>,
     manifest: &Manifest,
     destination: Option<(&Path, bool)>,
+    cancel: &CancellationToken,
 ) -> Result<()> {
     for entry in &manifest.files {
+        cancelled(cancel)?;
         let bytes = read_entry(zip, &format!("vault/{}", entry.path), entry.bytes)?;
         ensure!(
             bytes.len() as u64 == entry.bytes && hash(&bytes) == entry.sha256,
@@ -523,9 +549,14 @@ fn verify(
 }
 /// Read-only archive integrity verification; no Vault, config, model, or database writer is opened.
 pub fn check(path: &Path) -> Result<Report> {
+    check_cancellable(path, &CancellationToken::new())
+}
+pub(crate) fn check_cancellable(path: &Path, cancel: &CancellationToken) -> Result<Report> {
+    cancelled(cancel)?;
     let mut zip = archive(path)?;
     let manifest = manifest(&mut zip)?;
-    verify(&mut zip, &manifest, None)?;
+    verify(&mut zip, &manifest, None, cancel)?;
+    cancelled(cancel)?;
     Ok(report(
         path.to_path_buf(),
         &manifest,
@@ -534,6 +565,22 @@ pub fn check(path: &Path) -> Result<Report> {
 }
 /// Restore into a unique, private child of an existing parent. Failed staging is discarded.
 pub fn restore(path: &Path, parent: &Path, include_sessions: bool) -> Result<Report> {
+    restore_cancellable(
+        path,
+        parent,
+        include_sessions,
+        None,
+        &CancellationToken::new(),
+    )
+}
+pub(crate) fn restore_cancellable(
+    path: &Path,
+    parent: &Path,
+    include_sessions: bool,
+    expected_manifest: Option<&str>,
+    cancel: &CancellationToken,
+) -> Result<Report> {
+    cancelled(cancel)?;
     let parent = parent
         .canonicalize()
         .context("Restore parent must already exist")?;
@@ -546,6 +593,12 @@ pub fn restore(path: &Path, parent: &Path, include_sessions: bool) -> Result<Rep
     );
     let mut zip = archive(path)?;
     let manifest = manifest(&mut zip)?;
+    if let Some(expected) = expected_manifest {
+        ensure!(
+            report(path.into(), &manifest, manifest.includes_sessions).manifest_sha256 == expected,
+            "Backup changed after review; check it again before restoring"
+        );
+    }
     ensure!(
         !include_sessions || manifest.includes_sessions,
         "This backup does not contain sessions"
@@ -558,11 +611,13 @@ pub fn restore(path: &Path, parent: &Path, include_sessions: bool) -> Result<Rep
         &mut zip,
         &manifest,
         Some((staging.path(), include_sessions)),
+        cancel,
     )?;
     Workspace::open(staging.path())?;
     if include_sessions {
         check_database(&staging.path().join(RUNTIME))?;
     }
+    cancelled(cancel)?;
     let path = staging.keep();
     Ok(report(path, &manifest, include_sessions))
 }

@@ -6,6 +6,7 @@ mod markdown;
 mod materials;
 mod planner;
 mod questions;
+mod recovery;
 mod refresh;
 mod view;
 use crate::{
@@ -15,7 +16,7 @@ use crate::{
     skills::Catalog,
     store::Store,
     tools,
-    workspace::Workspace,
+    workspace::{Workspace, WorkspaceLock},
 };
 use anyhow::{Context, Result, bail};
 use crossterm::{
@@ -59,7 +60,8 @@ impl Drop for InputModes {
         ratatui::restore();
     }
 }
-pub async fn run(workspace: Workspace, config_path: PathBuf) -> Result<()> {
+pub async fn run(workspace: Workspace, config_path: PathBuf, lock: WorkspaceLock) -> Result<()> {
+    lock.verify(&workspace)?;
     let mut app = App::new(workspace.documents()?);
     if let Ok(config) = Config::load(&config_path) {
         app.model = config.active()?.model.clone();
@@ -93,9 +95,10 @@ pub async fn run(workspace: Workspace, config_path: PathBuf) -> Result<()> {
     let (material_tx, mut material_rx) = mpsc::unbounded_channel();
     let mut material_running = false;
     let mut material_ticket = 0u64;
+    let (recovery_tx, mut recovery_rx) = mpsc::unbounded_channel();
     loop {
         tokio::select! {
-            _ = polling.tick() => {
+            _ = polling.tick(), if !app.recovery.as_ref().is_some_and(|p| p.running()) => {
                 if let Some(request) = monitor.request(refresh::Views::of(&app), app.refresh_error.is_some()) {
                     let workspace = workspace.clone();
                     let sender = refresh_tx.clone();
@@ -117,6 +120,12 @@ pub async fn run(workspace: Workspace, config_path: PathBuf) -> Result<()> {
             Some((ticket, result)) = material_rx.recv() => {
                 material_running = false;
                 if let Some(panel) = &mut app.materials {dirty |= panel.finish(ticket, result);}
+            },
+            Some(result) = recovery_rx.recv() => {
+                if let Some(panel) = &mut app.recovery { panel.finish(result); }
+                app.busy = false;
+                monitor.invalidate();
+                dirty = true;
             },
             _ = repaint.tick() => {
                 if dirty { terminal.draw(|f| app.draw(f))?; dirty = false; }
@@ -151,6 +160,21 @@ pub async fn run(workspace: Workspace, config_path: PathBuf) -> Result<()> {
                 let command = app.event(event?);
                 if command != Command::None { monitor.invalidate(); }
                 match command {
+                    Command::Recovery => app.recovery=Some(recovery::Recovery::default()),
+                    Command::CloseRecovery => app.recovery=None,
+                    Command::RecoveryJob(job) => {
+                        if let Some(panel)=&mut app.recovery && !app.busy {
+                            let cancel=CancellationToken::new();
+                            panel.start(&job,cancel.clone());
+                            app.busy=true;
+                            let workspace=workspace.clone();let lock=lock.clone();let sender=recovery_tx.clone();
+                            tokio::spawn(async move {
+                                let result=tokio::task::spawn_blocking(move || recovery::execute(&workspace,&lock,job,&cancel))
+                                    .await.context("Recovery worker failed").and_then(|r|r);
+                                let _=sender.send(result);
+                            });
+                        }
+                    },
                     Command::None=>{},
                     Command::Quit=>break,
                     Command::Cancel=>{cancellation.cancel();app.status="Cancelling — waiting for the operation outcome".into();},
