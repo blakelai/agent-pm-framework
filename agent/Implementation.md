@@ -33,6 +33,7 @@ The approved direction is a local Rust TUI for macOS/Linux, sharing project docu
 | OKF exchange | Native bundle validation and staged portable export; exact raw attachments and typed Skill concepts |
 | MCP | Official Rust SDK, stdio/Streamable HTTP, configured tool allowlist, schema validation, exact-call authorization |
 | Store | SQLite sessions, tool ledger and document projection; unknown outcomes require reconciliation |
+| Backup and restore | Operator CLI, versioned bounded archives, per-file integrity checks, optional consistent SQLite snapshot and standalone recovery into a new private Vault |
 | Distribution | Cargo lockfile, local configuration example, operating guide and macOS/Linux CI jobs |
 
 The executable workbench now has 19 native PM commands. Production execution and packaging no longer use Python, an embedded toolkit or an interpreter setting. Existing workflow procedures cover intake through operations. Structured editors, interactive scheduling/resource views, initial dedicated delivery workflows and human material review records are implemented; automated visual extraction, advanced planning and broader live-project evaluation remain on the product roadmap.
@@ -45,7 +46,7 @@ The executable workbench now has 19 native PM commands. Production execution and
 | 1. Local workbench | Implemented | Browse real Vault records without a model; persist/restore conversations; preserve source/baseline boundaries |
 | 2. Grounded analysis MVP | Initial vertical flows implemented and exercised with one live model | Sources -> explicit questions -> sufficient answers -> sourced draft -> deterministic validation; broader real-project evaluation pending |
 | 3. Full delivery controls | Planning and delivery views implemented; advanced planning and broader release scopes pending | Baseline/change gates, resource calendars, remaining forecasts, risks, UAT/release and benefits operated through typed commands and views |
-| 4. Materials and reliability | Native ingestion, inspection and human review records implemented; automated vision/OCR, semantic evaluation and advanced conflict handling pending | PDF/slides/images reviewed with locators; missing extraction never presented as complete; backup/restore and migrations exercised |
+| 4. Materials and reliability | Native ingestion, inspection, human review records and initial backup/restore implemented; automated vision/OCR, semantic evaluation, historical migrations and advanced conflict handling pending | PDF/slides/images reviewed with locators; missing extraction never presented as complete; backup/restore and migrations exercised |
 | 5. Pilot and release | Pending | Real internal-system project, live provider matrix, semantic/clarification evaluations, platform packaging and operational documentation |
 
 ## Next engineering work
@@ -54,6 +55,7 @@ The executable workbench now has 19 native PM commands. Production execution and
 2. Evaluate [scoped clarification](Clarification.md) with real project questions and extend [impact and comparison](Inspection.md) after usage feedback: material revision contracts, broader relationship types and richer evidence navigation. [Automatic refresh](Automatic-Refresh.md) now uses background content polling; operating-system notifications and automatic conflict reconciliation remain possible reliability improvements.
 3. Extend [provider probes](Provider-Probes.md) and [session limits](Session-Limits.md) with provider-reported capacity and explicitly sourced monetary budgets, tested retry policies for proven idempotent reads, MCP OAuth, and reviewed visual extraction. The [Materials workbench](Materials.md) provides source/extraction/evidence inspection and [human review records](Material-Reviews.md); OCR, authenticated review attestation and semantic evaluation remain separate work. Current session guards use request attempts and reported total tokens only; they do not infer context windows or costs.
 4. Expand the live provider matrix using user-specified endpoints/models and evaluate a real repository/OpenWiki/source workflow. Installed model names, business sources and semantic decisions must not be inferred.
+5. Extend [backup and restore](Backup-and-Restore.md) with explicitly versioned historical migrations after their compatibility contracts are defined. The initial operator CLI preserves project data and optional runtime state; automatic backup scheduling, encryption and recovery UI remain unimplemented.
 
 ## Validation boundary
 

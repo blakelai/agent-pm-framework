@@ -30,6 +30,11 @@ struct Cli {
 }
 #[derive(Subcommand)]
 enum Command {
+    /// Create, verify, or restore a private local project backup without a model.
+    Backup {
+        #[command(subcommand)]
+        command: BackupCommand,
+    },
     /// Start the terminal workspace browser and Agent.
     Tui,
     /// List project records as JSON, without contacting a model.
@@ -84,9 +89,49 @@ enum Command {
         last: bool,
     },
 }
+#[derive(Subcommand)]
+enum BackupCommand {
+    /// Back up the selected Vault to a new archive outside that Vault.
+    Create {
+        #[arg(long)]
+        output: PathBuf,
+        /// Include private conversations and the durable tool ledger.
+        #[arg(long)]
+        include_sessions: bool,
+    },
+    /// Verify archive structure and every file hash; no working Vault is needed.
+    Check { archive: PathBuf },
+    /// Restore to a new private child directory; no working Vault is needed.
+    Restore {
+        archive: PathBuf,
+        #[arg(long)]
+        parent: PathBuf,
+        /// Restore saved sessions as well as project files; no tools are replayed.
+        #[arg(long)]
+        include_sessions: bool,
+    },
+}
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
+    // Recovery must work even when the original Vault and provider configuration are gone.
+    if let Some(Command::Backup { command }) = &cli.command {
+        use pm_agent::backup;
+        let report = match command {
+            BackupCommand::Create {
+                output,
+                include_sessions,
+            } => backup::create(&Workspace::open(&cli.vault)?, output, *include_sessions)?,
+            BackupCommand::Check { archive } => backup::check(archive)?,
+            BackupCommand::Restore {
+                archive,
+                parent,
+                include_sessions,
+            } => backup::restore(archive, parent, *include_sessions)?,
+        };
+        println!("{}", serde_json::to_string_pretty(&report)?);
+        return Ok(());
+    }
     let workspace = Workspace::open(&cli.vault)?;
     let state_dir = workspace.path(".pm-agent")?;
     std::fs::create_dir_all(&state_dir)?;
@@ -105,6 +150,7 @@ async fn main() -> Result<()> {
     )?;
     let config_path = cli.config.unwrap_or_else(|| state_dir.join("config.toml"));
     match cli.command.unwrap_or(Command::Tui) {
+        Command::Backup { .. } => unreachable!("Backup is dispatched before opening runtime state"),
         Command::Budget { session } => {
             let config = Config::read(&config_path)?;
             let saved = match session {

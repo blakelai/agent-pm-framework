@@ -9,6 +9,7 @@ okf_version: "0.2"
 - [Delivery workflows](agent/Delivery-Workflows.md) - Reference
 - [Automatic file refresh](agent/Automatic-Refresh.md) - Reference
 - [Impact and document comparison](agent/Inspection.md) - Reference
+- [Project backup and restore](agent/Backup-and-Restore.md) - Reference
 
 - [Baselines and change](00_Governance/Baselines-and-Changes.md) - Reference
 - [Discovery and prioritization](00_Governance/Discovery-and-Prioritization.md) - Reference
