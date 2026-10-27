@@ -86,7 +86,7 @@ After success:
 
 ## Compatibility boundary
 
-This release reads `pm-vault-backup-v1` with `project-knowledge-v1`. Unknown formats/scopes and unsupported runtime database objects fail with an explicit migration message. The manifest retains the writing application version, but there is no historical database migration engine or promise of arbitrary future-version compatibility.
+This release reads `pm-vault-backup-v1` with `project-knowledge-v1`. Runtime snapshots must use the recognized original unversioned schema or version 1; unknown formats, scopes, schema versions and unsupported database objects fail explicitly. Restore preserves the archived runtime version. The [storage migration procedure](Storage-Migrations.md) safely adopts the known legacy schema when that runtime is subsequently opened or explicitly migrated. The manifest retains the writing application version; arbitrary historical and future versions are not supported. Local migration safety copies are excluded from project archives.
 
 An [OKF export](../90_Agent/OKF-Profile.md) remains a knowledge distribution with transformed links and typed Skill representations. Recovery preserves working Vault bytes and native Skill adapters. Neither artifact replaces off-device storage or an exercised recovery procedure.
 

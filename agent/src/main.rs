@@ -29,6 +29,11 @@ struct Cli {
 }
 #[derive(Subcommand)]
 enum Command {
+    /// Inspect or migrate the runtime database without a model or provider configuration.
+    Storage {
+        #[command(subcommand)]
+        command: StorageCommand,
+    },
     /// Create, verify, or restore a private local project backup without a model.
     Backup {
         #[command(subcommand)]
@@ -89,6 +94,13 @@ enum Command {
     },
 }
 #[derive(Subcommand)]
+enum StorageCommand {
+    /// Read the supported schema state without initializing or migrating it.
+    Inspect,
+    /// Adopt the known legacy schema after saving a private safety snapshot.
+    Migrate,
+}
+#[derive(Subcommand)]
 enum BackupCommand {
     /// Back up the selected Vault to a new archive outside that Vault.
     Create {
@@ -132,11 +144,26 @@ async fn main() -> Result<()> {
         return Ok(());
     }
     let workspace = Workspace::open(&cli.vault)?;
+    if let Some(Command::Storage { command }) = &cli.command {
+        let path = workspace.path(".pm-agent/runtime.sqlite3")?;
+        let report = match command {
+            StorageCommand::Inspect => pm_agent::storage::inspect(&path)?,
+            StorageCommand::Migrate => {
+                let _lock = WorkspaceLock::acquire(&workspace)?;
+                pm_agent::storage::migrate(&path)?
+            }
+        };
+        println!("{}", serde_json::to_string_pretty(&report)?);
+        return Ok(());
+    }
     let lock = WorkspaceLock::acquire(&workspace)?;
     let state_dir = workspace.path(".pm-agent")?;
     let config_path = cli.config.unwrap_or_else(|| state_dir.join("config.toml"));
     match cli.command.unwrap_or(Command::Tui) {
         Command::Backup { .. } => unreachable!("Backup is dispatched before opening runtime state"),
+        Command::Storage { .. } => {
+            unreachable!("Storage is dispatched before loading configuration")
+        }
         Command::Budget { session } => {
             let config = Config::read(&config_path)?;
             let saved = match session {

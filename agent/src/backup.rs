@@ -1,14 +1,13 @@
 //! Operator-only recovery. Private runtime configuration is outside the archived scope.
+use crate::storage::{check_database, snapshot_database};
 use crate::workspace::{Workspace, WorkspaceLock, hash};
-use anyhow::{Context, Result, bail, ensure};
-use rusqlite::{Connection, OpenFlags, backup::StepResult};
+use anyhow::{Context, Result, ensure};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::BTreeSet,
     fs::{self, File, OpenOptions as FileOptions},
     io::{Read, Seek, SeekFrom, Write},
     path::{Path, PathBuf},
-    time::{Duration, Instant},
 };
 use tempfile::NamedTempFile;
 use tokio_util::sync::CancellationToken;
@@ -203,67 +202,6 @@ fn report(path: PathBuf, manifest: &Manifest, sessions: bool) -> Report {
         ),
     }
 }
-fn check_database(path: &Path) -> Result<()> {
-    let conn = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
-    let result: String = conn.query_row("PRAGMA quick_check", [], |r| r.get(0))?;
-    ensure!(result == "ok", "Runtime SQLite integrity check failed");
-    // Pin the current recovery contract without executing stored SQL or model/tool work.
-    conn.prepare("SELECT id, updated, payload FROM sessions LIMIT 0")?;
-    conn.prepare("SELECT session, call_id, name, arguments, status, result FROM ledger LIMIT 0")?;
-    conn.prepare("SELECT path, title, kind, body, hash FROM documents LIMIT 0")?;
-    let foreign: i64 = conn.query_row(
-        "SELECT COUNT(*) FROM sqlite_schema WHERE type IN ('trigger','view') OR (type='table' AND name NOT IN ('sessions','ledger','documents'))",
-        [], |r| r.get(0)
-    )?;
-    ensure!(
-        foreign == 0,
-        "Unsupported runtime database objects; no automatic migration is available"
-    );
-    Ok(())
-}
-fn snapshot_database(source: &Path, target: &Path, cancel: &CancellationToken) -> Result<()> {
-    let meta = fs::symlink_metadata(source)?;
-    ensure!(
-        meta.is_file() && meta.len() <= MAX_FILE,
-        "Missing or oversized regular runtime database"
-    );
-    check_database(source)?;
-    let source = Connection::open_with_flags(source, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
-    let page_size: u32 = source.query_row("PRAGMA page_size", [], |r| r.get(0))?;
-    let mut destination = Connection::open(target)?;
-    {
-        let backup = rusqlite::backup::Backup::new(&source, &mut destination)?;
-        let deadline = Instant::now() + Duration::from_secs(10);
-        loop {
-            cancelled(cancel)?;
-            ensure!(
-                Instant::now() < deadline,
-                "Runtime backup timed out; close active database writers and retry"
-            );
-            ensure!(
-                backup.progress().pagecount as u64 * u64::from(page_size) <= MAX_FILE,
-                "Runtime snapshot exceeds the 50 MiB file limit"
-            );
-            match backup.step(128)? {
-                StepResult::Done => break,
-                StepResult::More => {}
-                StepResult::Busy | StepResult::Locked => {
-                    std::thread::sleep(Duration::from_millis(25))
-                }
-                _ => bail!("Unsupported SQLite backup result"),
-            }
-            ensure!(
-                fs::metadata(target)?.len() <= MAX_FILE,
-                "Runtime snapshot exceeds the 50 MiB file limit"
-            );
-        }
-    }
-    destination.execute_batch("PRAGMA journal_mode=DELETE;")?;
-    drop(destination);
-    private(target, false)?;
-    check_database(target)
-}
-
 /// Create a new archive outside the Vault. Close TUI/Chat first; other PM Agent writers are locked out.
 pub fn create(workspace: &Workspace, output: &Path, include_sessions: bool) -> Result<Report> {
     let lock = WorkspaceLock::acquire(workspace)?;
@@ -347,7 +285,7 @@ pub(crate) fn create_locked(
         }
         let snapshot = tempfile::tempdir_in(&parent)?;
         let db = snapshot.path().join("runtime.sqlite3");
-        snapshot_database(&workspace.path(RUNTIME)?, &db, cancel)?;
+        snapshot_database(&workspace.path(RUNTIME)?, &db, Some(MAX_FILE), cancel)?;
         append(RUNTIME, &read_file(&db, MAX_FILE)?)?;
     }
     let data = serde_json::to_vec_pretty(&manifest)?;

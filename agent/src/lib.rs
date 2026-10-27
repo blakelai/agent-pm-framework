@@ -22,6 +22,7 @@ pub mod runtime;
 pub mod schedule;
 pub mod skills;
 pub mod sources;
+pub mod storage;
 pub mod store;
 pub mod tools;
 pub mod traceability;

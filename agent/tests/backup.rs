@@ -383,31 +383,53 @@ fn restore_validates_session_database_without_publishing_invalid_runtime() {
     let store = Store::open(&w.path(".pm-agent/runtime.sqlite3").unwrap()).unwrap();
     store.save("s", &json!({})).unwrap();
     backup::create(&w, &path, true).unwrap();
-    let mut entries = contents(&path);
-    let bytes = b"Not a SQLite database";
-    entries
-        .iter_mut()
-        .find(|(n, _)| n == "vault/.pm-agent/runtime.sqlite3")
-        .unwrap()
-        .1 = bytes.to_vec();
-    change_manifest(&mut entries, |m| {
-        let e = m["files"]
-            .as_array_mut()
+    let original = contents(&path);
+    let future_path = out.path().join("future.sqlite3");
+    fs::write(
+        &future_path,
+        &original
+            .iter()
+            .find(|(n, _)| n == "vault/.pm-agent/runtime.sqlite3")
             .unwrap()
+            .1,
+    )
+    .unwrap();
+    rusqlite::Connection::open(&future_path)
+        .unwrap()
+        .execute_batch("PRAGMA user_version=99")
+        .unwrap();
+    for (case, bytes) in [
+        b"Not a SQLite database".to_vec(),
+        fs::read(&future_path).unwrap(),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let mut entries = original.clone();
+        entries
             .iter_mut()
-            .find(|e| e["path"] == ".pm-agent/runtime.sqlite3")
-            .unwrap();
-        e["bytes"] = json!(bytes.len());
-        e["sha256"] = json!(pm_agent::workspace::hash(bytes));
-    });
-    archive(&path, &entries);
-    // A checksum verifies bytes, not the semantic validity or authenticity of a supplied file.
-    backup::check(&path).unwrap();
-    let destination = out.path().join("destination");
-    fs::create_dir(&destination).unwrap();
-    assert!(backup::restore(&path, &destination, true).is_err());
-    assert_eq!(fs::read_dir(&destination).unwrap().count(), 0);
-    backup::restore(&path, &destination, false).unwrap();
+            .find(|(n, _)| n == "vault/.pm-agent/runtime.sqlite3")
+            .unwrap()
+            .1 = bytes.clone();
+        change_manifest(&mut entries, |m| {
+            let e = m["files"]
+                .as_array_mut()
+                .unwrap()
+                .iter_mut()
+                .find(|e| e["path"] == ".pm-agent/runtime.sqlite3")
+                .unwrap();
+            e["bytes"] = json!(bytes.len());
+            e["sha256"] = json!(pm_agent::workspace::hash(&bytes));
+        });
+        archive(&path, &entries);
+        // Valid checksums do not establish a supported SQLite schema.
+        backup::check(&path).unwrap();
+        let destination = out.path().join(format!("destination-{case}"));
+        fs::create_dir(&destination).unwrap();
+        assert!(backup::restore(&path, &destination, true).is_err());
+        assert_eq!(fs::read_dir(&destination).unwrap().count(), 0);
+        backup::restore(&path, &destination, false).unwrap();
+    }
 }
 
 #[test]

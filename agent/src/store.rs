@@ -1,5 +1,5 @@
 use crate::workspace::Document;
-use anyhow::{Context, Result, ensure};
+use anyhow::Result;
 use rusqlite::{Connection, params};
 use serde::{Serialize, de::DeserializeOwned};
 use std::path::Path;
@@ -9,13 +9,7 @@ pub struct Store {
 }
 impl Store {
     pub fn open(path: &Path) -> Result<Self> {
-        std::fs::create_dir_all(path.parent().context("Missing store directory")?)?;
-        ensure!(
-            !std::fs::symlink_metadata(path).is_ok_and(|m| m.file_type().is_symlink()),
-            "Runtime database cannot be a symlink"
-        );
-        let conn = Connection::open(path)?;
-        conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; CREATE TABLE IF NOT EXISTS sessions (id TEXT PRIMARY KEY, updated TEXT NOT NULL, payload TEXT NOT NULL); CREATE TABLE IF NOT EXISTS ledger (id INTEGER PRIMARY KEY, session TEXT NOT NULL, call_id TEXT NOT NULL, name TEXT NOT NULL, arguments TEXT NOT NULL, status TEXT NOT NULL, result TEXT, UNIQUE(session,call_id)); CREATE TABLE IF NOT EXISTS documents(path TEXT PRIMARY KEY,title TEXT,kind TEXT,body TEXT,hash TEXT);")?;
+        let conn = crate::storage::open(path)?.0;
         Ok(Self {
             conn: std::sync::Mutex::new(conn),
         })
