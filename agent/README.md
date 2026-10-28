@@ -10,6 +10,8 @@ A working first implementation of the local Rust terminal agent. It browses the 
 
 ## Build and start
 
+For prebuilt macOS Apple Silicon or Linux x86_64 packages, follow [installation and upgrade](Installation.md). The package includes the executable and a clean framework starter; compilation is only needed for source builds.
+
 Run from the framework repository root. Rust 1.96+ and a C toolchain are required. The application and SQLite are compiled into the binary. All 19 PM operations run natively in Rust, including PDF/Office text extraction and OKF export. No Python installation is required to build or run the application. Git records repository revision/dirty state when available; unavailable Git produces an explicit unversioned snapshot.
 
 ```sh

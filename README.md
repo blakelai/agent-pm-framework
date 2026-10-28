@@ -41,6 +41,8 @@ Agents must ask for clarification or relevant material whenever task information
 
 ## Local tools
 
+Prebuilt macOS Apple Silicon and Linux x86_64 artifacts include the executable and a clean starter. Follow [native package installation](agent/Installation.md) for checksum verification, installation and upgrades. The commands below are for building from a full repository checkout.
+
 Build the Rust application on macOS or Linux with Rust 1.96+ and a C toolchain. All deterministic tools run locally without a model or Python. Git enables repository revision and dirty-state capture; registered source code is read, not executed.
 
 ```sh

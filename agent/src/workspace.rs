@@ -34,7 +34,15 @@ pub struct Workspace {
 #[derive(Clone)]
 pub struct WorkspaceLock {
     root: PathBuf,
-    _file: std::sync::Arc<fs::File>,
+    _file: std::sync::Arc<WriterLease>,
+}
+struct WriterLease(fs::File);
+impl Drop for WriterLease {
+    fn drop(&mut self) {
+        // Release when the last guard finishes, even if a concurrently starting
+        // subprocess temporarily retains a duplicate descriptor before exec.
+        let _ = self.0.unlock();
+    }
 }
 impl WorkspaceLock {
     pub fn acquire(workspace: &Workspace) -> Result<Self> {
@@ -54,7 +62,7 @@ impl WorkspaceLock {
             .context("Close other PM Agent processes before opening another writer")?;
         Ok(Self {
             root: workspace.root.clone(),
-            _file: std::sync::Arc::new(file),
+            _file: std::sync::Arc::new(WriterLease(file)),
         })
     }
     pub(crate) fn verify(&self, workspace: &Workspace) -> Result<()> {
@@ -400,6 +408,22 @@ mod tests {
         fs::write(d.path().join("00_Governance/Settings.md"), note(json!({"type":"settings","title":"Settings","document_language":"en","agent_language":"en"}), "# Settings").unwrap()).unwrap();
         let w = Workspace::open(d.path()).unwrap();
         (d, w)
+    }
+    #[test]
+    fn writer_lock_release_follows_guard_ownership_even_with_a_duplicate_descriptor() {
+        let (_dir, w) = workspace();
+        let lock = WorkspaceLock::acquire(&w).unwrap();
+        // A subprocess starting on another thread can briefly inherit this open file.
+        let descriptor = lock._file.0.try_clone().unwrap();
+        let worker = lock.clone();
+        drop(lock);
+        assert!(WorkspaceLock::acquire(&w).is_err());
+        drop(worker);
+        let next = WorkspaceLock::acquire(&w).unwrap();
+        drop(descriptor);
+        assert!(WorkspaceLock::acquire(&w).is_err());
+        drop(next);
+        assert!(WorkspaceLock::acquire(&w).is_ok());
     }
     #[test]
     fn rejects_escape_and_symlinks() {

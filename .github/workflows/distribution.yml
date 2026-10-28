@@ -1,0 +1,76 @@
+name: Native packages
+
+on:
+  pull_request:
+  workflow_dispatch:
+  push:
+    tags: ['pm-agent-v*']
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    name: package (${{ matrix.target }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-14
+            target: aarch64-apple-darwin
+          - os: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: dtolnay/rust-toolchain@1.96.0
+      - name: Build native release binaries
+        run: cargo build --manifest-path agent/Cargo.toml --locked --release --bin pm-agent --example package
+      - name: Check native host and release tag
+        env:
+          EXPECTED_TARGET: ${{ matrix.target }}
+        run: |
+          test "$(rustc -vV | sed -n 's/^host: //p')" = "$EXPECTED_TARGET"
+          version=$(agent/target/release/pm-agent --version)
+          if [ "$GITHUB_REF_TYPE" = tag ]; then
+            test "$GITHUB_REF_NAME" = "pm-agent-v${version#pm-agent }"
+          fi
+      - name: Package clean starter and executable
+        run: |
+          mkdir "$RUNNER_TEMP/packages"
+          agent/target/release/examples/package --binary "$PWD/agent/target/release/pm-agent" --output "$RUNNER_TEMP/packages"
+      - name: Verify installation and packaged workflows
+        run: |
+          for archive in "$RUNNER_TEMP/packages/"*.zip; do
+            bash agent/distribution/check.sh "$archive"
+          done
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pm-agent-${{ matrix.target }}
+          path: ${{ runner.temp }}/packages/*
+          if-no-files-found: error
+          retention-days: 14
+
+  draft-release:
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/pm-agent-v')
+    needs: package
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: pm-agent-*
+          path: packages
+          merge-multiple: true
+      - name: Create a draft for operator review
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          printf '%s\n' 'Native packages for macOS Apple Silicon and Linux x86_64.' '' 'Review package checksums, platform verification and Installation.md before publishing. Checksums establish integrity, not publisher identity. This workflow creates a draft only.' > "$RUNNER_TEMP/release-notes.txt"
+          gh release create "$RELEASE_TAG" packages/* --verify-tag --draft --title "PM Agent ${RELEASE_TAG#pm-agent-v}" --notes-file "$RUNNER_TEMP/release-notes.txt"

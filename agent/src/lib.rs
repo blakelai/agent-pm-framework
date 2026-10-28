@@ -4,6 +4,7 @@ pub mod budget;
 pub mod clarification;
 pub mod config;
 pub mod delivery;
+pub mod distribution;
 pub mod editing;
 mod extraction;
 pub mod governance;

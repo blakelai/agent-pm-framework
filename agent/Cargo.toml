@@ -6,6 +6,9 @@ rust-version = "1.96"
 description = "Local project management agent for Obsidian-compatible workspaces"
 publish = false
 
+[profile.release]
+strip = "symbols"
+
 [dependencies]
 anyhow = "1"
 chrono = { version = "0.4", features = ["serde"] }

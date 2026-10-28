@@ -11,6 +11,7 @@ okf_version: "0.2"
 - [Impact and document comparison](agent/Inspection.md) - Reference
 - [Project backup and restore](agent/Backup-and-Restore.md) - Reference
 - [Runtime storage versions and migration](agent/Storage-Migrations.md) - Reference
+- [Native package installation](agent/Installation.md) - Reference
 
 - [Baselines and change](00_Governance/Baselines-and-Changes.md) - Reference
 - [Discovery and prioritization](00_Governance/Discovery-and-Prioritization.md) - Reference

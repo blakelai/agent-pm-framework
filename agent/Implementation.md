@@ -34,7 +34,7 @@ The approved direction is a local Rust TUI for macOS/Linux, sharing project docu
 | MCP | Official Rust SDK, stdio/Streamable HTTP, configured tool allowlist, schema validation, exact-call authorization |
 | Store | Versioned SQLite sessions, tool ledger and document projection; checked legacy adoption with a mandatory safety snapshot, operator inspect/migrate commands and rejection of unsupported schemas; unknown outcomes require reconciliation |
 | Backup and restore | Operator CLI and TUI Recovery panel, reviewed writes, cancellable background operations, manifest-bound restore checks, optional consistent SQLite snapshot and standalone recovery into a new private Vault |
-| Distribution | Cargo lockfile, local configuration example, operating guide and macOS/Linux CI jobs |
+| Distribution | Native macOS Apple Silicon/Linux x86_64 package pipeline, clean starter and checksums, verified user-prefix installation with retained versions, package smoke checks, tag-triggered draft releases and source-build CI |
 
 The executable workbench now has 19 native PM commands. Production execution and packaging no longer use Python, an embedded toolkit or an interpreter setting. Existing workflow procedures cover intake through operations. Structured editors, interactive scheduling/resource views, initial dedicated delivery workflows and human material review records are implemented; automated visual extraction, advanced planning and broader live-project evaluation remain on the product roadmap.
 
@@ -47,7 +47,7 @@ The executable workbench now has 19 native PM commands. Production execution and
 | 2. Grounded analysis MVP | Initial vertical flows implemented and exercised with one live model | Sources -> explicit questions -> sufficient answers -> sourced draft -> deterministic validation; broader real-project evaluation pending |
 | 3. Full delivery controls | Planning and delivery views implemented; advanced planning and broader release scopes pending | Baseline/change gates, resource calendars, remaining forecasts, risks, UAT/release and benefits operated through typed commands and views |
 | 4. Materials and reliability | Native ingestion, inspection, human review records, backup/restore and known legacy runtime migration implemented; automated vision/OCR, semantic evaluation, additional migration contracts and advanced conflict handling pending | PDF/slides/images reviewed with locators; missing extraction never presented as complete; backup/restore and supported migrations exercised |
-| 5. Pilot and release | Pending | Real internal-system project, live provider matrix, semantic/clarification evaluations, platform packaging and operational documentation |
+| 5. Pilot and release | Initial packaging/installation pipeline implemented; real-project pilot, broader service/semantic evaluation and formal publication pending | Real internal-system project, live provider matrix, semantic/clarification evaluations, exercised platform packages and reviewed release publication |
 
 ## Next engineering work
 
@@ -56,6 +56,7 @@ The executable workbench now has 19 native PM commands. Production execution and
 3. Extend [provider probes](Provider-Probes.md) and [session limits](Session-Limits.md) with provider-reported capacity and explicitly sourced monetary budgets, tested retry policies for proven idempotent reads, MCP OAuth, and reviewed visual extraction. The [Materials workbench](Materials.md) provides source/extraction/evidence inspection and [human review records](Material-Reviews.md); OCR, authenticated review attestation and semantic evaluation remain separate work. Current session guards use request attempts and reported total tokens only; they do not infer context windows or costs.
 4. Expand the live provider matrix using user-specified endpoints/models and evaluate a real repository/OpenWiki/source workflow. Installed model names, business sources and semantic decisions must not be inferred.
 5. Extend [backup and restore](Backup-and-Restore.md) and [runtime migrations](Storage-Migrations.md) only after additional compatibility contracts are defined. The original unversioned three-table runtime now has a checked migration to version 1 with a mandatory safety snapshot. Document-format migrations, automatic backup scheduling/retention, encryption and recovery without a working Vault through the TUI remain unimplemented.
+6. Exercise the [native package and installation procedure](Installation.md) in the pilot environment before formal publication. Initial targets are the user-selected macOS Apple Silicon and Linux x86_64. Signing/notarization, a project licensing/distribution policy, additional platforms and automatic updates need separate decisions; this pipeline creates draft releases only after a matching tag and successful native package checks.
 
 ## Validation boundary
 
