@@ -29,6 +29,38 @@ fn read_path(calls: &[CallRecord], predicate: impl Fn(&str) -> bool) -> bool {
             })
     })
 }
+fn inspected_interview(calls: &[CallRecord], inputs: &BTreeMap<String, String>) -> bool {
+    let Some(raw_sha) = inputs.get("vault/01_Sources/Assets/interview.txt") else {
+        return false;
+    };
+    let Some(source_id) = raw_sha.get(..16) else {
+        return false;
+    };
+    let extracted = format!("01_Sources/Extracted/SRC-{source_id}.md");
+    calls.iter().any(|call| {
+        if call.name != "read_document" {
+            return false;
+        }
+        let Some((args, result)) = decoded(call) else {
+            return false;
+        };
+        let (Some(path), Some(content), Some(reported_sha)) = (
+            args["path"].as_str(),
+            result["content"].as_str(),
+            result["sha256"].as_str(),
+        ) else {
+            return false;
+        };
+        let Some(pinned_sha) = inputs.get(&format!("vault/{path}")) else {
+            return false;
+        };
+        // Ingestion creates a content-addressed copy. Reading those identical
+        // bytes counts; metadata notes and unrelated extractions do not.
+        (path == extracted || path.starts_with("01_Sources/Assets/") && pinned_sha == raw_sha)
+            && reported_sha == pinned_sha
+            && hash(content.as_bytes()) == *pinned_sha
+    })
+}
 fn pm(calls: &[CallRecord], command: &str) -> Option<Value> {
     calls.iter().rev().find_map(|c| {
         let (a, r) = decoded(c)?;
@@ -106,10 +138,8 @@ pub(super) fn evaluate(
         ),
         checked(
             "source_inspection",
-            read_path(calls, |p| {
-                p == "01_Sources/Assets/interview.txt" || p.starts_with("01_Sources/Extracted/")
-            }),
-            "Requires a completed read of the raw interview or its extraction; reading instructions alone is insufficient",
+            inspected_interview(calls, &m.inputs),
+            "Requires a hash-matched read of the pinned interview, its imported copy or its extraction; metadata and instructions alone are insufficient",
         ),
         checked(
             "draft_state_and_language",

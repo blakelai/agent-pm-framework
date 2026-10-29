@@ -311,6 +311,43 @@ async fn actual_question_pause_passes_only_mechanical_checks_and_never_answers_o
 }
 
 #[tokio::test]
+async fn inspection_accepts_pinned_imported_content_but_not_source_metadata() {
+    for (kind, expected) in [
+        ("asset", Outcome::Pass),
+        ("extraction", Outcome::Pass),
+        ("note", Outcome::Fail),
+    ] {
+        let (_dir, path) = prepare("missing-inputs", "en").await;
+        let raw = std::fs::read(path.join("vault/01_Sources/Assets/interview.txt")).unwrap();
+        let sha = hash(&raw);
+        let input = match kind {
+            "asset" => format!("01_Sources/Assets/{sha}.txt"),
+            "extraction" => format!("01_Sources/Extracted/SRC-{}.md", &sha[..16]),
+            _ => format!("01_Sources/Notes/SRC-{}.md", &sha[..16]),
+        };
+        let (cfg, _, task) = server(vec![
+            message(vec![call("read", "read_document", json!({"path":input}))]),
+            ask(),
+        ])
+        .await;
+        let result = run(&path, cfg, 8).await;
+        assert_eq!(
+            result
+                .report
+                .checks
+                .iter()
+                .find(|c| c.id == "source_inspection")
+                .unwrap()
+                .outcome,
+            expected,
+            "{kind}: {:?}",
+            result.report.checks
+        );
+        task.abort();
+    }
+}
+
+#[tokio::test]
 async fn wiki_conflict_requires_both_actual_snapshot_reads() {
     let (_dir, path) = prepare("wiki-code-conflict", "en").await;
     let m: Value =
