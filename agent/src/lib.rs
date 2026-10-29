@@ -6,6 +6,7 @@ pub mod config;
 pub mod delivery;
 pub mod distribution;
 pub mod editing;
+pub mod evaluation;
 mod extraction;
 pub mod governance;
 pub mod inspection;

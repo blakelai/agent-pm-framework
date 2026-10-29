@@ -7,6 +7,14 @@ use std::path::Path;
 pub struct Store {
     conn: std::sync::Mutex<Connection>,
 }
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub struct CallRecord {
+    pub call_id: String,
+    pub name: String,
+    pub arguments: String,
+    pub status: String,
+    pub result: Option<String>,
+}
 impl Store {
     pub fn open(path: &Path) -> Result<Self> {
         let conn = crate::storage::open(path)?.0;
@@ -34,6 +42,18 @@ impl Store {
             .prepare("SELECT id,updated FROM sessions ORDER BY updated DESC")?
             .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?
             .collect::<std::result::Result<Vec<_>, _>>()?)
+    }
+    /// Local audit evidence. Never interprets, resolves or replays a tool call.
+    pub fn calls(&self, session: &str) -> Result<Vec<CallRecord>> {
+        let calls = self.conn.lock().unwrap()
+            .prepare("SELECT call_id,name,arguments,status,result FROM ledger WHERE session=?1 ORDER BY rowid LIMIT 10001")?
+            .query_map([session], |r| Ok(CallRecord { call_id:r.get(0)?,name:r.get(1)?,arguments:r.get(2)?,status:r.get(3)?,result:r.get(4)? }))?
+            .collect::<std::result::Result<Vec<_>,_>>()?;
+        anyhow::ensure!(
+            calls.len() <= 10000,
+            "Tool audit exceeds 10,000 calls; no partial evidence returned"
+        );
+        Ok(calls)
     }
     pub fn begin_call(&self, session: &str, id: &str, name: &str, args: &str) -> Result<()> {
         self.conn.lock().unwrap().execute("INSERT INTO ledger(session,call_id,name,arguments,status) VALUES (?1,?2,?3,?4,'started')",params![session,id,name,args])?;

@@ -29,6 +29,11 @@ struct Cli {
 }
 #[derive(Subcommand)]
 enum Command {
+    /// Prepare, explicitly run, or inspect an isolated synthetic Agent evaluation.
+    Eval {
+        #[command(subcommand)]
+        command: EvalCommand,
+    },
     /// Inspect or migrate the runtime database without a model or provider configuration.
     Storage {
         #[command(subcommand)]
@@ -94,6 +99,30 @@ enum Command {
     },
 }
 #[derive(Subcommand)]
+enum EvalCommand {
+    /// List the built-in synthetic cases without reading a Vault or contacting a model.
+    List,
+    /// Copy framework instructions into a new private evaluation directory; no model request.
+    Prepare {
+        #[arg(long)]
+        case: String,
+        #[arg(long)]
+        output: PathBuf,
+        #[arg(long, value_parser = ["en", "zh-TW"])]
+        language: Option<String>,
+    },
+    /// Run a prepared case with the explicit --config provider. MCP is disabled.
+    Run {
+        directory: PathBuf,
+        #[arg(long, default_value_t = 32)]
+        max_requests: u64,
+        #[arg(long, default_value_t = 600)]
+        timeout_seconds: u64,
+    },
+    /// Read saved observations and check evidence freshness without a model request.
+    Inspect { directory: PathBuf },
+}
+#[derive(Subcommand)]
 enum StorageCommand {
     /// Read the supported schema state without initializing or migrating it.
     Inspect,
@@ -125,6 +154,75 @@ enum BackupCommand {
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
+    if let Some(Command::Eval { command }) = &cli.command {
+        use pm_agent::evaluation;
+        let observation = match command {
+            EvalCommand::List => {
+                println!("{}", serde_json::to_string_pretty(&evaluation::cases())?);
+                return Ok(());
+            }
+            EvalCommand::Prepare {
+                case,
+                output,
+                language,
+            } => {
+                let source = Workspace::open(&cli.vault)?;
+                let language = language.clone().unwrap_or(source.language()?);
+                let path = evaluation::prepare(&source, case, output, &language).await?;
+                println!(
+                    "{}",
+                    serde_json::json!({"directory":path,"state":"prepared","model_requests":0})
+                );
+                return Ok(());
+            }
+            EvalCommand::Inspect { directory } => evaluation::inspect(directory)?,
+            EvalCommand::Run {
+                directory,
+                max_requests,
+                timeout_seconds,
+            } => {
+                let config = Config::load(cli.config.as_deref().ok_or_else(|| {
+                    anyhow::anyhow!("eval run requires an explicit --config path")
+                })?)?;
+                let cancel = CancellationToken::new();
+                let signal = cancel.clone();
+                tokio::spawn(async move {
+                    let _ = tokio::signal::ctrl_c().await;
+                    signal.cancel();
+                });
+                let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+                let printer = tokio::spawn(async move {
+                    while let Some(event) = rx.recv().await {
+                        if let Event::Notice(text) = event
+                            && (text.starts_with("Tool:") || text.starts_with("Active Skills:"))
+                        {
+                            eprintln!("{text}");
+                        }
+                    }
+                });
+                let result = evaluation::run(
+                    directory,
+                    config,
+                    *max_requests,
+                    *timeout_seconds,
+                    &tx,
+                    &cancel,
+                )
+                .await;
+                drop(tx);
+                printer.await?;
+                result?
+            }
+        };
+        println!("{}", serde_json::to_string_pretty(&observation)?);
+        if !observation.current
+            || matches!(command, EvalCommand::Run { .. })
+                && observation.report.mechanical_outcome != evaluation::Outcome::Pass
+        {
+            std::process::exit(2);
+        }
+        return Ok(());
+    }
     // Recovery must work even when the original Vault and provider configuration are gone.
     if let Some(Command::Backup { command }) = &cli.command {
         use pm_agent::backup;
@@ -160,6 +258,9 @@ async fn main() -> Result<()> {
     let state_dir = workspace.path(".pm-agent")?;
     let config_path = cli.config.unwrap_or_else(|| state_dir.join("config.toml"));
     match cli.command.unwrap_or(Command::Tui) {
+        Command::Eval { .. } => {
+            unreachable!("Evaluations are dispatched before opening the selected Vault")
+        }
         Command::Backup { .. } => unreachable!("Backup is dispatched before opening runtime state"),
         Command::Storage { .. } => {
             unreachable!("Storage is dispatched before loading configuration")

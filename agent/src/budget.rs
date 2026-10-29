@@ -32,7 +32,7 @@ pub struct Attempt {
     pub usage: Option<Usage>,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Summary {
     pub recorded_attempts: u64,
     pub prior_requests_unknown: bool,

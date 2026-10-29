@@ -174,6 +174,8 @@ An interrupted tool has an unknown outcome until reconciled. Restarting does not
 
 ## Verification and references
 
+Use the operator [synthetic evaluation runner](Evaluation.md) to prepare isolated cases, explicitly run a configured provider and inspect versioned evidence. Mechanical observations remain separate from human semantic review. Preparation and inspection make no model request.
+
 ```sh
 python3 -m venv .venv
 .venv/bin/python -m pip install -r tests/requirements.txt

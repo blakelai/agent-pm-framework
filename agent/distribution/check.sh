@@ -25,6 +25,13 @@ cp -R "$package/framework" "$scratch/vault"
 test ! -e "$scratch/vault/.pm-agent"
 "$binary" --vault "$scratch/vault" storage inspect
 test ! -e "$scratch/vault/.pm-agent"
+"$binary" eval list
+mkdir "$scratch/evaluations"
+"$binary" --vault "$scratch/vault" eval prepare --case missing-inputs --output "$scratch/evaluations" --language en
+for evaluation in "$scratch/evaluations/"pm-eval-*; do
+  "$binary" eval inspect "$evaluation"
+  test ! -e "$evaluation/vault/.pm-agent"
+done
 "$binary" --vault "$scratch/vault" pm validate
 "$binary" --vault "$scratch/vault" skills
 "$binary" --vault "$scratch/vault" sessions
@@ -34,4 +41,4 @@ test ! -e "$scratch/vault/.pm-agent"
 mkdir "$scratch/restored"
 "$binary" backup restore "$scratch/recovery.pmbak" --parent "$scratch/restored" --include-sessions
 test ! -e "$scratch/vault/.pm-agent/config.toml"
-printf '%s\n' 'Package checks passed: checksum, install/reinstall, native CLI, clean starter, Skills, storage, backup and restore.'
+printf '%s\n' 'Package checks passed: checksum, install/reinstall, native CLI, offline evaluation, clean starter, Skills, storage, backup and restore.'
