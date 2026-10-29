@@ -141,6 +141,8 @@ Native `validate` writes an English quality report and returns structured findin
 
 Native source ingestion preserves original bytes and generates project-language wrappers. PDF pages, slide numbers and document text remain linked to the original; encryption, malformed input and extraction failures remain visible. Snapshot synchronization reads only registered roots, preserves OpenWiki Claims files without claiming official validation, and verifies immutable snapshot hashes before reuse or evidence capture. Language catalogs remain in the project's `tools/locales` directory and are checked against the compiled English key/placeholder contract.
 
+The read-only Agent tool `list_source_files` lists registered IDs, then actual original/extraction or captured Wiki/code paths with hashes. It supports bounded pages, path prefixes and explicit snapshot versions; it never reads a live repository or grants content-review status. Follow returned paths with `read_document` before making claims. Named application guides are also readable; application code, configuration and arbitrary sibling files remain outside knowledge scope. See [source discovery](../tools/README.md#agent-source-discovery).
+
 OKF export stages a fresh external bundle and validates it before publication. Raw Markdown attachments keep exact bytes with a `.txt` suffix; native Skills become typed knowledge concepts. Bundle checks apply core OKF rules to every Markdown file, while authoring checks apply this project's stricter profile and raw/private exclusions.
 
 ```sh

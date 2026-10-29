@@ -16,15 +16,21 @@ pub fn specs() -> Vec<ToolSpec> {
     vec![
         spec(
             "list_documents",
-            "List project documents, IDs, types and paths.",
+            "List project documents, IDs, types and paths. Raw materials and repository snapshots use list_source_files.",
             json!({}),
             &[],
         ),
         spec(
             "search_documents",
-            "Find literal text in project knowledge, including Chinese and code identifiers.",
+            "Find literal text in authored project knowledge. Raw materials and repository snapshots use list_source_files.",
             json!({"query":{"type":"string"}}),
             &["query"],
+        ),
+        spec(
+            "list_source_files",
+            "Discover registered sources without guessing paths. Omit source_id to list source/repository IDs; select one to list original/extracted files or verified captured Wiki/code paths. Read returned paths with read_document. No live repository access, content reading or source review is implied. Follow next_offset; pin returned snapshot_id for repository pages.",
+            json!({"source_id":{"type":["string","null"]},"snapshot_id":{"type":["string","null"]},"prefix":{"type":"string","description":"Literal file-path prefix within the selected source; repository-relative for snapshots."},"offset":{"type":"integer","minimum":0,"maximum":100000},"limit":{"type":"integer","minimum":1,"maximum":100}}),
+            &[],
         ),
         spec(
             "read_document",
@@ -129,6 +135,11 @@ pub fn validate_arguments(schema: &Value, args: &Value) -> Result<()> {
 }
 pub async fn execute(workspace: &Workspace, name: &str, args: &Value) -> Result<Value> {
     match name {
+        "list_source_files" => {
+            let w = workspace.clone();
+            let args = args.clone();
+            tokio::task::spawn_blocking(move || crate::source_navigation::list(&w, &args)).await?
+        }
         "list_documents" => Ok(json!(
             workspace
                 .documents()?

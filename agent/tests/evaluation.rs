@@ -231,7 +231,7 @@ async fn preparations_are_isolated_versioned_localized_and_unexecuted() {
             let manifest: Value =
                 serde_json::from_slice(&std::fs::read(path.join("manifest.json")).unwrap())
                     .unwrap();
-            assert_eq!(manifest["fixture_version"], 1);
+            assert_eq!(manifest["fixture_version"], 2);
             assert!(
                 manifest["inputs"]
                     .as_object()
@@ -352,7 +352,15 @@ async fn wiki_conflict_requires_both_actual_snapshot_reads() {
     let (_dir, path) = prepare("wiki-code-conflict", "en").await;
     let m: Value =
         serde_json::from_slice(&std::fs::read(path.join("manifest.json")).unwrap()).unwrap();
-    let mut script = vec![read_interview()];
+    let mut script = vec![
+        message(vec![call("catalog", "list_source_files", json!({}))]),
+        message(vec![call(
+            "files",
+            "list_source_files",
+            json!({"source_id":"REPO-EVAL"}),
+        )]),
+        read_interview(),
+    ];
     for (id, suffix) in [("wiki", "/openwiki/Access.md"), ("code", "/src/access.rs")] {
         let p = m["inputs"]
             .as_object()
@@ -367,8 +375,13 @@ async fn wiki_conflict_requires_both_actual_snapshot_reads() {
         )]));
     }
     script.push(ask());
-    let (cfg, _, task) = server(script).await;
+    let (cfg, requests, task) = server(script).await;
     let r = run(&path, cfg, 12).await;
+    assert!(
+        requests.lock().unwrap().1[0]
+            .to_string()
+            .contains("list_source_files")
+    );
     assert_eq!(
         r.report.mechanical_outcome,
         Outcome::Pass,

@@ -155,7 +155,7 @@ fn manifest(root: &Path) -> Result<(Manifest, String)> {
     let bytes = read(root, "manifest.json")?;
     let m: Manifest = serde_json::from_slice(&bytes)?;
     ensure!(
-        m.format == FORMAT && m.synthetic && m.fixture_version == 1,
+        m.format == FORMAT && m.synthetic && matches!(m.fixture_version, 1 | 2),
         "Unsupported evaluation manifest"
     );
     ensure!(
@@ -275,7 +275,7 @@ fn prepare_local(
     let m = Manifest {
         format: FORMAT.into(),
         case,
-        fixture_version: 1,
+        fixture_version: 2,
         application_version: env!("CARGO_PKG_VERSION").into(),
         runner_sha256: runner_hash()?,
         synthetic: true,

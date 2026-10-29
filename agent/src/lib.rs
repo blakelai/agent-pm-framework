@@ -23,6 +23,7 @@ pub mod reviews;
 pub mod runtime;
 pub mod schedule;
 pub mod skills;
+mod source_navigation;
 pub mod sources;
 pub mod storage;
 pub mod store;

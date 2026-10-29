@@ -10,6 +10,20 @@ All 19 operations run in the Rust application through `pm-agent --vault /path/to
 
 The examples assume `pm-agent` is on PATH. Otherwise substitute `agent/target/debug/pm-agent` from the framework root. `--vault` precedes `pm`; relative source paths are resolved against that Vault.
 
+## Agent source discovery
+
+For any task based on supplied materials or existing systems, read relevant source content before deriving claims or producing drafts:
+
+1. Call `list_source_files` with `{}` to discover registered source and repository IDs. Select a returned ID with `{"source_id":"RETURNED-ID"}` to list actual file paths and hashes. Follow `next_offset`; repository pages can pin the returned `snapshot_id` and filter by a repository-relative `prefix`.
+2. Read relevant returned `path` values with `read_document`. A source note, catalog entry or filename is an index, not the interview, Wiki or code itself. For materials choose the original text or extracted content; for system analysis inspect the relevant captured Wiki and implementation files. When text is unavailable or too large, request an appropriate excerpt or material review and keep dependent conclusions pending.
+3. Cite the inspected path and returned SHA-256 in draft writes. When creating an evidence record, use the returned `source_id` for materials; for repository evidence use `repo_id` and `source_path`. Inspection does not establish business approval or deployed behavior.
+
+`list_documents` and `search_documents` cover authored knowledge and omit raw assets and snapshots. `pm inspect` compares existing records/evidence; it does not enumerate repository files. `list_source_files` reads only registered local assets and captured snapshots, verifies source integrity, and never synchronizes or opens a live repository. A missing snapshot requires an explicit `pm sync` of the registered repository.
+
+The Agent `pm` tool separates `command` from `args`: for example, `{"command":"materials","args":[]}` lists materials, and `{"command":"materials","args":["SRC-ID"]}` inspects one. Do not repeat the command name in `args`. Use `{"command":"evidence","args":["--help"]}` for the exact argument contract before an unfamiliar operation; examples are not actual source IDs or paths.
+
+## Native PM commands
+
 ```sh
 pm-agent --vault . pm settings
 pm-agent --vault . pm settings --document-language en

@@ -10,6 +10,29 @@ use std::{
 use walkdir::WalkDir;
 
 pub const MAX_FILE: u64 = 2 * 1024 * 1024;
+// Explicit knowledge documents outside the project folders. Never grant access
+// to application code, build outputs, configuration or arbitrary sibling files.
+pub(crate) const GUIDES: &[&str] = &[
+    "agent/README.md",
+    "agent/Implementation.md",
+    "agent/Interaction.md",
+    "agent/Skills.md",
+    "agent/Editing.md",
+    "agent/Planning-View.md",
+    "agent/Clarification.md",
+    "agent/Inspection.md",
+    "agent/Materials.md",
+    "agent/Material-Reviews.md",
+    "agent/Delivery-Workflows.md",
+    "agent/Automatic-Refresh.md",
+    "agent/Provider-Probes.md",
+    "agent/Session-Limits.md",
+    "agent/Backup-and-Restore.md",
+    "agent/Storage-Migrations.md",
+    "agent/Installation.md",
+    "agent/Evaluation.md",
+    "tests/README.md",
+];
 const FOLDERS: &[&str] = &[
     "00_Governance",
     "01_Sources",
@@ -149,6 +172,7 @@ impl Workspace {
         let first = relative.split('/').next().unwrap_or("");
         ensure!(
             FOLDERS.contains(&first)
+                || GUIDES.contains(&relative)
                 || matches!(
                     relative,
                     "AGENTS.md"
@@ -178,17 +202,24 @@ impl Workspace {
                 let name = e.file_name().to_string_lossy();
                 e.depth() == 0
                     || if e.depth() == 1 {
-                        FOLDERS.contains(&name.as_ref()) || e.file_type().is_file()
+                        FOLDERS.contains(&name.as_ref())
+                            || matches!(name.as_ref(), "agent" | "tests")
+                            || e.file_type().is_file()
                     } else {
-                        !matches!(
-                            name.as_ref(),
-                            "Assets"
-                                | "Snapshots"
-                                | "Baselines"
-                                | "Inbox"
-                                | "Extracted"
-                                | "__pycache__"
-                        )
+                        let relative = e.path().strip_prefix(&self.root).unwrap();
+                        if relative.starts_with("agent") || relative.starts_with("tests") {
+                            GUIDES.contains(&relative.to_string_lossy().as_ref())
+                        } else {
+                            !matches!(
+                                name.as_ref(),
+                                "Assets"
+                                    | "Snapshots"
+                                    | "Baselines"
+                                    | "Inbox"
+                                    | "Extracted"
+                                    | "__pycache__"
+                            )
+                        }
                     }
             })
         {

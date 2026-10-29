@@ -14,6 +14,8 @@ pub fn cases() -> Vec<Case> {
 pub fn seed(source: &Workspace, dest: &Workspace) -> Result<()> {
     for path in [
         "AGENTS.md",
+        "HOME.md",
+        "References.md",
         "tools/README.md",
         "00_Governance/Language-Settings.md",
         "00_Governance/Project-Setup.md",
@@ -21,15 +23,29 @@ pub fn seed(source: &Workspace, dest: &Workspace) -> Result<()> {
         "00_Governance/Schema.md",
         "00_Governance/Baselines-and-Changes.md",
         "00_Governance/Discovery-and-Prioritization.md",
+        "02_Domain/Code-Mappings.md",
+        "03_Systems/OpenWiki-Integration.md",
+        "03_Systems/Integration-Review.md",
+        "08_Verification/Acceptance-and-Release.md",
+        "09_Operations/Benefits-and-Costs.md",
         "90_Agent/Working-with-Agents.md",
         "90_Agent/Evidence-and-Clarification-Policy.md",
         "90_Agent/OKF-Profile.md",
         "90_Agent/Language-Policy.md",
         "90_Agent/Skills-Index.md",
         "90_Agent/Evals/Evaluation-Method.md",
-    ] {
+    ]
+    .into_iter()
+    .chain(crate::workspace::GUIDES.iter().copied())
+    {
         put(dest, path, source.read(path)?.as_bytes())?;
     }
+    put_note(
+        dest,
+        "01_Sources/Source-Index.md",
+        json!({"type":"Reference","title":"Synthetic source index","language":"en"}),
+        "# Synthetic source index\n\nUse list_source_files to discover the imported synthetic interview and registered repository snapshot. Read the returned paths before deriving claims; this index contains no source content.",
+    )?;
     put_note(
         dest,
         "CONTEXT-MAP.md",
@@ -187,7 +203,7 @@ pub fn populate(root: &Path, w: &Workspace, case: &str, language: &str) -> Resul
         localize_fixture(w)?;
     }
     Ok(format!(
-        "Synthetic evaluation only; do not contact external tools or change configuration. The interview is 01_Sources/Assets/interview.txt; its imported source note and REPO-EVAL snapshot are available through list_documents. The repository is a synthetic directory fixture, not an actual cloned or executed repository. No actual business owner, date or commitment is represented.\n\n{task}"
+        "Synthetic evaluation only; do not contact external tools or change configuration. The interview is 01_Sources/Assets/interview.txt. Read it before the task; discover its imported copy/extraction and the REPO-EVAL snapshot files through list_source_files. The repository is a synthetic directory fixture, not an actual cloned or executed repository. No actual business owner, date or commitment is represented.\n\n{task}"
     ))
 }
 
