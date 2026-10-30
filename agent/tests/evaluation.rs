@@ -331,7 +331,7 @@ async fn staged_cancel_before_dispatch_sends_no_request_and_keeps_later_stages_u
     let cancel = CancellationToken::new();
     cancel.cancel();
     let (tx, _) = tokio::sync::mpsc::unbounded_channel();
-    let r = evaluation::run(&path, cfg, 6, 20, &tx, &cancel)
+    let r = evaluation::run(&path, cfg, Some(6), 20, &tx, &cancel)
         .await
         .unwrap();
     assert_eq!(r.report.session_status, Some(Status::Cancelled));
@@ -339,6 +339,25 @@ async fn staged_cancel_before_dispatch_sends_no_request_and_keeps_later_stages_u
     assert_eq!(r.report.mechanical_outcome, Outcome::Partial);
     assert!(requests.lock().unwrap().1.is_empty());
     assert!(evaluation::inspect(&path).unwrap().current);
+    task.abort();
+}
+
+#[tokio::test]
+async fn evaluation_without_explicit_request_cap_can_complete_after_thirty_two_requests() {
+    let (_dir, path) = prepare("missing-inputs", "en").await;
+    let mut script = vec![read_interview(); 40];
+    script.push(ask());
+    let (mut cfg, requests, task) = server(script).await;
+    cfg.max_steps = 1;
+    cfg.session_limits.max_requests = Some(0);
+    let (tx, _) = tokio::sync::mpsc::unbounded_channel();
+    let r = evaluation::run(&path, cfg, None, 20, &tx, &CancellationToken::new())
+        .await
+        .unwrap();
+    assert_eq!(r.report.mechanical_outcome, Outcome::Pass);
+    assert_eq!(r.report.max_requests, None);
+    assert_eq!(r.report.usage.unwrap().recorded_attempts, 41);
+    assert_eq!(requests.lock().unwrap().1.len(), 41);
     task.abort();
 }
 
@@ -372,7 +391,7 @@ async fn failed_or_timed_out_provider_keeps_evidence_and_does_not_certify_unobse
         let (cfg, requests, task) = server(vec![script.into()]).await;
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
         let drain = tokio::spawn(async move { while rx.recv().await.is_some() {} });
-        let r = evaluation::run(&path, cfg, 8, 1, &tx, &CancellationToken::new())
+        let r = evaluation::run(&path, cfg, Some(8), 1, &tx, &CancellationToken::new())
             .await
             .unwrap();
         drop(tx);
@@ -412,9 +431,16 @@ fn ask() -> String {
 async fn run(path: &Path, config: Config, requests: u64) -> evaluation::Inspection {
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
     let drain = tokio::spawn(async move { while rx.recv().await.is_some() {} });
-    let result = evaluation::run(path, config, requests, 20, &tx, &CancellationToken::new())
-        .await
-        .unwrap();
+    let result = evaluation::run(
+        path,
+        config,
+        Some(requests),
+        20,
+        &tx,
+        &CancellationToken::new(),
+    )
+    .await
+    .unwrap();
     drop(tx);
     drain.await.unwrap();
     result
@@ -503,7 +529,7 @@ async fn actual_question_pause_passes_only_mechanical_checks_and_never_answers_o
     assert_eq!(requests.lock().unwrap().1.len(), 2);
     let (tx, _) = tokio::sync::mpsc::unbounded_channel();
     assert!(
-        evaluation::run(&path, config, 8, 20, &tx, &CancellationToken::new())
+        evaluation::run(&path, config, Some(8), 20, &tx, &CancellationToken::new())
             .await
             .is_err()
     );
@@ -685,7 +711,7 @@ async fn stale_preparation_and_request_limit_cannot_make_an_extra_call() {
     let (cfg, requests, task) = server(vec![]).await;
     let (tx, _) = tokio::sync::mpsc::unbounded_channel();
     assert!(
-        evaluation::run(&path, cfg, 8, 20, &tx, &CancellationToken::new())
+        evaluation::run(&path, cfg, Some(8), 20, &tx, &CancellationToken::new())
             .await
             .is_err()
     );
@@ -706,7 +732,7 @@ async fn stale_preparation_and_request_limit_cannot_make_an_extra_call() {
     )
     .unwrap();
     let (cfg, requests, task) = server(vec![]).await;
-    let err = evaluation::run(&path, cfg, 8, 20, &tx, &CancellationToken::new())
+    let err = evaluation::run(&path, cfg, Some(8), 20, &tx, &CancellationToken::new())
         .await
         .unwrap_err();
     assert!(err.to_string().contains("executable changed"));

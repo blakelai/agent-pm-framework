@@ -114,8 +114,9 @@ enum EvalCommand {
     /// Run a prepared case with the explicit --config provider. MCP is disabled.
     Run {
         directory: PathBuf,
-        #[arg(long, default_value_t = 32)]
-        max_requests: u64,
+        /// Optional request cap per test stage. Omit for no request-count cap.
+        #[arg(long)]
+        max_requests: Option<u64>,
         #[arg(long, default_value_t = 600)]
         timeout_seconds: u64,
     },

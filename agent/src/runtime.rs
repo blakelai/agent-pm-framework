@@ -112,10 +112,10 @@ impl Runtime {
     pub(crate) async fn open_for_evaluation(
         workspace: Workspace,
         config: Config,
-        max_requests: u64,
+        max_requests: Option<u64>,
     ) -> Result<Self> {
         let mut limits = config.interactive_limits();
-        limits.max_requests = Some(max_requests);
+        limits.max_requests = max_requests;
         Self::open_with_limits(workspace, config, limits).await
     }
     async fn open_with_limits(

@@ -410,14 +410,15 @@ pub fn inspect(directory: &Path) -> Result<Inspection> {
 pub async fn run(
     directory: &Path,
     mut config: Config,
-    max_requests: u64,
+    max_requests: Option<u64>,
     timeout_seconds: u64,
     events: &tokio::sync::mpsc::UnboundedSender<crate::provider::Event>,
     cancel: &CancellationToken,
 ) -> Result<Inspection> {
     ensure!(
-        (1..=100).contains(&max_requests) && (1..=3600).contains(&timeout_seconds),
-        "Use 1..=100 requests and 1..=3600 seconds"
+        max_requests.is_none_or(|limit| (1..=100).contains(&limit))
+            && (1..=3600).contains(&timeout_seconds),
+        "Omit the request cap or use 1..=100 requests; use 1..=3600 seconds per stage"
     );
     let root = directory.canonicalize()?;
     let w = Workspace::open(&root.join("vault"))?;
@@ -454,7 +455,7 @@ pub async fn run(
     report.max_steps = None;
     report.provider_timeout_seconds = Some(config.active()?.timeout_seconds);
     report.max_total_tokens = config.session_limits.max_total_tokens;
-    report.max_requests = Some(max_requests);
+    report.max_requests = max_requests;
     report.timeout_seconds = Some(timeout_seconds);
     report.limits_scope = Some("stage".into());
     report.note="Configured-provider execution. Request and timeout bounds apply per evaluation stage, not to interactive use. Stages consume actual preceding files in fresh sessions. MCP is disabled; no question is answered and no pending action is approved automatically. This is not provider-wide certification.".into();
@@ -523,7 +524,7 @@ pub async fn run(
     if !m.stages.is_empty() {
         let completed =
             report.stages.len() == m.stages.len() && report.stages.iter().all(stages::can_advance);
-        report.checks.push(Check {id:"stage_sequence".into(),outcome:if completed {Outcome::Pass}else if session.status==Status::Completed && !cancel.is_cancelled() {Outcome::Fail}else{Outcome::NotRun},evidence:format!("{} of {} stages observed; every stage requires its actual output contract before advancing. Each stage has a separate session and evaluation-only request cap.",report.stages.len(),m.stages.len())});
+        report.checks.push(Check {id:"stage_sequence".into(),outcome:if completed {Outcome::Pass}else if session.status==Status::Completed && !cancel.is_cancelled() {Outcome::Fail}else{Outcome::NotRun},evidence:format!("{} of {} stages observed; every stage requires its actual output contract before advancing. Each stage has a separate session and evaluation-only limits.",report.stages.len(),m.stages.len())});
     }
     if error.is_some() {
         let bytes = serde_json::to_vec_pretty(&json!({"execution_error":error}))?;

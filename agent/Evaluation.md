@@ -18,7 +18,7 @@ pm-agent --vault /absolute/framework eval prepare \
 
 # Use the directory printed by prepare; credentials stay in environment variables.
 pm-agent --config /absolute/operator/config.toml eval run \
-  /absolute/evaluations/pm-eval-ID --max-requests 32 --timeout-seconds 600
+  /absolute/evaluations/pm-eval-ID --timeout-seconds 600
 
 pm-agent eval inspect /absolute/evaluations/pm-eval-ID
 ```
@@ -31,7 +31,7 @@ Fixture version 2 introduced the named system, domain, verification and applicat
 
 `run` is the explicit network action and requires the operator-selected configuration. Its active endpoint, model and protocol receive only the isolated Vault through the normal runtime. Configured MCP servers are disabled; questions remain unanswered and calls requiring confirmation remain pending. There are no automatic approvals, retries, protocol fallbacks or model substitutions.
 
-Normal interactive execution has no request-count cap. Evaluations use a separate test-only cap: 32 requests by default, within 1 through 100, and a timeout of 600 seconds, within 1 through 3600. For draft-stages these bounds apply to each stage independently, not to the workflow total. Legacy max_steps and configured max_requests are ignored; an explicitly configured reported-token guard still applies to each stage session. Ctrl+C requests cancellation. A service may continue an already dispatched request, and a started local worker may finish after cancellation. Unknown tool outcomes retain the normal reconciliation boundary.
+Normal interactive execution has no request-count cap. Evaluations also have no request-count cap by default. An operator testing a specific boundary can explicitly pass `--max-requests` within 1 through 100. Evaluations retain a timeout of 600 seconds by default, within 1 through 3600. For draft-stages the timeout and any explicit test cap apply to each stage independently, not to the workflow total. Legacy max_steps and configured max_requests are ignored; an explicitly configured reported-token guard still applies to each stage session. Ctrl+C requests cancellation. A service may continue an already dispatched request, and a started local worker may finish after cancellation. Unknown tool outcomes retain the normal reconciliation boundary.
 
 Preparation pins the evaluator executable's SHA-256. Run with that binary; after changing builds, prepare a new case. Changed inputs, an already started evaluation or an interrupted running record prevent replay. Repeat with a new directory and retain prior results. Explicitly resuming the saved session through ordinary Chat does not rescore the frozen observation; later file changes make it historical.
 
@@ -49,7 +49,7 @@ Checker definitions and expected calculations remain outside the Agent's Vault. 
 
 ## Stage-by-stage workflow
 
-Use draft-stages to observe glossary → BRD → PRD → requirement → PBI → verification. The manifest pins all six task prompts and stage Skills before execution. Each stage starts a fresh session in the same isolated Vault, reads actual preceding outputs and receives its own test bounds. No synthetic replacement for a preceding result is injected. The evaluator records each session, tool ledger, checks, service-reported usage and a snapshot of the authored drafts under `stages/<stage>/`.
+Use draft-stages to observe glossary → BRD → PRD → requirement → PBI → verification. The manifest pins all six task prompts and stage Skills before execution. Each stage starts a fresh session in the same isolated Vault, reads actual preceding outputs and receives its own timeout and any explicitly selected request cap. No synthetic replacement for a preceding result is injected. The evaluator records each session, tool ledger, checks, service-reported usage and a snapshot of the authored drafts under `stages/<stage>/`.
 
 A stage must finish its requested document write and run validation after its last write before advancing. It cannot produce later-stage drafts early. Final verification must run both validation and coverage after corrections. Missing ownership and source-review findings stay visible: validation findings alone may be carried forward, but a failed output contract, clarification, approval, request cap, timeout or cancellation stops later stages. No user answers or approvals are generated to cross a boundary.
 
