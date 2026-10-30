@@ -64,7 +64,8 @@ impl McpConfig {
 #[serde(deny_unknown_fields)]
 pub struct Config {
     pub provider: String,
-    #[serde(default = "steps")]
+    /// Accepted only for compatibility. Interactive execution has no step cap.
+    #[serde(default, skip_serializing)]
     pub max_steps: usize,
     #[serde(default)]
     pub session_limits: crate::budget::Limits,
@@ -72,11 +73,14 @@ pub struct Config {
     #[serde(default)]
     pub mcp: BTreeMap<String, McpConfig>,
 }
-fn steps() -> usize {
-    32
-}
-
 impl Config {
+    /// Request-count limits belong to the evaluator, never interactive sessions.
+    pub fn interactive_limits(&self) -> crate::budget::Limits {
+        crate::budget::Limits {
+            max_requests: None,
+            max_total_tokens: self.session_limits.max_total_tokens,
+        }
+    }
     pub fn read(path: &Path) -> Result<Self> {
         let config: Self = toml::from_str(&std::fs::read_to_string(path).with_context(|| {
             format!(
@@ -93,8 +97,8 @@ impl Config {
             bail!("Set an explicit model in the active provider profile; no model is inferred")
         }
         validate_endpoint(&p.base_url)?;
-        if p.timeout_seconds == 0 || config.max_steps == 0 || config.max_steps > 100 {
-            bail!("Timeout must be positive and max_steps must be in 1..=100")
+        if p.timeout_seconds == 0 {
+            bail!("Timeout must be positive")
         }
         Ok(config)
     }

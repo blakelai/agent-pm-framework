@@ -17,8 +17,8 @@ The approved direction is a local Rust TUI for macOS/Linux, sharing project docu
 | File refresh | Background content polling for knowledge documents, baselines and catalogs; automatic browse/planning/delivery updates, retained drafts and stale-preview invalidation |
 | Structured editing | Human-operated forms for allocations, iterations, forecast dates, PBIs, risks and draft decisions; reviewed diffs, existing readiness/planning checks, optimistic conflict checks and edit records |
 | Provider probes | Explicit isolated CLI/Chat checks for completed SSE text, schema-matched function calls and tool-result continuation; private observations, configuration freshness and service-only usage |
-| Agent evaluations | Operator prepare/run/inspect workflow for four isolated synthetic cases; pinned source and evaluator versions, actual runtime/call evidence, bounded execution, freshness checks and separate unperformed semantic review |
-| Session limits | Optional cumulative request and reported-token guards; durable pre-dispatch attempts, explicit limit pauses, unknown legacy/missing totals and local CLI/Chat inspection |
+| Agent evaluations | Operator prepare/run/inspect workflow for isolated synthetic cases, including a six-stage requirement workflow using actual preceding artifacts and fresh sessions; pinned inputs, per-stage evidence, evaluation-only bounds and separate unperformed semantic review |
+| Session execution | No interactive request/step cap; manual cancellation, durable attempt accounting, optional reported-token guard, unknown legacy/missing totals and local CLI/Chat inspection |
 | Provider | Responses and Chat Completions SSE adapters, fragmented UTF-8 and function arguments, local conversation replay, error/cancellation handling |
 | Clarification | Explicit project/record scopes, transitive draft/baseline gates across sessions, independent continuation, answer provenance and read-only Questions view |
 | Agent runtime | Stage Skill/Playbook plus explicit custom Skills, dependency/reference validation and activation fingerprints; tool loop, persisted questions and sourced draft writes |

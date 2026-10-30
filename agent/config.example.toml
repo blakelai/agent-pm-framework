@@ -5,13 +5,12 @@
 # Explicit `probe` sends up to three synthetic requests; `probe --last` reads the
 # latest local result without requests. Probes do not modify these settings.
 provider = "ollama"
-max_steps = 32
 
-# Optional, per-session guards. Omitted limits are disabled; 0 pauses immediately.
+# Interactive execution has no request-count cap. Esc in the TUI composer stops work.
+# Optional reported-token guard. Omitted means disabled; 0 pauses immediately.
 # Totals use only service-reported total_tokens, never input + output estimates.
 # A request already sent can exceed the threshold; this is not a hard cost cap.
 # [session_limits]
-# max_requests = 20
 # max_total_tokens = 50000
 
 [providers.openai]

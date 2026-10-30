@@ -102,10 +102,10 @@ async fn budget_attempt_is_durable_before_dispatch_and_cancellation_keeps_unknow
     server.abort();
 }
 
-#[tokio::test]
-async fn budget_cli_query_is_local_and_zero_limit_exits_without_a_model_request() {
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn budget_cli_ignores_legacy_request_cap_and_query_remains_local() {
     let (_dir, w) = fixture();
-    let (url, _, requests, server) = server(vec![]).await;
+    let (url, _, requests, server) = server(vec![chat("Done.", vec![])]).await;
     let mut cfg = config(url, Protocol::ChatCompletions);
     cfg.session_limits.max_requests = Some(0);
     let path = w.path(".pm-agent/config.toml").unwrap();
@@ -121,17 +121,17 @@ async fn budget_cli_query_is_local_and_zero_limit_exits_without_a_model_request(
         .unwrap();
     assert_eq!(
         output.status.code(),
-        Some(2),
+        Some(0),
         "{}",
         String::from_utf8_lossy(&output.stderr)
     );
-    assert!(requests.lock().unwrap().is_empty());
+    assert_eq!(requests.lock().unwrap().len(), 1);
     let store =
         pm_agent::store::Store::open(&w.path(".pm-agent/runtime.sqlite3").unwrap()).unwrap();
     let id = store.sessions().unwrap()[0].0.clone();
     let s: Session = store.load(&id).unwrap();
-    assert_eq!(s.status, Status::LimitReached);
-    assert!(s.request_ledger.unwrap().requests.is_empty());
+    assert_eq!(s.status, Status::Completed);
+    assert_eq!(s.request_ledger.unwrap().requests.len(), 1);
     cfg.providers.get_mut("fixture").unwrap().model.clear();
     cfg.mcp.insert(
         "not-started".into(),
@@ -159,83 +159,126 @@ async fn budget_cli_query_is_local_and_zero_limit_exits_without_a_model_request(
         String::from_utf8_lossy(&output.stderr)
     );
     let report: Value = serde_json::from_slice(&output.stdout).unwrap();
-    assert_eq!(report["limits"]["max_requests"], 0);
-    assert_eq!(report["observations"]["recorded_attempts"], 0);
-    assert_eq!(report["observations"]["complete_total_tokens"], 0);
-    assert!(
-        report["pause_reason"]
-            .as_str()
-            .unwrap()
-            .contains("limit reached")
-    );
-    assert!(requests.lock().unwrap().is_empty());
+    assert!(report["limits"]["max_requests"].is_null());
+    assert_eq!(report["observations"]["recorded_attempts"], 1);
+    assert!(report["observations"]["complete_total_tokens"].is_null());
+    assert!(report["pause_reason"].is_null());
+    assert_eq!(requests.lock().unwrap().len(), 1);
     server.abort();
 }
 
 #[tokio::test]
-async fn budget_request_cap_preserves_pending_tools_and_survives_explicit_resume() {
+async fn interactive_execution_ignores_legacy_caps_beyond_one_hundred_requests() {
     let (_dir, w) = fixture();
-    let (url, _, requests, server) = server(vec![
-        chat(
-            "",
-            vec![call(
-                0,
-                "read",
-                "read_document",
-                json!({"path":"00_Governance/Settings.md"}),
-            )],
-        ),
-        chat("Read.", vec![]),
-    ])
-    .await;
+    let mut script = (0..105)
+        .map(|i| {
+            chat(
+                "",
+                vec![call(
+                    0,
+                    &format!("read-{i}"),
+                    "read_document",
+                    json!({"path":"00_Governance/Settings.md"}),
+                )],
+            )
+        })
+        .collect::<Vec<_>>();
+    script.push(chat("Completed after 105 tool rounds.", vec![]));
+    script.push(chat("Continued.", vec![]));
+    let (url, _, requests, server) = server(script).await;
     let mut cfg = config(url, Protocol::ChatCompletions);
-    cfg.session_limits.max_requests = Some(1);
     cfg.max_steps = 1;
+    cfg.session_limits.max_requests = Some(0);
     let rt = Runtime::open(w.clone(), cfg.clone()).await.unwrap();
     let mut s = Session::new(&cfg, "prd").unwrap();
-    rt.input(&mut s, "Inspect settings").unwrap();
+    rt.input(&mut s, "Exercise continued work").unwrap();
     rt.run(&mut s, None, &events().0, &CancellationToken::new())
         .await
         .unwrap();
-    assert_eq!(s.status, Status::LimitReached);
-    assert_eq!(s.pending.len(), 1);
-    let history = s.history.clone();
-    assert!(
-        rt.input(&mut s, "Do not insert a message before tool results")
-            .is_err()
-    );
-    assert_eq!(s.history, history);
-    assert!(rt.store.call_result(&s.id, "read").unwrap().is_none());
-    assert_eq!(requests.lock().unwrap().len(), 1);
+    assert_eq!(s.status, Status::Completed, "{:?}", s.error);
+    assert_eq!(requests.lock().unwrap().len(), 106);
+    assert!(s.pending.is_empty());
+    assert_eq!(rt.store.calls(&s.id).unwrap().len(), 105);
     let id = s.id.clone();
     drop(rt);
-    cfg.session_limits.max_requests = Some(2);
-    let rt = Runtime::open(w.clone(), cfg.clone()).await.unwrap();
+    let rt = Runtime::open(w, cfg).await.unwrap();
     let mut s: Session = rt.store.load(&id).unwrap();
-    s.status = Status::Ready;
+    rt.input(&mut s, "Continue this saved session").unwrap();
     rt.run(&mut s, None, &events().0, &CancellationToken::new())
         .await
         .unwrap();
     assert_eq!(s.status, Status::Completed);
-    assert!(s.pending.is_empty());
-    assert_eq!(
-        rt.store.call_result(&id, "read").unwrap().unwrap().0,
-        "completed"
+    assert_eq!(requests.lock().unwrap().len(), 107);
+    assert_eq!(s.request_ledger.unwrap().requests.len(), 107);
+    server.abort();
+}
+
+#[tokio::test]
+async fn manual_cancellation_stops_long_running_chat_and_preserves_completed_tools() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let (_dir, w) = fixture();
+    let count = Arc::new(AtomicUsize::new(0));
+    let reached = Arc::new(tokio::sync::Notify::new());
+    async fn handler(
+        State((count, reached)): State<(Arc<AtomicUsize>, Arc<tokio::sync::Notify>)>,
+    ) -> impl IntoResponse {
+        let n = count.fetch_add(1, Ordering::SeqCst) + 1;
+        if n == 41 {
+            reached.notify_one();
+            std::future::pending::<()>().await;
+        }
+        (
+            [("content-type", "text/event-stream")],
+            chat(
+                "",
+                vec![call(
+                    0,
+                    &format!("read-{n}"),
+                    "read_document",
+                    json!({"path":"00_Governance/Settings.md"}),
+                )],
+            ),
+        )
+    }
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let cfg = config(
+        format!("http://{}/v1", listener.local_addr().unwrap()),
+        Protocol::ChatCompletions,
     );
-    assert_eq!(requests.lock().unwrap().len(), 2);
-    rt.input(&mut s, "Another turn does not reset the limit")
-        .unwrap();
-    rt.run(&mut s, None, &events().0, &CancellationToken::new())
+    let state = (count.clone(), reached.clone());
+    let server = tokio::spawn(async move {
+        axum::serve(
+            listener,
+            Router::new()
+                .route("/v1/chat/completions", post(handler))
+                .with_state(state),
+        )
         .await
-        .unwrap();
-    assert_eq!(s.status, Status::LimitReached);
-    assert_eq!(requests.lock().unwrap().len(), 2);
-    assert_eq!(s.request_ledger.unwrap().requests.len(), 2);
-    assert!(
-        w.read(&format!("90_Agent/Runs/RUN-{id}.md"))
-            .unwrap()
-            .contains("Request limit: 2")
-    );
+        .unwrap()
+    });
+    let rt = Runtime::open(w, cfg.clone()).await.unwrap();
+    let mut s = Session::new(&cfg, "prd").unwrap();
+    rt.input(&mut s, "Continue until cancelled").unwrap();
+    let cancel = CancellationToken::new();
+    let (tx, _) = events();
+    let (result, ()) = tokio::join!(rt.run(&mut s, None, &tx, &cancel), async {
+        tokio::time::timeout(std::time::Duration::from_secs(10), reached.notified())
+            .await
+            .unwrap();
+        cancel.cancel();
+    });
+    result.unwrap();
+    assert_eq!(s.status, Status::Cancelled);
+    assert_eq!(count.load(Ordering::SeqCst), 41);
+    let saved: Session = rt.store.load(&s.id).unwrap();
+    assert_eq!(saved.status, Status::Cancelled);
+    assert_eq!(rt.store.calls(&s.id).unwrap().len(), 40);
+    let ledger = saved.request_ledger.unwrap();
+    assert_eq!(ledger.requests.len(), 41);
+    assert!(matches!(
+        ledger.requests.last().unwrap().state,
+        pm_agent::budget::State::Cancelled
+    ));
     server.abort();
 }
 
@@ -329,7 +372,11 @@ async fn budget_missing_totals_block_pending_tools_until_operator_disables_guard
 #[tokio::test]
 async fn budget_failed_requests_remain_counted_without_automatic_retry() {
     let (_dir, w) = fixture();
-    let (url, _, requests, server) = server(vec!["data: invalid-json\n\n".into()]).await;
+    let (url, _, requests, server) = server(vec![
+        "data: invalid-json\n\n".into(),
+        chat("Explicitly resumed.", vec![]),
+    ])
+    .await;
     let mut cfg = config(url, Protocol::ChatCompletions);
     cfg.session_limits.max_requests = Some(1);
     let rt = Runtime::open(w, cfg.clone()).await.unwrap();
@@ -344,12 +391,13 @@ async fn budget_failed_requests_remain_counted_without_automatic_retry() {
     assert!(matches!(attempt.state, pm_agent::budget::State::Failed));
     assert!(attempt.finished_at.is_some());
     assert_eq!(attempt.usage, None);
+    assert_eq!(requests.lock().unwrap().len(), 1);
     s.status = Status::Ready;
     rt.run(&mut s, None, &events().0, &CancellationToken::new())
         .await
         .unwrap();
-    assert_eq!(s.status, Status::LimitReached);
-    assert_eq!(requests.lock().unwrap().len(), 1);
+    assert_eq!(s.status, Status::Completed);
+    assert_eq!(requests.lock().unwrap().len(), 2);
     server.abort();
 }
 
@@ -372,18 +420,9 @@ async fn budget_legacy_sessions_keep_unknown_history_and_disabled_limits_work() 
     rt.run(&mut s, None, &events().0, &CancellationToken::new())
         .await
         .unwrap();
-    assert_eq!(s.status, Status::LimitReached);
-    assert!(requests.lock().unwrap().is_empty());
-    assert!(s.request_ledger.is_none());
-    drop(rt);
-    cfg.session_limits.max_requests = None;
-    let rt = Runtime::open(w, cfg).await.unwrap();
-    s.status = Status::Ready;
-    rt.run(&mut s, None, &events().0, &CancellationToken::new())
-        .await
-        .unwrap();
     assert_eq!(s.status, Status::Completed);
     let summary = pm_agent::budget::summary(s.request_ledger.as_ref());
+    assert_eq!(requests.lock().unwrap().len(), 1);
     assert!(summary.prior_requests_unknown);
     assert_eq!(summary.reported_total_sum, Some(7));
     assert_eq!(summary.complete_total_tokens, None);

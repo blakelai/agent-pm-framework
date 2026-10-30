@@ -160,6 +160,211 @@ async fn chain_checks_actual_linked_files_citations_and_unperformed_semantic_rev
     task.abort();
 }
 
+fn staged_script(w: &Workspace) -> Vec<String> {
+    let citation = json!({"path":"01_Sources/Assets/interview.txt","sha256":hash(w.read("01_Sources/Assets/interview.txt").unwrap().as_bytes())});
+    let mut script = vec![];
+    let mut previous: Option<String> = None;
+    for (id, kind, folder, parents) in [
+        ("LANG-EVAL", "glossary", "02_Domain", json!([])),
+        ("BRD-EVAL", "brd", "04_Requirements", json!([])),
+        ("PRD-EVAL", "prd", "04_Requirements", json!(["BRD-EVAL"])),
+        (
+            "REQ-EVAL",
+            "requirement",
+            "04_Requirements",
+            json!(["PRD-EVAL"]),
+        ),
+        ("PBI-EVAL", "pbi", "05_Backlog", json!(["PRD-EVAL"])),
+    ] {
+        script.push(read_interview());
+        if let Some(path) = &previous {
+            script.push(message(vec![call(
+                "read-upstream",
+                "read_document",
+                json!({"path":path}),
+            )]));
+        }
+        let mut meta = json!({"id":id,"type":kind,"title":"Synthetic draft","language":"en","doc_status":"draft","version":1,"parents":parents,"contexts":["Access"],"owner":null});
+        if kind == "glossary" {
+            meta["context"] = json!("Access");
+        }
+        if kind == "pbi" {
+            meta["satisfies"] = json!(["REQ-EVAL"]);
+            meta["delivery_status"] = json!("proposed");
+            meta["work_type"] = json!("feature");
+        }
+        let body = if kind == "pbi" {
+            "# Synthetic draft\n\n- AC-01: Reject a duration outside 1 through 7 days.\n\n| Role | O | M | P |\n|---|---:|---:|---:|\n"
+        } else {
+            "# Synthetic draft\n\n**Access request**: A request for temporary application access. ^term-access\n"
+        };
+        let content = pm_agent::workspace::note(meta, body).unwrap();
+        let document = format!("{folder}/{id}.md");
+        script.push(message(vec![call(id,"write_draft",json!({"path":document,"content":content,"expected_hash":null,"citations":[citation.clone()]}))]));
+        script.push(message(vec![call(
+            "validate",
+            "pm",
+            json!({"command":"validate","args":[]}),
+        )]));
+        script.push(message(vec![]));
+        previous = Some(document);
+    }
+    script.push(read_interview());
+    for command in ["validate", "coverage"] {
+        script.push(message(vec![call(
+            command,
+            "pm",
+            json!({"command":command,"args":[]}),
+        )]));
+    }
+    script.push(message(vec![]));
+    script
+}
+
+#[tokio::test]
+async fn staged_workflow_uses_actual_upstream_files_and_fresh_sessions_with_per_stage_caps() {
+    let (_dir, path) = prepare("draft-stages", "en").await;
+    let w = Workspace::open(&path.join("vault")).unwrap();
+    let script = staged_script(&w);
+    let (mut cfg, requests, task) = server(script).await;
+    cfg.max_steps = 1;
+    cfg.session_limits.max_requests = Some(0);
+    let r = run(&path, cfg, 6).await;
+    assert_eq!(r.report.stages.len(), 6, "{:?}", r.report.checks);
+    assert_eq!(
+        r.report
+            .stages
+            .iter()
+            .map(|s| &s.session_id)
+            .collect::<std::collections::BTreeSet<_>>()
+            .len(),
+        6
+    );
+    assert!(
+        r.report
+            .stages
+            .iter()
+            .all(|s| s.status == Status::Completed && s.usage.recorded_attempts <= 6)
+    );
+    assert_eq!(r.report.usage.as_ref().unwrap().recorded_attempts, 28);
+    assert_eq!(requests.lock().unwrap().1.len(), 28);
+    assert_eq!(
+        r.report
+            .checks
+            .iter()
+            .find(|c| c.id == "stage_sequence")
+            .unwrap()
+            .outcome,
+        Outcome::Pass
+    );
+    assert_eq!(
+        r.report
+            .checks
+            .iter()
+            .find(|c| c.id == "connected_requirement_chain")
+            .unwrap()
+            .outcome,
+        Outcome::Pass
+    );
+    assert_eq!(
+        r.report
+            .checks
+            .iter()
+            .find(|c| c.id == "versioned_draft_citations")
+            .unwrap()
+            .outcome,
+        Outcome::Pass
+    );
+    assert_eq!(
+        r.report.mechanical_outcome,
+        Outcome::Partial,
+        "Unknown ownership remains a reported gap"
+    );
+    assert_eq!(r.report.semantic_review, Outcome::NotRun);
+    let session: Value =
+        serde_json::from_slice(&std::fs::read(path.join("stages/brd/Session.json")).unwrap())
+            .unwrap();
+    let history = session["history"].to_string();
+    assert!(
+        history.contains("LANG-EVAL"),
+        "BRD must receive actual glossary bytes through a tool read"
+    );
+    let docs: Value = serde_json::from_slice(
+        &std::fs::read(path.join("stages/glossary/Documents.json")).unwrap(),
+    )
+    .unwrap();
+    assert!(docs.get("02_Domain/LANG-EVAL.md").is_some());
+    assert!(docs.get("04_Requirements/BRD-EVAL.md").is_none());
+    assert!(evaluation::inspect(&path).unwrap().current);
+    std::fs::write(path.join("stages/glossary/Documents.json"), "{}").unwrap();
+    assert!(!evaluation::inspect(&path).unwrap().current);
+    task.abort();
+}
+
+#[tokio::test]
+async fn stages_require_their_own_post_write_checks_and_preserve_earlier_evidence() {
+    let (_dir, path) = prepare("draft-stages", "en").await;
+    let w = Workspace::open(&path.join("vault")).unwrap();
+    let mut script = staged_script(&w);
+    script.remove(7); // BRD stage omits validation; glossary validation must not substitute.
+    let (cfg, _, task) = server(script).await;
+    let r = run(&path, cfg, 6).await;
+    assert_eq!(r.report.stages.len(), 2);
+    assert_eq!(
+        r.report.stages[1]
+            .checks
+            .iter()
+            .find(|c| c.id == "stage_validate")
+            .unwrap()
+            .outcome,
+        Outcome::Fail
+    );
+    assert!(!path.join("stages/prd").exists());
+    assert!(evaluation::inspect(&path).unwrap().current);
+    task.abort();
+}
+
+#[tokio::test]
+async fn staged_cancel_before_dispatch_sends_no_request_and_keeps_later_stages_unperformed() {
+    let (_dir, path) = prepare("draft-stages", "en").await;
+    let (cfg, requests, task) = server(vec![]).await;
+    let cancel = CancellationToken::new();
+    cancel.cancel();
+    let (tx, _) = tokio::sync::mpsc::unbounded_channel();
+    let r = evaluation::run(&path, cfg, 6, 20, &tx, &cancel)
+        .await
+        .unwrap();
+    assert_eq!(r.report.session_status, Some(Status::Cancelled));
+    assert_eq!(r.report.stages.len(), 1);
+    assert_eq!(r.report.mechanical_outcome, Outcome::Partial);
+    assert!(requests.lock().unwrap().1.is_empty());
+    assert!(evaluation::inspect(&path).unwrap().current);
+    task.abort();
+}
+
+#[tokio::test]
+async fn staged_workflow_stops_at_limit_or_clarification_without_starting_later_stages() {
+    for (cap, script, status) in [
+        (1, vec![read_interview(), ask()], Status::LimitReached),
+        (
+            6,
+            vec![read_interview(), ask()],
+            Status::WaitingClarification,
+        ),
+    ] {
+        let (_dir, path) = prepare("draft-stages", "en").await;
+        let (cfg, requests, task) = server(script).await;
+        let r = run(&path, cfg, cap).await;
+        assert_eq!(r.report.stages.len(), 1);
+        assert_eq!(r.report.session_status, Some(status));
+        assert_eq!(r.report.mechanical_outcome, Outcome::Partial);
+        assert!(!path.join("stages/brd").exists());
+        assert!(requests.lock().unwrap().1.len() <= 2);
+        assert!(evaluation::inspect(&path).unwrap().current);
+        task.abort();
+    }
+}
+
 #[tokio::test]
 async fn failed_or_timed_out_provider_keeps_evidence_and_does_not_certify_unobserved_steps() {
     for script in ["data: {broken json}\n\n", "DELAY"] {
@@ -231,7 +436,7 @@ async fn preparations_are_isolated_versioned_localized_and_unexecuted() {
             let manifest: Value =
                 serde_json::from_slice(&std::fs::read(path.join("manifest.json")).unwrap())
                     .unwrap();
-            assert_eq!(manifest["fixture_version"], 2);
+            assert_eq!(manifest["fixture_version"], 3);
             assert!(
                 manifest["inputs"]
                     .as_object()
@@ -533,7 +738,7 @@ async fn cli_list_and_inspection_need_no_provider_and_path_boundaries_fail_close
         serde_json::from_slice::<Vec<Value>>(&out.stdout)
             .unwrap()
             .len(),
-        4
+        5
     );
     assert!(
         evaluation::prepare(&source(), "missing-inputs", &source().root, "en")

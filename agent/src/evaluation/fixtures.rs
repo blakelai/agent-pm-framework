@@ -4,6 +4,7 @@ pub fn cases() -> Vec<Case> {
     vec![
         Case { id: "missing-inputs".into(), title: "Missing approval rule and staffing".into(), stage: "workflow".into(), purpose: "Observe an actual unresolved question and no dependent requirements or schedule.".into() },
         Case { id: "draft-chain".into(), title: "Sourced glossary and requirement chain".into(), stage: "workflow".into(), purpose: "Observe linked glossary, BRD, PRD, requirement and PBI drafts with current citations.".into() },
+        Case { id: "draft-stages".into(), title: "Requirement workflow by stage".into(), stage: "language".into(), purpose: "Evaluate glossary, BRD, PRD, requirement, PBI and verification in separate sessions using actual preceding outputs.".into() },
         Case { id: "wiki-code-conflict".into(), title: "Wiki and implementation disagree".into(), stage: "system".into(), purpose: "Observe inspection of both pinned sources and a question instead of an invented business rule.".into() },
         Case { id: "capacity-forecast".into(), title: "Capacity shortage with an unestimated item".into(), stage: "estimate".into(), purpose: "Observe the native forecast, explicit overload and preserved unknown estimates.".into() },
     ]
@@ -103,6 +104,11 @@ pub fn seed(source: &Workspace, dest: &Workspace) -> Result<()> {
 }
 
 pub fn populate(root: &Path, w: &Workspace, case: &str, language: &str) -> Result<String> {
+    let case = if case == "draft-stages" {
+        "draft-chain"
+    } else {
+        case
+    };
     put_note(
         w,
         "00_Governance/Project.md",

@@ -2,6 +2,7 @@
 //! This is not an Agent tool and never grants approval or business acceptance.
 mod checks;
 mod fixtures;
+mod stages;
 
 use crate::{
     config::Config,
@@ -43,6 +44,8 @@ pub struct Manifest {
     pub created_at: String,
     pub prompt: String,
     pub inputs: BTreeMap<String, String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub stages: Vec<stages::Task>,
 }
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
@@ -77,6 +80,8 @@ pub struct Report {
     pub max_total_tokens: Option<u64>,
     pub max_requests: Option<u64>,
     pub timeout_seconds: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub limits_scope: Option<String>,
     pub started_at: Option<String>,
     pub finished_at: Option<String>,
     pub mechanical_outcome: Outcome,
@@ -86,6 +91,8 @@ pub struct Report {
     pub outputs: BTreeMap<String, String>,
     pub evidence_files: BTreeMap<String, String>,
     pub note: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub stages: Vec<stages::Observation>,
 }
 #[derive(Debug, Serialize)]
 pub struct Inspection {
@@ -155,7 +162,7 @@ fn manifest(root: &Path) -> Result<(Manifest, String)> {
     let bytes = read(root, "manifest.json")?;
     let m: Manifest = serde_json::from_slice(&bytes)?;
     ensure!(
-        m.format == FORMAT && m.synthetic && matches!(m.fixture_version, 1 | 2),
+        m.format == FORMAT && m.synthetic && matches!(m.fixture_version, 1..=3),
         "Unsupported evaluation manifest"
     );
     ensure!(
@@ -168,6 +175,7 @@ fn manifest(root: &Path) -> Result<(Manifest, String)> {
         matches!(m.language.as_str(), "en" | "zh-TW"),
         "Unsupported evaluation language"
     );
+    stages::validate_plan(&m)?;
     Ok((m, hash(&bytes)))
 }
 fn save(root: &Path, report: &Report) -> Result<()> {
@@ -192,6 +200,12 @@ fn save(root: &Path, report: &Report) -> Result<()> {
                 .replace('|', "\\|")
                 .replace(['\n', '\r'], " ")
         ));
+    }
+    if !report.stages.is_empty() {
+        body.push_str("\n## Stage observations\n\nEach stage uses a fresh session and the actual files left by the previous stage. Request and timeout limits apply separately to each stage. A pause or failed stage contract stops the workflow; later stages remain unperformed.\n\n| Stage | Status | Outcome | Requests | Evidence |\n|---|---|---|---:|---|\n");
+        for stage in &report.stages {
+            body.push_str(&format!("| {} | {:?} | {:?} | {} | [Session](stages/{}/Session.json), [Actions](stages/{}/Actions.json), [Documents](stages/{}/Documents.json) |\n",stage.id,stage.status,stage.outcome,stage.usage.recorded_attempts,stage.id,stage.id,stage.id));
+        }
     }
     body.push_str("\n## Human review remains unperformed\n\nReview source-to-claim fidelity, terminology and context boundaries, missing-information sufficiency, actual prose language, acceptance criteria, and unsupported business assertions. Mechanical checks cannot establish these outcomes. Record actual reviewer, time, scope and evidence separately; do not infer approval.\n\n[Task](Task.md) · [Manifest](manifest.json) · [Structured report](report.json)\n\nUse `pm-agent eval inspect DIRECTORY` to check freshness after external edits. These are synthetic observations, not real-project acceptance. Raw session and tool evidence can contain private instructions or service responses; review before sharing. A prepared or interrupted run has no completed outcome.\n");
     if report.evidence_files.contains_key("Session.json") {
@@ -262,20 +276,21 @@ fn prepare_local(
     fs::create_dir(&w.root)?;
     fixtures::seed(source, &w)?;
     let prompt = fixtures::populate(dir.path(), &w, &case.id, language)?;
-    crate::skills::Catalog::discover(&w)?.resolve(&[format!(
-        "pm-{}",
-        if case.stage == "estimate" {
-            "estimate"
-        } else if case.stage == "system" {
-            "system-analysis"
-        } else {
-            "workflow"
-        }
-    )])?;
+    let skill = crate::runtime::STAGES
+        .iter()
+        .find(|(stage, _, _)| *stage == case.stage)
+        .context("Unknown evaluation Skill stage")?
+        .1;
+    crate::skills::Catalog::discover(&w)?.resolve(&[skill.to_owned()])?;
+    let stage_plan = if case.id == "draft-stages" {
+        stages::tasks()
+    } else {
+        vec![]
+    };
     let m = Manifest {
         format: FORMAT.into(),
         case,
-        fixture_version: 2,
+        fixture_version: 3,
         application_version: env!("CARGO_PKG_VERSION").into(),
         runner_sha256: runner_hash()?,
         synthetic: true,
@@ -283,6 +298,7 @@ fn prepare_local(
         created_at: chrono::Utc::now().to_rfc3339(),
         prompt,
         inputs: inventory(dir.path())?,
+        stages: stage_plan,
     };
     let root = Workspace {
         root: dir.path().to_owned(),
@@ -293,7 +309,16 @@ fn prepare_local(
         json!({"type":"Evaluation task","title":m.case.title,"language":"en"}),
         &format!(
             "# Synthetic evaluation task\n\n{}\n\n## Submitted task (original wording)\n\n{}",
-            m.case.purpose, m.prompt
+            m.case.purpose,
+            if m.stages.is_empty() {
+                m.prompt.clone()
+            } else {
+                m.stages
+                    .iter()
+                    .map(|s| format!("### {} ({})\n\n{}", s.id, s.stage, s.prompt))
+                    .collect::<Vec<_>>()
+                    .join("\n\n")
+            }
         ),
     )?;
     let bytes = serde_json::to_vec_pretty(&m)?;
@@ -316,6 +341,7 @@ fn prepare_local(
             max_total_tokens: None,
             max_requests: None,
             timeout_seconds: None,
+            limits_scope: None,
             started_at: None,
             finished_at: None,
             mechanical_outcome: Outcome::NotRun,
@@ -328,6 +354,7 @@ fn prepare_local(
                 hash(&read(dir.path(), "Task.md")?),
             )]),
             note: "Prepared only. No model request or semantic review has occurred.".into(),
+            stages: vec![],
         },
     )?;
     Ok(dir.keep())
@@ -411,17 +438,11 @@ pub async fn run(
     );
     crate::config::validate_endpoint(&config.active()?.base_url)?;
     ensure!(
-        (1..=100).contains(&config.max_steps) && config.active()?.timeout_seconds > 0,
+        config.active()?.timeout_seconds > 0,
         "Invalid runtime limits"
     );
     // No configured external tool process is started, and no call is auto-approved.
     config.mcp.clear();
-    config.session_limits.max_requests = Some(
-        config
-            .session_limits
-            .max_requests
-            .map_or(max_requests, |n| n.min(max_requests)),
-    );
     let mut session = Session::new(&config, &m.case.stage)?;
     let mut report = observed.report;
     report.state = "running".into();
@@ -430,34 +451,66 @@ pub async fn run(
     report.configured_provider = Some(config.provider.clone());
     report.configured_model = Some(config.active()?.model.clone());
     report.provider_fingerprint = Some(crate::runtime::fingerprint(&config)?);
-    report.max_steps = Some(config.max_steps);
+    report.max_steps = None;
     report.provider_timeout_seconds = Some(config.active()?.timeout_seconds);
     report.max_total_tokens = config.session_limits.max_total_tokens;
-    report.max_requests = config.session_limits.max_requests;
+    report.max_requests = Some(max_requests);
     report.timeout_seconds = Some(timeout_seconds);
-    report.note="Configured-provider execution. MCP is disabled; no question is answered and no pending action is approved automatically. This is not provider-wide certification.".into();
+    report.limits_scope = Some("stage".into());
+    report.note="Configured-provider execution. Request and timeout bounds apply per evaluation stage, not to interactive use. Stages consume actual preceding files in fresh sessions. MCP is disabled; no question is answered and no pending action is approved automatically. This is not provider-wide certification.".into();
     save(&root, &report)?;
-    let result = {
-        let execution = async {
-            let runtime = Runtime::open(w.clone(), config).await?;
-            runtime.input(&mut session, &m.prompt)?;
-            runtime.run(&mut session, None, events, cancel).await?;
-            runtime.store.calls(&session.id)
-        };
-        tokio::pin!(execution);
-        tokio::select! {
-            result = &mut execution => result,
-            _ = tokio::time::sleep(std::time::Duration::from_secs(timeout_seconds)) => { cancel.cancel(); execution.await }
+    let mut calls = vec![];
+    let mut ledger = crate::budget::Ledger::default();
+    let result: Result<()> = async {
+        let runtime = Runtime::open_for_evaluation(w.clone(), config.clone(), max_requests).await?;
+        let plan = if m.stages.is_empty() {
+            vec![stages::Task { id:m.case.id.clone(),stage:m.case.stage.clone(),prompt:m.prompt.clone() }]
+        } else { m.stages.clone() };
+        for (index, task) in plan.iter().enumerate() {
+            if index > 0 {
+                session = Session::new(&config, &task.stage)?;
+            }
+            report.session_id = Some(session.id.clone());
+            // Persist the current session ID before dispatch so interruption in
+            // a later stage points recovery at that stage, not its predecessor.
+            report.outputs = inventory(&root)?;
+            save(&root, &report)?;
+            let _ = events.send(crate::provider::Event::Notice(format!("Evaluation stage {}/{}: {}",index+1,plan.len(),task.id)));
+            runtime.input(&mut session, &task.prompt)?;
+            let signal = cancel.child_token();
+            let execution_result = {
+                let execution = runtime.run(&mut session, None, events, &signal);
+                tokio::pin!(execution);
+                tokio::select! {
+                    result = &mut execution => result,
+                    _ = tokio::time::sleep(std::time::Duration::from_secs(timeout_seconds)) => { signal.cancel(); execution.await }
+                }
+            };
+            if let Some(saved) = &session.request_ledger {
+                ledger.prior_requests_unknown |= saved.prior_requests_unknown;
+                ledger.requests.extend(saved.requests.iter().cloned());
+            } else { ledger.prior_requests_unknown = true; }
+            let current = runtime.store.calls(&session.id)?;
+            calls.extend(current.iter().cloned());
+            execution_result?;
+            if !m.stages.is_empty() {
+                let observation = stages::observe(&root,&m,task,&session,&calls,&current)?;
+                let advance = stages::can_advance(&observation);
+                stages::save_evidence(&root,task,&session,&current,&mut report)?;
+                report.stages.push(observation);
+                report.outputs = inventory(&root)?;
+                report.usage = Some(crate::budget::summary(Some(&ledger)));
+                save(&root,&report)?;
+                if !advance || cancel.is_cancelled() { break; }
+            }
         }
-    };
-    let (calls, error) = match result {
-        Ok(calls) => (calls, None),
-        Err(e) => (vec![], Some(e.to_string())),
-    };
+        Ok(())
+    }.await;
+    let error = result.err().map(|e| e.to_string());
     report.state = "finished".into();
     report.finished_at = Some(chrono::Utc::now().to_rfc3339());
     report.session_status = Some(session.status.clone());
-    report.usage = Some(crate::budget::summary(session.request_ledger.as_ref()));
+    report.usage = Some(crate::budget::summary(Some(&ledger)));
     let files = Workspace { root: root.clone() };
     for (path, bytes) in [
         ("Session.json", serde_json::to_vec_pretty(&session)?),
@@ -467,6 +520,11 @@ pub async fn run(
         report.evidence_files.insert(path.into(), hash(&bytes));
     }
     report.checks=checks::evaluate(&root,&m,&session,&calls).unwrap_or_else(|_|vec![Check { id:"evidence_inspection".into(),outcome:Outcome::Fail,evidence:"Evidence could not be inspected consistently; no successful observation is inferred.".into() }]);
+    if !m.stages.is_empty() {
+        let completed =
+            report.stages.len() == m.stages.len() && report.stages.iter().all(stages::can_advance);
+        report.checks.push(Check {id:"stage_sequence".into(),outcome:if completed {Outcome::Pass}else if session.status==Status::Completed && !cancel.is_cancelled() {Outcome::Fail}else{Outcome::NotRun},evidence:format!("{} of {} stages observed; every stage requires its actual output contract before advancing. Each stage has a separate session and evaluation-only request cap.",report.stages.len(),m.stages.len())});
+    }
     if error.is_some() {
         let bytes = serde_json::to_vec_pretty(&json!({"execution_error":error}))?;
         put(&files, "Execution-error.json", &bytes)?;

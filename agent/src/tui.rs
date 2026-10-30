@@ -403,7 +403,8 @@ fn dispatch(
     if input == "/budget" {
         let config = Config::read(config_path)?;
         app.notice(
-            &crate::budget::Report::new(&config.session_limits, app.session.as_ref()).markdown(),
+            &crate::budget::Report::new(&config.interactive_limits(), app.session.as_ref())
+                .markdown(),
         );
         return Ok(None);
     }
@@ -648,8 +649,8 @@ command = "this-command-must-not-run"
                 .unwrap()
                 .is_none()
         );
-        assert!(app.output.contains("Request limit: 0"));
-        assert!(app.output.contains("limit reached"));
+        assert!(app.output.contains("Request limit: not set"));
+        assert!(!app.output.contains("limit reached"));
         assert_eq!(app.input.text, "保留中文草稿");
         assert_eq!(app.usage.unwrap().input_tokens, Some(77));
         assert_eq!(serde_json::to_value(&app.session).unwrap(), session);

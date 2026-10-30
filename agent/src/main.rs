@@ -278,7 +278,7 @@ async fn main() -> Result<()> {
             println!(
                 "{}",
                 serde_json::to_string_pretty(&pm_agent::budget::Report::new(
-                    &config.session_limits,
+                    &config.interactive_limits(),
                     saved.as_ref()
                 ))?
             );

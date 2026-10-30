@@ -14,7 +14,7 @@ The operator `eval` commands observe the actual Agent runtime against fixed synt
 pm-agent eval list
 mkdir -p /absolute/evaluations
 pm-agent --vault /absolute/framework eval prepare \
-  --case missing-inputs --output /absolute/evaluations --language en
+  --case draft-stages --output /absolute/evaluations --language en
 
 # Use the directory printed by prepare; credentials stay in environment variables.
 pm-agent --config /absolute/operator/config.toml eval run \
@@ -27,11 +27,11 @@ pm-agent eval inspect /absolute/evaluations/pm-eval-ID
 
 Select `en` or `zh-TW` for fixture project prose. Omitting the option uses the seed's language only when supported. Agent guidance remains English; original evidence retains its wording. The draft-chain task is submitted in Chinese to exercise Settings independently of chat language. Metadata checks cannot establish actual prose quality.
 
-Fixture version 2 includes the named system, domain, verification and application guides referenced by standard Skills/Playbooks. Its synthetic source index and context map are generated locally; customer indexes, charters, records and custom application files are not copied. A reference-closure test checks that linked local Markdown guides are present and readable. The source-reading task points to `list_source_files` for actual imported and snapshot paths. Version 1 reports remain inspectable and are never rewritten or rescored automatically.
+Fixture version 2 introduced the named system, domain, verification and application guides referenced by standard Skills/Playbooks. Its synthetic source index and context map are generated locally; customer indexes, charters, records and custom application files are not copied. A reference-closure test checks that linked local Markdown guides are present and readable. The source-reading task points to `list_source_files` for actual imported and snapshot paths. Fixture version 3 pins the staged task sequence. Version 1 and 2 reports remain inspectable and are never rewritten or rescored automatically.
 
 `run` is the explicit network action and requires the operator-selected configuration. Its active endpoint, model and protocol receive only the isolated Vault through the normal runtime. Configured MCP servers are disabled; questions remain unanswered and calls requiring confirmation remain pending. There are no automatic approvals, retries, protocol fallbacks or model substitutions.
 
-The default request cap is 32, within 1 through 100; a lower configured session cap still applies. Existing reported-token limits and `max_steps` remain effective. The overall timeout defaults to 600 seconds, within 1 through 3600. Ctrl+C requests cancellation. A service may continue an already dispatched request, and a started local worker may finish after cancellation. Unknown tool outcomes retain the normal reconciliation boundary.
+Normal interactive execution has no request-count cap. Evaluations use a separate test-only cap: 32 requests by default, within 1 through 100, and a timeout of 600 seconds, within 1 through 3600. For draft-stages these bounds apply to each stage independently, not to the workflow total. Legacy max_steps and configured max_requests are ignored; an explicitly configured reported-token guard still applies to each stage session. Ctrl+C requests cancellation. A service may continue an already dispatched request, and a started local worker may finish after cancellation. Unknown tool outcomes retain the normal reconciliation boundary.
 
 Preparation pins the evaluator executable's SHA-256. Run with that binary; after changing builds, prepare a new case. Changed inputs, an already started evaluation or an interrupted running record prevent replay. Repeat with a new directory and retain prior results. Explicitly resuming the saved session through ordinary Chat does not rescore the frozen observation; later file changes make it historical.
 
@@ -40,11 +40,20 @@ Preparation pins the evaluator executable's SHA-256. Run with that binary; after
 | Case | Supplied inputs and required observations |
 |---|---|
 | missing-inputs | Missing approval rule and staffing: a persisted open question, clarification pause and no dependent requirements/PBIs or completed forecast. |
-| draft-chain | A narrow access-duration rule: linked glossary, BRD, PRD, atomic requirement and PBI drafts, current source citations, unknown unscheduled effort, validation and coverage. |
+| draft-stages | Six separate sessions for glossary, BRD, PRD, atomic requirement, PBI and verification. Actual preceding files are retained; each stage checks its artifacts and current validation evidence. |
+| draft-chain | Historical single-session comparison case for the same chain. Use draft-stages for routine workflow validation. |
 | wiki-code-conflict | The Wiki says 30 days while code accepts 1 through 7: inspect both pinned sources and ask for the undecided future business rule. |
 | capacity-forecast | Fictional allocations, an overload and an unestimated item: execute the native forecast and preserve supplied inputs and unknowns. |
 
 Checker definitions and expected calculations remain outside the Agent's Vault. The provider receives the task, instructions and raw fixtures, not the grading implementation. Automated protocol fixtures exercise this same runtime, but scripted responses do not demonstrate model reasoning. Live observations apply only to the configured route and run.
+
+## Stage-by-stage workflow
+
+Use draft-stages to observe glossary → BRD → PRD → requirement → PBI → verification. The manifest pins all six task prompts and stage Skills before execution. Each stage starts a fresh session in the same isolated Vault, reads actual preceding outputs and receives its own test bounds. No synthetic replacement for a preceding result is injected. The evaluator records each session, tool ledger, checks, service-reported usage and a snapshot of the authored drafts under `stages/<stage>/`.
+
+A stage must finish its requested document write and run validation after its last write before advancing. It cannot produce later-stage drafts early. Final verification must run both validation and coverage after corrections. Missing ownership and source-review findings stay visible: validation findings alone may be carried forward, but a failed output contract, clarification, approval, request cap, timeout or cancellation stops later stages. No user answers or approvals are generated to cross a boundary.
+
+The report lists executed stages and their separate Session IDs. Aggregate request counts and reported totals cover all executed stages; they are not context estimates. Root Session.json is the last observed session and Actions.json combines executed calls. Stage document snapshots remain historical evidence even when a later review corrects a live draft. Inspection checks their hashes. A stopped evaluation is not replayed: prepare a separate observation and retain the prior one.
 
 ## Read outcomes and evidence
 

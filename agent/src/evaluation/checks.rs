@@ -172,7 +172,8 @@ pub(super) fn evaluate(
             | Status::LimitReached
             | Status::Cancelled
             | Status::NeedsReconciliation
-    );
+    ) || (matches!(m.case.id.as_str(), "draft-chain" | "draft-stages")
+        && s.status == Status::WaitingClarification);
     if paused {
         out.push(Check {
             id: "execution_boundary".into(),
@@ -191,7 +192,7 @@ pub(super) fn evaluate(
                 out.push(checked("both_pinned_sources_inspected",read_path(calls,|p|p.contains("03_Systems/Snapshots/")&&p.ends_with("/openwiki/Access.md"))&&read_path(calls,|p|p.contains("03_Systems/Snapshots/")&&p.ends_with("/src/access.rs")),"Requires successful reads of both the pinned Wiki and code, not merely the repository catalog"));
             }
         }
-        "draft-chain" => {
+        "draft-chain" | "draft-stages" => {
             out.push(checked(
                 "completed_turn",
                 s.status == Status::Completed,

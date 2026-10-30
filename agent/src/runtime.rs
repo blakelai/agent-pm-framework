@@ -102,9 +102,27 @@ pub struct Runtime {
     pub store: Store,
     provider: Provider,
     mcp: Mcp,
+    limits: crate::budget::Limits,
 }
 impl Runtime {
     pub async fn open(workspace: Workspace, config: Config) -> Result<Self> {
+        let limits = config.interactive_limits();
+        Self::open_with_limits(workspace, config, limits).await
+    }
+    pub(crate) async fn open_for_evaluation(
+        workspace: Workspace,
+        config: Config,
+        max_requests: u64,
+    ) -> Result<Self> {
+        let mut limits = config.interactive_limits();
+        limits.max_requests = Some(max_requests);
+        Self::open_with_limits(workspace, config, limits).await
+    }
+    async fn open_with_limits(
+        workspace: Workspace,
+        config: Config,
+        limits: crate::budget::Limits,
+    ) -> Result<Self> {
         let store = Store::open(&workspace.path(".pm-agent/runtime.sqlite3")?)?;
         let provider = Provider::new(config.active()?.clone())?;
         let mcp = Mcp::connect(&config.mcp).await?;
@@ -114,6 +132,7 @@ impl Runtime {
             store,
             provider,
             mcp,
+            limits,
         })
     }
     pub fn save(&self, s: &Session) -> Result<()> {
@@ -410,7 +429,7 @@ impl Runtime {
         let mut specs = tools::specs();
         specs.extend_from_slice(self.mcp.specs());
         specs.push(ToolSpec{name:"resolve_clarification".into(),description:"Resolve a recorded question only after its actual user answer provides sufficient information. Explain the resolution in the project language. No invented answers.".into(),parameters:json!({"type":"object","properties":{"path":{"type":"string"},"resolution":{"type":"string"}},"required":["path","resolution"],"additionalProperties":false})});
-        for _ in 0..self.config.max_steps {
+        loop {
             if cancel.is_cancelled() {
                 bail!("Cancelled");
             }
@@ -637,12 +656,9 @@ impl Runtime {
                 return Ok(());
             }
         }
-        bail!("Step limit reached; inspect saved work and resume explicitly")
     }
     fn pause_for_limit(&self, s: &mut Session, events: &UnboundedSender<Event>) -> Result<bool> {
-        if let Some(reason) =
-            crate::budget::blocked(&self.config.session_limits, s.request_ledger.as_ref())
-        {
+        if let Some(reason) = crate::budget::blocked(&self.limits, s.request_ledger.as_ref()) {
             s.status = Status::LimitReached;
             s.error = Some(reason.clone());
             self.save(s)?;
@@ -747,7 +763,7 @@ impl Runtime {
         );
         body.push('\n');
         body.push_str(
-            &crate::budget::Report::new(&self.config.session_limits, Some(s))
+            &crate::budget::Report::new(&self.limits, Some(s))
                 .markdown()
                 .replacen("# Session limits", "## Session limits", 1),
         );
