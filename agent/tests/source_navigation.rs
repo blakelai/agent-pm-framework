@@ -17,6 +17,21 @@ async fn fixture() -> (tempfile::TempDir, Workspace) {
 }
 
 #[tokio::test]
+async fn canonical_pbi_template_satisfies_the_actual_draft_write_contract() {
+    let (_parent, w) = fixture().await;
+    let content = w
+        .read("80_Templates/PBI.md")
+        .unwrap()
+        .replace("PBI-NEW", "PBI-001");
+    let source = "01_Sources/Assets/interview.txt";
+    let args = json!({"path":"05_Backlog/PBI-001.md","content":content,"expected_hash":null,"citations":[{"path":source,"sha256":hash(w.read(source).unwrap().as_bytes())}]});
+    let result = tools::execute(&w, "write_draft", &args)
+        .await
+        .expect("The canonical PBI blueprint must be a writable draft");
+    assert_eq!(result["status"], "draft_saved");
+}
+
+#[tokio::test]
 async fn registered_sources_expose_actual_snapshot_paths_for_reading() {
     let (_parent, w) = fixture().await;
     // Discovery must continue from captured bytes when the live repository moves.

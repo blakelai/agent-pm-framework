@@ -10,6 +10,15 @@ use std::{
 use walkdir::WalkDir;
 
 pub const MAX_FILE: u64 = 2 * 1024 * 1024;
+pub(crate) const DRAFT_ROOTS: &[&str] = &[
+    "02_Domain/",
+    "03_Systems/Analysis/",
+    "04_Requirements/",
+    "05_Backlog/",
+    "07_Decisions/",
+    "08_Verification/Cases/",
+    "09_Operations/",
+];
 // Explicit knowledge documents outside the project folders. Never grant access
 // to application code, build outputs, configuration or arbitrary sibling files.
 pub(crate) const GUIDES: &[&str] = &[
@@ -281,18 +290,9 @@ impl Workspace {
         citations: &[Value],
     ) -> Result<String> {
         ensure!(
-            [
-                "02_Domain/",
-                "03_Systems/Analysis/",
-                "04_Requirements/",
-                "05_Backlog/",
-                "07_Decisions/",
-                "08_Verification/Cases/",
-                "09_Operations/"
-            ]
-            .iter()
-            .any(|p| relative.starts_with(p)),
-            "Agent writes are restricted to project drafts; use PM tools for controlled operations"
+            DRAFT_ROOTS.iter().any(|p| relative.starts_with(p)),
+            "Agent writes are restricted to project drafts under: {}. Choose a permitted Markdown path; use PM tools for controlled operations.",
+            DRAFT_ROOTS.join(", ")
         );
         ensure!(
             relative.ends_with(".md") && content.len() <= MAX_FILE as usize,
@@ -316,7 +316,7 @@ impl Workspace {
         ensure!(body.starts_with("# "), "Draft needs a readable heading");
         ensure!(
             m["doc_status"] == "draft",
-            "Agent document writes must be drafts"
+            "Agent document writes must be drafts: set doc_status to draft. For PBIs, delivery_status proposed is a separate field."
         );
         for key in [
             "verified",
