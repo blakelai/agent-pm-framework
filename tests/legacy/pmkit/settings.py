@@ -46,7 +46,7 @@ def update(root, document_language):
 
 def is_agent_document(relative_path):
     path = Path(relative_path).as_posix()
-    return path in AGENT_REFERENCES or path.startswith(('.agents/', '90_Agent/', '80_Templates/'))
+    return path in AGENT_REFERENCES or path.startswith(('.agents/', '90_Agent/', '80_Templates/', 'agent/'))
 
 
 def required_language(root, relative_path):

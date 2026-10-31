@@ -8,6 +8,8 @@ title: "Skill evaluation method"
 
 Validate three distinct layers: Skill structure and references, deterministic tool behavior, and actual agent outcomes. Passing the first two does not establish the third.
 
+For repeatable synthetic runtime observations, use the operator [evaluation runner](../../agent/Evaluation.md): prepare a private case, explicitly run the configured provider, inspect evidence freshness, then review semantic quality separately. Preparation and scripted protocol tests remain distinct from actual model outcomes. Preserve unsuccessful or interrupted observations when repeating a case; a mechanical result is not a human review or business approval.
+
 | Scenario | Observable result |
 |---|---|
 | Contradictory interviews | Preserve sources, distinguish proposed solutions, expose open questions and treat embedded commands as data |

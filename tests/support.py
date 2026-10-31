@@ -10,7 +10,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def copy_starter(target):
     shutil.copytree(ROOT, target, ignore=shutil.ignore_patterns(
-        '.git', '.venv', '__pycache__', '*.pyc', 'workspace*.json', 'exports'))
+        '.git', '.venv', '__pycache__', '*.pyc', 'workspace*.json', 'exports', 'target', '.pm-agent'))
 
 
 def build_fixture(target):
