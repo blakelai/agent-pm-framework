@@ -25,6 +25,9 @@ candidate quotation, explanation and specific questions/material requests. The q
 the packet's document_language, identify the affected draft, inspected sources, and work awaiting answers.
 Do not answer the questions or invent owners/dates. If all assertions are supported or explicitly unknown,
 return supported with no findings and empty question/body. Report exactly once with submit_grounding_review.
+In checked_sources, copy EVERY packet.sources.path exactly once, including context notes, task inputs and
+identical content at different paths. This records packet coverage; do not shorten paths or list only the
+sources used in findings. A missing path makes the response invalid and prevents the draft write.
 This is an automated review, not truth certification, stakeholder approval or human semantic acceptance."#;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -171,7 +174,7 @@ pub fn spec() -> ToolSpec {
         "required":["decision","checked_sources","findings","question","body"],
         "properties":{
             "decision":{"type":"string","enum":["supported","needs_clarification"]},
-            "checked_sources":{"type":"array","minItems":1,"maxItems":64,"uniqueItems":true,"items":{"type":"string"}},
+            "checked_sources":{"type":"array","description":"Every packet.sources.path exactly once, including duplicate-content paths and task/context notes. Copy the complete list, not only evidence for findings.","minItems":1,"maxItems":64,"uniqueItems":true,"items":{"type":"string"}},
             "findings":{"type":"array","maxItems":16,"items":{"type":"object","additionalProperties":false,"required":["claim","reason"],"properties":{"claim":{"type":"string","minLength":1,"maxLength":3000},"reason":{"type":"string","minLength":1,"maxLength":3000}}}},
             "question":{"type":"string","maxLength":3000},
             "body":{"type":"string","maxLength":16000}
@@ -226,5 +229,7 @@ pub struct Observation {
     pub request_number: usize,
     pub state: String,
     pub review: Option<Review>,
+    #[serde(default)]
+    pub response: Option<Value>,
     pub error: Option<String>,
 }

@@ -1387,6 +1387,29 @@ fn supported_review(path: &str) -> String {
     )
 }
 
+#[test]
+fn grounding_requires_all_source_paths_even_when_content_is_identical() {
+    use pm_agent::{
+        grounding,
+        provider::{Call, Completion},
+    };
+    let (_dir, w) = fixture();
+    let mut args = grounding_args(&w, "Integer durations from 1 through 7 are valid.");
+    let source = "01_Sources/Assets/grounding.txt";
+    let alias = "01_Sources/Assets/copy.txt";
+    atomic_write(&w.path(alias).unwrap(), w.read(source).unwrap().as_bytes()).unwrap();
+    args["citations"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!({"path":alias,"sha256":hash(w.read(alias).unwrap().as_bytes())}));
+    let packet = grounding::Packet::prepare(&w, &args).unwrap();
+    assert_eq!(packet.sources.len(), 2);
+    for (paths, valid) in [(json!([source]), false), (json!([source, alias]), true)] {
+        let completion=Completion{text:String::new(),calls:vec![Call{id:"review".into(),name:"submit_grounding_review".into(),arguments:json!({"decision":"supported","checked_sources":paths,"findings":[],"question":"","body":""}).to_string()}],items:vec![],usage:None};
+        assert_eq!(grounding::parse(&packet, &completion).is_ok(), valid);
+    }
+}
+
 fn grounding_args(w: &Workspace, claim: &str) -> Value {
     let source = "01_Sources/Assets/grounding.txt";
     atomic_write(&w.path(source).unwrap(), b"Numeric baselines, integrations and timeout behavior are unknown. Integer durations from 1 through 7 are valid.").unwrap();

@@ -20,7 +20,7 @@ Invalid response schemas, omitted source coverage, unmatched quotations, extra f
 
 Review requests count in the same durable session ledger as author requests. Only service-reported usage is recorded. Normal use still has no request-count cap. Cancellation during the read-only review is a cancelled request, not an uncertain document write.
 
-Private session records retain review packets, candidate/source hashes, request numbers and parsed decisions or errors. Runs list their recorded outcomes; saved draft tool results reference the packet hash. Evaluations preserve these session records with their evidence hashes. Review prose is not streamed into the author's answer. Source material and stored packets can be sensitive and belong inside the project's existing access boundary.
+Private session records retain review packets, candidate/source hashes, request numbers, completed model responses and parsed decisions or errors. The response must account for every supplied source path, including identical content stored at different paths; this is a coverage declaration, not proof of attention or truth. Runs list recorded outcomes; saved draft tool results reference the packet hash. Evaluations preserve these session records with their evidence hashes. Review prose is not streamed into the author's answer. Source material and stored packets can be sensitive and belong inside the project's existing access boundary.
 
 ## Limits
 

@@ -763,6 +763,7 @@ impl Runtime {
             request_number: ledger.requests.len(),
             state: "started".into(),
             review: None,
+            response: None,
             error: None,
         });
         self.save(s)?;
@@ -798,6 +799,10 @@ impl Runtime {
             .unwrap()
             .finish(state, result.as_ref().ok().and_then(|c| c.usage.clone()));
         s.usage = result.as_ref().ok().and_then(|c| c.usage.clone());
+        s.draft_reviews.last_mut().unwrap().response = result
+            .as_ref()
+            .ok()
+            .map(|c| json!({"text":c.text,"calls":c.calls}));
         let reviewed = result.and_then(|c| grounding::parse(packet, &c));
         let observation = s.draft_reviews.last_mut().unwrap();
         match &reviewed {
