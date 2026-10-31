@@ -73,7 +73,7 @@ The manifest records task, fixture/application versions, evaluator hash, languag
 
 ## Human review and real projects
 
-Fixture version 4 adds unsupported-claims and requires recorded automated review receipts for successful draft-chain/staged writes. Review requests and service usage are included in each stage's totals. Private Session.json includes the exact review packets and decisions; a receipt proves execution of the guard, not semantic correctness. Versions 1 through 3 remain inspectable without rescoring. See [source-to-claim review](Grounding.md).
+Fixture version 4 adds unsupported-claims and requires recorded automated review receipts for successful draft-chain/staged writes. Review requests and service usage are included in each stage's totals. Private Session.json includes the exact review packets, per-unit source quotations and decisions; a receipt proves execution of the guard, not semantic correctness. Versions 1 through 3 remain inspectable without rescoring. See [source-to-claim review](Grounding.md).
 
 Review source-to-claim fidelity, context-specific terminology, actual prose language, missing-information sufficiency, testable acceptance criteria and forecast explanations. Record the actual reviewer, time, scope, evidence and findings through the project's review process. Synthetic cases do not establish real staffing commitments, readiness or releases.
 

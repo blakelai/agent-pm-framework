@@ -703,7 +703,7 @@ async fn tool_roundtrip_creates_a_sourced_draft_and_preserves_hashes() {
         "# Draft\n\nThe charter requires confirmed project inputs.",
     )
     .unwrap();
-    let (url,_,requests,server)=server(vec![chat("",vec![call(0,"read","read_document",json!({"path":"00_Governance/Project.md"}))]),chat("",vec![call(0,"write","write_draft",json!({"path":"04_Requirements/PRD/PRD-TEST.md","content":draft,"expected_hash":null,"citations":[{"path":"00_Governance/Project.md","sha256":hash(source.as_bytes())}]}))]),supported_review("00_Governance/Project.md"),chat("Draft saved; semantic review remains necessary.",vec![])]).await;
+    let (url,_,requests,server)=server(vec![chat("",vec![call(0,"read","read_document",json!({"path":"00_Governance/Project.md"}))]),chat("",vec![call(0,"write","write_draft",json!({"path":"04_Requirements/PRD/PRD-TEST.md","content":draft,"expected_hash":null,"citations":[{"path":"00_Governance/Project.md","sha256":hash(source.as_bytes())}]}))]),supported_review("00_Governance/Project.md", &draft, &source),chat("Draft saved; semantic review remains necessary.",vec![])]).await;
     let cfg = config(url, Protocol::ChatCompletions);
     let runtime = Runtime::open(w.clone(), cfg.clone()).await.unwrap();
     let mut s = Session::new(&cfg, "prd").unwrap();
@@ -754,7 +754,11 @@ async fn scoped_question_allows_explicit_independent_work_but_blocks_other_sessi
     let args = json!({"path":"04_Requirements/PRD-FREE.md","content":content,"expected_hash":null,"citations":[{"path":"00_Governance/Project.md","sha256":hash(w.read("00_Governance/Project.md").unwrap().as_bytes())}]});
     queue.lock().unwrap().extend([
         chat("", vec![call(0, "independent", "write_draft", args)]),
-        supported_review("00_Governance/Project.md"),
+        supported_review(
+            "00_Governance/Project.md",
+            &content,
+            &w.read("00_Governance/Project.md").unwrap(),
+        ),
         chat("Independent work saved; the rule remains unknown.", vec![]),
     ]);
     rt.run(&mut s, None, &events().0, &CancellationToken::new())
@@ -1356,7 +1360,7 @@ async fn responses_protocol_executes_the_same_grounding_gate() {
     };
     let (url,_,requests,task)=server(vec![
         response(json!([{"type":"function_call","call_id":"draft","name":"write_draft","arguments":args.to_string()}])),
-        response(json!([{"type":"function_call","call_id":"review","name":"submit_grounding_review","arguments":json!({"decision":"supported","checked_sources":["01_Sources/Assets/grounding.txt"],"findings":[],"question":"","body":""}).to_string()}])),
+        response(json!([{"type":"function_call","call_id":"review","name":"submit_grounding_review","arguments":json!({"decision":"supported","checked_sources":["01_Sources/Assets/grounding.txt"],"assessments":assessment_values(args["content"].as_str().unwrap(), "01_Sources/Assets/grounding.txt", &w.read("01_Sources/Assets/grounding.txt").unwrap()),"findings":[],"question":"","body":""}).to_string()}])),
         response(json!([{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Saved draft."}]}])),
     ]).await;
     let cfg = config(url, Protocol::Responses);
@@ -1375,14 +1379,24 @@ async fn responses_protocol_executes_the_same_grounding_gate() {
     task.abort();
 }
 
-fn supported_review(path: &str) -> String {
+fn assessment_values(content: &str, path: &str, source: &str) -> Value {
+    // Scripted judgments test the protocol contract, never semantic accuracy.
+    json!(pm_agent::grounding::review_units(content).unwrap().iter().map(|unit| {
+        if unit.text.starts_with('#') {
+            json!({"unit_id":unit.id,"classification":"structural","rationale":"Document heading.","evidence":[]})
+        } else {
+            json!({"unit_id":unit.id,"classification":"supported","rationale":"Synthetic protocol judgment.","evidence":[{"path":path,"quote":source}]})
+        }
+    }).collect::<Vec<_>>())
+}
+fn supported_review(path: &str, content: &str, source: &str) -> String {
     chat(
         "",
         vec![call(
             0,
             "review",
             "submit_grounding_review",
-            json!({"decision":"supported","checked_sources":[path],"findings":[],"question":"","body":""}),
+            json!({"decision":"supported","checked_sources":[path],"assessments":assessment_values(content,path,source),"findings":[],"question":"","body":""}),
         )],
     )
 }
@@ -1405,7 +1419,7 @@ fn grounding_requires_all_source_paths_even_when_content_is_identical() {
     let packet = grounding::Packet::prepare(&w, &args).unwrap();
     assert_eq!(packet.sources.len(), 2);
     for (paths, valid) in [(json!([source]), false), (json!([source, alias]), true)] {
-        let completion=Completion{text:String::new(),calls:vec![Call{id:"review".into(),name:"submit_grounding_review".into(),arguments:json!({"decision":"supported","checked_sources":paths,"findings":[],"question":"","body":""}).to_string()}],items:vec![],usage:None};
+        let completion=Completion{text:String::new(),calls:vec![Call{id:"review".into(),name:"submit_grounding_review".into(),arguments:json!({"decision":"supported","checked_sources":paths,"assessments":assessment_values(&packet.candidate,source,&w.read(source).unwrap()),"findings":[],"question":"","body":""}).to_string()}],items:vec![],usage:None};
         assert_eq!(grounding::parse(&packet, &completion).is_ok(), valid);
     }
 }
@@ -1425,6 +1439,7 @@ fn rejected_review(claim: &str) -> String {
             "submit_grounding_review",
             json!({
                 "decision":"needs_clarification","checked_sources":["01_Sources/Assets/grounding.txt"],
+                "assessments":[{"unit_id":1,"classification":"structural","rationale":"Document heading.","evidence":[]},{"unit_id":2,"classification":"needs_clarification","rationale":"Missing support.","evidence":[]}],
                 "findings":[{"claim":claim,"reason":"The cited interview leaves this input unknown."}],
                 "question":"請提供此敘述的依據或確認它仍是未知資訊。",
                 "body":"訪談未提供此數值或行為。請補充相關資料；PRD-GROUND 與其相依工作暫停，負責人及日期尚未提供。"
@@ -1584,7 +1599,12 @@ async fn reported_token_pause_after_review_reuses_receipt_without_a_second_revie
     let (_dir, w) = fixture();
     let args = grounding_args(&w, "Integer durations from 1 through 7 are valid.");
     let usage = json!({"total_tokens":10});
-    let review = supported_review("01_Sources/Assets/grounding.txt").replace(
+    let review = supported_review(
+        "01_Sources/Assets/grounding.txt",
+        args["content"].as_str().unwrap(),
+        &w.read("01_Sources/Assets/grounding.txt").unwrap(),
+    )
+    .replace(
         "data: [DONE]",
         &format!(
             "data: {}\n\ndata: [DONE]",
@@ -1643,7 +1663,11 @@ async fn cancelling_read_only_grounding_preserves_pending_draft_without_uncertai
             tokio::time::sleep(std::time::Duration::from_secs(5)).await;
             (
                 [("content-type", "text/event-stream")],
-                supported_review("01_Sources/Assets/grounding.txt"),
+                supported_review(
+                    "01_Sources/Assets/grounding.txt",
+                    args["content"].as_str().unwrap(),
+                    "Integer durations from 1 through 7 are valid.",
+                ),
             )
         } else {
             (

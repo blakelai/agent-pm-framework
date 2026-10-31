@@ -122,7 +122,10 @@ async fn chain_checks_actual_linked_files_citations_and_unperformed_semantic_rev
         };
         let content = pm_agent::workspace::note(meta, body).unwrap();
         script.push(message(vec![call(id,"write_draft",json!({"path":format!("{folder}/{id}.md"),"content":content,"expected_hash":null,"citations":[citation.clone()]}))]));
-        script.push(supported_review());
+        script.push(supported_review(
+            &content,
+            &w.read("01_Sources/Assets/interview.txt").unwrap(),
+        ));
     }
     for name in ["validate", "coverage"] {
         script.push(message(vec![call(
@@ -202,7 +205,10 @@ fn staged_script(w: &Workspace) -> Vec<String> {
         let content = pm_agent::workspace::note(meta, body).unwrap();
         let document = format!("{folder}/{id}.md");
         script.push(message(vec![call(id,"write_draft",json!({"path":document,"content":content,"expected_hash":null,"citations":[citation.clone()]}))]));
-        script.push(supported_review());
+        script.push(supported_review(
+            &content,
+            &w.read("01_Sources/Assets/interview.txt").unwrap(),
+        ));
         script.push(message(vec![call(
             "validate",
             "pm",
@@ -808,11 +814,18 @@ async fn cli_list_and_inspection_need_no_provider_and_path_boundaries_fail_close
     }
 }
 
-fn supported_review() -> String {
+fn supported_review(content: &str, source: &str) -> String {
+    let assessments: Vec<_> = pm_agent::grounding::review_units(content).unwrap().iter().map(|unit| {
+        if unit.text.starts_with('#') || unit.text.starts_with('|') {
+            json!({"unit_id":unit.id,"classification":"structural","rationale":"Synthetic fixture markup.","evidence":[]})
+        } else {
+            json!({"unit_id":unit.id,"classification":"supported","rationale":"Scripted judgment for protocol testing only.","evidence":[{"path":"01_Sources/Assets/interview.txt","quote":source}]})
+        }
+    }).collect();
     message(vec![call(
         "review",
         "submit_grounding_review",
-        json!({"decision":"supported","checked_sources":["01_Sources/Assets/interview.txt"],"findings":[],"question":"","body":""}),
+        json!({"decision":"supported","checked_sources":["01_Sources/Assets/interview.txt"],"assessments":assessments,"findings":[],"question":"","body":""}),
     )])
 }
 
