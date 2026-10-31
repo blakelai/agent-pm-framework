@@ -19,6 +19,7 @@ This policy applies to every project-management stage, including direct Skill or
 ## Evidence and reasoning
 
 - Project facts and source claims need traceable provenance, such as a user response, document page, slide, image region, repository revision and lines, or actual execution record. A reported claim is not automatically a verified fact.
+- Repository identifiers, revisions and snapshot ownership need the corresponding registration note or captured snapshot metadata in the citations. File content supports statements about that file; it does not by itself supply repository registration facts.
 - Evidence-based deductions and calculations may be used when their premises, method and limits are explicit. If a conclusion requires an unsupported premise, ask for that premise instead of filling it in.
 - Record assumptions explicitly supplied by a stakeholder as that stakeholder's assumptions, with attribution and confirmation state. User-requested conditional scenarios remain scenarios; they do not establish actual requirements, capacity or commitments. An agent-created assumption cannot be used to bypass a missing answer.
 - Estimates require supplied inputs or an explicit evidence-based method. Request missing scope, complexity, availability or historical data. Do not invent O/M/P values, FTE, owners, deadlines, acceptance thresholds, system capabilities, approvals or test results. Unknown effort is not zero.
