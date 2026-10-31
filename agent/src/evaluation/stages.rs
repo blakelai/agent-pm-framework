@@ -84,6 +84,7 @@ pub fn observe(
                             | "execution_failed"
                             | "completed_turn"
                             | "versioned_draft_citations"
+                            | "source_review_before_write"
                             | "validation_findings"
                     )
             })

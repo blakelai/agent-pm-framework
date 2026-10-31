@@ -40,7 +40,7 @@ pub fn specs() -> Vec<ToolSpec> {
         ),
         spec(
             "write_draft",
-            "Create or edit a sourced project draft. Requires project language, type/title/id, doc_status=draft, exact current document hash for updates, and current source hashes. Cannot approve, release or edit pinned documents.",
+            "Create or edit a sourced project draft. The runtime independently checks source support before writing; unsupported assertions pause for clarification. Cite original evidence and actual user-answer records, including for inherited draft claims. Requires project language, type/title/id, doc_status=draft, exact current document hash for updates, and current source hashes. Cannot approve, release or edit pinned documents.",
             json!({"path":{"type":"string","description":format!("Markdown draft path under one of: {}",crate::workspace::DRAFT_ROOTS.join(", "))},"content":{"type":"string","description":"Complete typed Markdown including doc_status: draft. PBIs additionally keep delivery_status: proposed; these are different fields."},"expected_hash":{"type":["string","null"]},"citations":{"type":"array","minItems":1,"items":{"type":"object","properties":{"path":{"type":"string"},"sha256":{"type":"string"}},"required":["path","sha256"],"additionalProperties":false}}}),
             &["path", "content", "expected_hash", "citations"],
         ),

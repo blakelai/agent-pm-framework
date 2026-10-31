@@ -1,6 +1,7 @@
 use crate::{
     clarification,
     config::Config,
+    grounding,
     mcp::Mcp,
     provider::{Call, Event, Provider, ToolSpec},
     skills::{self, Activation, Catalog, FileStamp},
@@ -56,6 +57,8 @@ pub struct Session {
     /// Absent in legacy sessions; historical request counts must not be inferred.
     #[serde(default)]
     pub request_ledger: Option<crate::budget::Ledger>,
+    #[serde(default)]
+    pub draft_reviews: Vec<grounding::Observation>,
 }
 pub const STAGES: &[(&str, &str, &str)] = &[
     ("workflow", "pm-workflow", ""),
@@ -92,6 +95,7 @@ impl Session {
             skill_history: vec![],
             usage: None,
             request_ledger: Some(crate::budget::Ledger::default()),
+            draft_reviews: vec![],
         })
     }
 }
@@ -526,6 +530,60 @@ impl Runtime {
                     self.save(s)?;
                     continue;
                 }
+                let mut grounding_receipt = None;
+                if call.name == "write_draft" {
+                    let packet = match grounding::Packet::prepare(&self.workspace, &args) {
+                        Ok(packet) => packet,
+                        Err(error) => {
+                            self.provider.append_tool(
+                                &mut s.history,
+                                &call,
+                                &json!({"error":error.to_string()}).to_string(),
+                            );
+                            s.pending.remove(0);
+                            self.save(s)?;
+                            continue;
+                        }
+                    };
+                    let Some(review) = self.review_draft(s, &call, &packet, events, cancel).await?
+                    else {
+                        return Ok(());
+                    };
+                    ensure!(!cancel.is_cancelled(), "Cancelled before draft write");
+                    if self.pause_for_limit(s, events)? {
+                        return Ok(());
+                    }
+                    if let Err(error) = packet.ensure_current(&self.workspace, &args) {
+                        self.provider.append_tool(
+                            &mut s.history,
+                            &call,
+                            &json!({"error":error.to_string()}).to_string(),
+                        );
+                        s.pending.remove(0);
+                        self.save(s)?;
+                        continue;
+                    }
+                    if matches!(review.decision, grounding::Decision::NeedsClarification) {
+                        self.store
+                            .begin_call(&s.id, &call.id, &call.name, &call.arguments)?;
+                        self.ask(s, &json!({"question":review.question,"body":review.body,"blocking_scope":"records","affected_paths":[packet.path]}), events)?;
+                        let output = json!({"status":"blocked_by_grounding","question_path":s.questions.last().unwrap().path,"findings":review.findings,"packet_sha256":packet.fingerprint()?}).to_string();
+                        self.store
+                            .finish_call(&s.id, &call.id, "completed", &output)?;
+                        self.provider.append_tool(&mut s.history, &call, &output);
+                        s.pending.remove(0);
+                        for later in s.pending.drain(..) {
+                            self.provider.append_tool(
+                                &mut s.history,
+                                &later,
+                                "{\"status\":\"blocked_by_clarification\"}",
+                            );
+                        }
+                        self.save(s)?;
+                        return Ok(());
+                    }
+                    grounding_receipt = Some(packet.fingerprint()?);
+                }
                 if tools::requires_approval(&call.name, &args)
                     && approved.as_deref() != Some(&call.id)
                 {
@@ -575,10 +633,13 @@ impl Runtime {
                     self.save(s)?;
                     bail!("Tool {} has an uncertain outcome: {}", call.name, error);
                 }
-                let value = match result {
+                let mut value = match result {
                     Ok(v) => v,
                     Err(e) => json!({"error":e.to_string()}),
                 };
+                if value["status"] == "draft_saved" {
+                    value["grounding_review"] = json!({"decision":"supported","packet_sha256":grounding_receipt,"kind":"automated_model_review","human_semantic_review":"not_run"});
+                }
                 let output = serde_json::to_string(&value)?;
                 ensure!(
                     output.len() < 4 * 1024 * 1024,
@@ -656,6 +717,106 @@ impl Runtime {
                 return Ok(());
             }
         }
+    }
+    async fn review_draft(
+        &self,
+        s: &mut Session,
+        call: &Call,
+        packet: &grounding::Packet,
+        events: &UnboundedSender<Event>,
+        cancel: &CancellationToken,
+    ) -> Result<Option<grounding::Review>> {
+        let digest = packet.fingerprint()?;
+        if let Some(previous) =
+            s.draft_reviews.iter().rev().find(|r| {
+                r.call_id == call.id && r.packet_sha256 == digest && r.state == "completed"
+            })
+        {
+            return Ok(previous.review.clone());
+        }
+        if self.pause_for_limit(s, events)? {
+            return Ok(None);
+        }
+        let _ = events.send(Event::Notice(format!(
+            "Checking source support before writing {}",
+            packet.path
+        )));
+        s.usage = None;
+        let _ = events.send(Event::Usage(None));
+        let ledger = s
+            .request_ledger
+            .get_or_insert_with(|| crate::budget::Ledger {
+                prior_requests_unknown: true,
+                requests: vec![],
+            });
+        ledger.begin();
+        s.draft_reviews.push(grounding::Observation {
+            call_id: call.id.clone(),
+            packet_sha256: digest,
+            packet: packet.clone(),
+            candidate_sha256: packet.candidate_sha256.clone(),
+            sources: packet
+                .sources
+                .iter()
+                .map(|r| json!({"path":r.path,"sha256":r.sha256}))
+                .collect(),
+            request_number: ledger.requests.len(),
+            state: "started".into(),
+            review: None,
+            error: None,
+        });
+        self.save(s)?;
+        // Fresh context: no author conversation, custom Skills, MCP or write tools.
+        // Review text is private audit data, never streamed into the user's answer.
+        let history = vec![json!({"role":"user","content":serde_json::to_string(packet)?})];
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let result = self
+            .provider
+            .complete(
+                grounding::POLICY,
+                &history,
+                &[grounding::spec()],
+                &tx,
+                cancel,
+            )
+            .await;
+        drop(tx);
+        while let Ok(event) = rx.try_recv() {
+            if matches!(event, Event::Usage(_)) {
+                let _ = events.send(event);
+            }
+        }
+        let state = if result.is_ok() {
+            crate::budget::State::Completed
+        } else if cancel.is_cancelled() {
+            crate::budget::State::Cancelled
+        } else {
+            crate::budget::State::Failed
+        };
+        s.request_ledger
+            .as_mut()
+            .unwrap()
+            .finish(state, result.as_ref().ok().and_then(|c| c.usage.clone()));
+        s.usage = result.as_ref().ok().and_then(|c| c.usage.clone());
+        let reviewed = result.and_then(|c| grounding::parse(packet, &c));
+        let observation = s.draft_reviews.last_mut().unwrap();
+        match &reviewed {
+            Ok(review) => {
+                observation.state = "completed".into();
+                observation.review = Some(review.clone());
+            }
+            Err(error) => {
+                observation.state = if cancel.is_cancelled() {
+                    "cancelled"
+                } else {
+                    "failed"
+                }
+                .into();
+                observation.error = Some(error.to_string());
+            }
+        }
+        self.save(s)?;
+        Ok(Some(reviewed?))
     }
     fn pause_for_limit(&self, s: &mut Session, events: &UnboundedSender<Event>) -> Result<bool> {
         if let Some(reason) = crate::budget::blocked(&self.limits, s.request_ledger.as_ref()) {
@@ -767,6 +928,26 @@ impl Runtime {
                 .markdown()
                 .replacen("# Session limits", "## Session limits", 1),
         );
+        if !s.draft_reviews.is_empty() {
+            body.push_str("\n## Automated source-to-claim reviews\n\nThese are model observations, not human semantic acceptance. Exact packets and results remain in the private session record.\n\n");
+            for review in &s.draft_reviews {
+                body.push_str(&format!(
+                    "- Request {}: {}; candidate {}; packet {}; decision {}\n",
+                    review.request_number,
+                    review.state,
+                    review.candidate_sha256,
+                    review.packet_sha256,
+                    review
+                        .review
+                        .as_ref()
+                        .map(|r| match r.decision {
+                            grounding::Decision::Supported => "supported",
+                            grounding::Decision::NeedsClarification => "needs clarification",
+                        })
+                        .unwrap_or("unavailable")
+                ));
+            }
+        }
         body.push_str("\n## Skill activations\n\n");
         for path in &s.blocked_questions {
             body.push_str(&format!(

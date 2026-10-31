@@ -9,6 +9,7 @@ pub mod editing;
 pub mod evaluation;
 mod extraction;
 pub mod governance;
+pub mod grounding;
 pub mod inspection;
 mod locale;
 pub mod materials;

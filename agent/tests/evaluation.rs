@@ -122,6 +122,7 @@ async fn chain_checks_actual_linked_files_citations_and_unperformed_semantic_rev
         };
         let content = pm_agent::workspace::note(meta, body).unwrap();
         script.push(message(vec![call(id,"write_draft",json!({"path":format!("{folder}/{id}.md"),"content":content,"expected_hash":null,"citations":[citation.clone()]}))]));
+        script.push(supported_review());
     }
     for name in ["validate", "coverage"] {
         script.push(message(vec![call(
@@ -201,6 +202,7 @@ fn staged_script(w: &Workspace) -> Vec<String> {
         let content = pm_agent::workspace::note(meta, body).unwrap();
         let document = format!("{folder}/{id}.md");
         script.push(message(vec![call(id,"write_draft",json!({"path":document,"content":content,"expected_hash":null,"citations":[citation.clone()]}))]));
+        script.push(supported_review());
         script.push(message(vec![call(
             "validate",
             "pm",
@@ -246,8 +248,8 @@ async fn staged_workflow_uses_actual_upstream_files_and_fresh_sessions_with_per_
             .iter()
             .all(|s| s.status == Status::Completed && s.usage.recorded_attempts <= 6)
     );
-    assert_eq!(r.report.usage.as_ref().unwrap().recorded_attempts, 28);
-    assert_eq!(requests.lock().unwrap().1.len(), 28);
+    assert_eq!(r.report.usage.as_ref().unwrap().recorded_attempts, 33);
+    assert_eq!(requests.lock().unwrap().1.len(), 33);
     assert_eq!(
         r.report
             .checks
@@ -306,7 +308,7 @@ async fn stages_require_their_own_post_write_checks_and_preserve_earlier_evidenc
     let (_dir, path) = prepare("draft-stages", "en").await;
     let w = Workspace::open(&path.join("vault")).unwrap();
     let mut script = staged_script(&w);
-    script.remove(7); // BRD stage omits validation; glossary validation must not substitute.
+    script.remove(9); // BRD stage omits validation; glossary validation must not substitute.
     let (cfg, _, task) = server(script).await;
     let r = run(&path, cfg, 6).await;
     assert_eq!(r.report.stages.len(), 2);
@@ -462,7 +464,7 @@ async fn preparations_are_isolated_versioned_localized_and_unexecuted() {
             let manifest: Value =
                 serde_json::from_slice(&std::fs::read(path.join("manifest.json")).unwrap())
                     .unwrap();
-            assert_eq!(manifest["fixture_version"], 3);
+            assert_eq!(manifest["fixture_version"], 4);
             assert!(
                 manifest["inputs"]
                     .as_object()
@@ -764,7 +766,7 @@ async fn cli_list_and_inspection_need_no_provider_and_path_boundaries_fail_close
         serde_json::from_slice::<Vec<Value>>(&out.stdout)
             .unwrap()
             .len(),
-        5
+        6
     );
     assert!(
         evaluation::prepare(&source(), "missing-inputs", &source().root, "en")
@@ -804,4 +806,53 @@ async fn cli_list_and_inspection_need_no_provider_and_path_boundaries_fail_close
         .unwrap();
         assert!(evaluation::inspect(&path).is_err());
     }
+}
+
+fn supported_review() -> String {
+    message(vec![call(
+        "review",
+        "submit_grounding_review",
+        json!({"decision":"supported","checked_sources":["01_Sources/Assets/interview.txt"],"findings":[],"question":"","body":""}),
+    )])
+}
+
+#[tokio::test]
+async fn unsupported_proposal_requires_source_inspection_and_an_actual_unanswered_question() {
+    let (_dir, path) = prepare("unsupported-claims", "en").await;
+    let manifest: Value =
+        serde_json::from_slice(&std::fs::read(path.join("manifest.json")).unwrap()).unwrap();
+    let mut script = vec![
+        read_interview(),
+        message(vec![call(
+            "proposal",
+            "read_document",
+            json!({"path":"01_Sources/Assets/proposal.txt"}),
+        )]),
+    ];
+    for suffix in ["/openwiki/Access.md", "/src/access.rs"] {
+        let path = manifest["inputs"]
+            .as_object()
+            .unwrap()
+            .keys()
+            .find(|p| p.starts_with("vault/03_Systems/Snapshots/") && p.ends_with(suffix))
+            .unwrap();
+        script.push(message(vec![call(
+            suffix,
+            "read_document",
+            json!({"path":path.strip_prefix("vault/").unwrap()}),
+        )]));
+    }
+    script.push(ask());
+    let (cfg, _, task) = server(script).await;
+    let r = run(&path, cfg, 12).await;
+    assert_eq!(
+        r.report.mechanical_outcome,
+        Outcome::Pass,
+        "{:?}",
+        r.report.checks
+    );
+    assert_eq!(r.report.session_status, Some(Status::WaitingClarification));
+    assert_eq!(r.report.semantic_review, Outcome::NotRun);
+    assert!(r.current);
+    task.abort();
 }

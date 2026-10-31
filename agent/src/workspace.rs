@@ -40,6 +40,7 @@ pub(crate) const GUIDES: &[&str] = &[
     "agent/Storage-Migrations.md",
     "agent/Installation.md",
     "agent/Evaluation.md",
+    "agent/Grounding.md",
     "tests/README.md",
 ];
 const FOLDERS: &[&str] = &[
@@ -289,6 +290,18 @@ impl Workspace {
         expected_hash: Option<&str>,
         citations: &[Value],
     ) -> Result<String> {
+        let output = self.prepare_draft(relative, content, expected_hash, citations)?;
+        atomic_write(&self.path(relative)?, output.as_bytes())?;
+        Ok(hash(output.as_bytes()))
+    }
+    /// Check the complete write contract without changing a file.
+    pub(crate) fn prepare_draft(
+        &self,
+        relative: &str,
+        content: &str,
+        expected_hash: Option<&str>,
+        citations: &[Value],
+    ) -> Result<String> {
         ensure!(
             DRAFT_ROOTS.iter().any(|p| relative.starts_with(p)),
             "Agent writes are restricted to project drafts under: {}. Choose a permitted Markdown path; use PM tools for controlled operations.",
@@ -407,8 +420,7 @@ impl Workspace {
         );
         let output = note(Value::Object(properties), &body)?;
         crate::clarification::ensure_draft(self, relative, &output, citations)?;
-        atomic_write(&dest, output.as_bytes())?;
-        Ok(hash(output.as_bytes()))
+        Ok(output)
     }
 }
 pub fn atomic_write(path: &Path, bytes: &[u8]) -> Result<()> {

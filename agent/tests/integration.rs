@@ -703,7 +703,7 @@ async fn tool_roundtrip_creates_a_sourced_draft_and_preserves_hashes() {
         "# Draft\n\nThe charter requires confirmed project inputs.",
     )
     .unwrap();
-    let (url,_,requests,server)=server(vec![chat("",vec![call(0,"read","read_document",json!({"path":"00_Governance/Project.md"}))]),chat("",vec![call(0,"write","write_draft",json!({"path":"04_Requirements/PRD/PRD-TEST.md","content":draft,"expected_hash":null,"citations":[{"path":"00_Governance/Project.md","sha256":hash(source.as_bytes())}]}))]),chat("Draft saved; semantic review remains necessary.",vec![])]).await;
+    let (url,_,requests,server)=server(vec![chat("",vec![call(0,"read","read_document",json!({"path":"00_Governance/Project.md"}))]),chat("",vec![call(0,"write","write_draft",json!({"path":"04_Requirements/PRD/PRD-TEST.md","content":draft,"expected_hash":null,"citations":[{"path":"00_Governance/Project.md","sha256":hash(source.as_bytes())}]}))]),supported_review("00_Governance/Project.md"),chat("Draft saved; semantic review remains necessary.",vec![])]).await;
     let cfg = config(url, Protocol::ChatCompletions);
     let runtime = Runtime::open(w.clone(), cfg.clone()).await.unwrap();
     let mut s = Session::new(&cfg, "prd").unwrap();
@@ -754,6 +754,7 @@ async fn scoped_question_allows_explicit_independent_work_but_blocks_other_sessi
     let args = json!({"path":"04_Requirements/PRD-FREE.md","content":content,"expected_hash":null,"citations":[{"path":"00_Governance/Project.md","sha256":hash(w.read("00_Governance/Project.md").unwrap().as_bytes())}]});
     queue.lock().unwrap().extend([
         chat("", vec![call(0, "independent", "write_draft", args)]),
+        supported_review("00_Governance/Project.md"),
         chat("Independent work saved; the rule remains unknown.", vec![]),
     ]);
     rt.run(&mut s, None, &events().0, &CancellationToken::new())
@@ -1289,4 +1290,379 @@ async fn rust_tools_capture_repository_and_openwiki_evidence() {
         std::fs::read_to_string(repo.path().join("src/handler.rs")).unwrap(),
         "pub fn process() -> bool { true }\n"
     );
+}
+
+#[tokio::test]
+async fn captured_user_answer_enters_grounding_packet_after_actual_resolution() {
+    use pm_agent::grounding::Packet;
+    let (_dir, w) = fixture();
+    let mut args = grounding_args(&w, "The measured status baseline is 25%.");
+    let (url, queue, _, task) = server(vec![
+        chat("", vec![call(0, "draft", "write_draft", args.clone())]),
+        rejected_review("The measured status baseline is 25%."),
+    ])
+    .await;
+    let cfg = config(url, Protocol::ChatCompletions);
+    let rt = Runtime::open(w.clone(), cfg.clone()).await.unwrap();
+    let mut s = Session::new(&cfg, "prd").unwrap();
+    rt.input(&mut s, "Create the draft.").unwrap();
+    rt.run(&mut s, None, &events().0, &CancellationToken::new())
+        .await
+        .unwrap();
+    assert_eq!(s.status, Status::WaitingClarification);
+    let question = s.questions[0].path.clone();
+    rt.input(
+        &mut s,
+        "Synthetic answer: a supplied measurement records the baseline as 25%.",
+    )
+    .unwrap();
+    queue.lock().unwrap().extend([
+        chat("",vec![call(0,"resolve","resolve_clarification",json!({"path":question,"resolution":"The actual fixture answer provides a measured baseline."}))]),
+        chat("The answer was recorded.",vec![]),
+    ]);
+    rt.run(&mut s, None, &events().0, &CancellationToken::new())
+        .await
+        .unwrap();
+    assert!(s.questions[0].resolved);
+    args["citations"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!({"path":question,"sha256":hash(w.read(&question).unwrap().as_bytes())}));
+    let packet = Packet::prepare(&w, &args).unwrap();
+    assert_eq!(packet.sources.len(), 3);
+    let answer = packet
+        .sources
+        .iter()
+        .find(|x| x.path.starts_with("01_Sources/Assets/USER-"))
+        .unwrap();
+    assert!(
+        answer
+            .content
+            .contains("supplied measurement records the baseline as 25%")
+    );
+    atomic_write(&w.path(&answer.path).unwrap(), b"Tampered answer").unwrap();
+    assert!(Packet::prepare(&w, &args).is_err());
+    task.abort();
+}
+#[tokio::test]
+async fn responses_protocol_executes_the_same_grounding_gate() {
+    let (_dir, w) = fixture();
+    let args = grounding_args(&w, "Integer durations from 1 through 7 are valid.");
+    let response = |output: Value| {
+        format!(
+            "data: {}\n\n",
+            json!({"type":"response.completed","response":{"status":"completed","output":output}})
+        )
+    };
+    let (url,_,requests,task)=server(vec![
+        response(json!([{"type":"function_call","call_id":"draft","name":"write_draft","arguments":args.to_string()}])),
+        response(json!([{"type":"function_call","call_id":"review","name":"submit_grounding_review","arguments":json!({"decision":"supported","checked_sources":["01_Sources/Assets/grounding.txt"],"findings":[],"question":"","body":""}).to_string()}])),
+        response(json!([{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Saved draft."}]}])),
+    ]).await;
+    let cfg = config(url, Protocol::Responses);
+    let rt = Runtime::open(w.clone(), cfg.clone()).await.unwrap();
+    let mut s = Session::new(&cfg, "prd").unwrap();
+    rt.input(&mut s, "Create draft.").unwrap();
+    rt.run(&mut s, None, &events().0, &CancellationToken::new())
+        .await
+        .unwrap();
+    assert_eq!(s.status, Status::Completed, "{:?}", s.error);
+    assert!(w.path("04_Requirements/PRD-GROUND.md").unwrap().exists());
+    let req = requests.lock().unwrap();
+    assert_eq!(req[1]["tools"][0]["name"], "submit_grounding_review");
+    assert_eq!(req[1]["input"].as_array().unwrap().len(), 1);
+    assert_eq!(s.draft_reviews.len(), 1);
+    task.abort();
+}
+
+fn supported_review(path: &str) -> String {
+    chat(
+        "",
+        vec![call(
+            0,
+            "review",
+            "submit_grounding_review",
+            json!({"decision":"supported","checked_sources":[path],"findings":[],"question":"","body":""}),
+        )],
+    )
+}
+
+fn grounding_args(w: &Workspace, claim: &str) -> Value {
+    let source = "01_Sources/Assets/grounding.txt";
+    atomic_write(&w.path(source).unwrap(), b"Numeric baselines, integrations and timeout behavior are unknown. Integer durations from 1 through 7 are valid.").unwrap();
+    let content = note(json!({"id":"PRD-GROUND","type":"prd","title":"Grounding fixture","doc_status":"draft","language":w.language().unwrap()}), &format!("# Grounding fixture\n\n{claim}")).unwrap();
+    json!({"path":"04_Requirements/PRD-GROUND.md","content":content,"expected_hash":null,"citations":[{"path":source,"sha256":hash(w.read(source).unwrap().as_bytes())}]})
+}
+fn rejected_review(claim: &str) -> String {
+    chat(
+        "PRIVATE_REVIEW",
+        vec![call(
+            0,
+            "review",
+            "submit_grounding_review",
+            json!({
+                "decision":"needs_clarification","checked_sources":["01_Sources/Assets/grounding.txt"],
+                "findings":[{"claim":claim,"reason":"The cited interview leaves this input unknown."}],
+                "question":"請提供此敘述的依據或確認它仍是未知資訊。",
+                "body":"訪談未提供此數值或行為。請補充相關資料；PRD-GROUND 與其相依工作暫停，負責人及日期尚未提供。"
+            }),
+        )],
+    )
+}
+#[tokio::test]
+async fn grounding_blocks_unsupported_baselines_dependencies_and_behaviors_with_scoped_questions() {
+    for claim in [
+        "Observable status baseline is 0%.",
+        "There are no external dependencies.",
+        "Validation and creation must be atomic on timeout.",
+    ] {
+        let (_dir, w) = fixture();
+        let args = grounding_args(&w, claim);
+        let (url, _, requests, task) = server(vec![
+            chat(
+                "",
+                vec![
+                    call(0, "draft", "write_draft", args),
+                    call(1, "later", "pm", json!({"command":"coverage","args":[]})),
+                ],
+            ),
+            rejected_review(claim),
+        ])
+        .await;
+        let cfg = config(url, Protocol::ChatCompletions);
+        let rt = Runtime::open(w.clone(), cfg.clone()).await.unwrap();
+        let mut s = Session::new(&cfg, "prd").unwrap();
+        rt.input(
+            &mut s,
+            "Author conversation must not enter the reviewer context.",
+        )
+        .unwrap();
+        let (tx, mut rx) = events();
+        rt.run(&mut s, None, &tx, &CancellationToken::new())
+            .await
+            .unwrap();
+        assert_eq!(s.status, Status::WaitingClarification, "{:?}", s.error);
+        assert!(!w.path("04_Requirements/PRD-GROUND.md").unwrap().exists());
+        assert!(s.pending.is_empty());
+        let question = w.read(&s.questions[0].path).unwrap();
+        assert!(question.contains("04_Requirements/PRD-GROUND.md"));
+        assert!(s.questions[0].answer.is_none());
+        assert_eq!(s.request_ledger.as_ref().unwrap().requests.len(), 2);
+        assert_eq!(s.draft_reviews.len(), 1);
+        let saved: Session = rt.store.load(&s.id).unwrap();
+        assert!(saved.draft_reviews[0].review.is_some());
+        let calls = rt.store.calls(&s.id).unwrap();
+        assert_eq!(calls.len(), 1);
+        assert!(
+            calls[0]
+                .result
+                .as_ref()
+                .unwrap()
+                .contains("blocked_by_grounding")
+        );
+        let observed: Vec<_> = std::iter::from_fn(|| rx.try_recv().ok()).collect();
+        assert!(
+            observed
+                .iter()
+                .any(|e| matches!(e,Event::Notice(t) if t.contains("請提供")))
+        );
+        assert!(
+            !observed
+                .iter()
+                .any(|e| matches!(e,Event::Text(t) if t.contains("PRIVATE_REVIEW")))
+        );
+        let req = requests.lock().unwrap();
+        assert_eq!(req[1]["tools"].as_array().unwrap().len(), 1);
+        assert_eq!(
+            req[1]["tools"][0]["function"]["name"],
+            "submit_grounding_review"
+        );
+        assert_eq!(req[1]["messages"].as_array().unwrap().len(), 2);
+        assert!(
+            !req[1]
+                .to_string()
+                .contains("Author conversation must not enter")
+        );
+        task.abort();
+    }
+}
+#[tokio::test]
+async fn malformed_or_operational_reviewer_calls_never_write_or_execute_tools() {
+    for result in [
+        chat("I approve.", vec![]),
+        chat(
+            "",
+            vec![call(
+                0,
+                "bad",
+                "pm",
+                json!({"command":"coverage","args":[]}),
+            )],
+        ),
+        rejected_review("This sentence is absent from the candidate."),
+    ] {
+        let (_dir, w) = fixture();
+        let args = grounding_args(&w, "Integer durations from 1 through 7 are valid.");
+        let (url, _, requests, task) = server(vec![
+            chat("", vec![call(0, "draft", "write_draft", args)]),
+            result,
+        ])
+        .await;
+        let cfg = config(url, Protocol::ChatCompletions);
+        let rt = Runtime::open(w.clone(), cfg.clone()).await.unwrap();
+        let mut s = Session::new(&cfg, "prd").unwrap();
+        rt.input(&mut s, "Review fixture.").unwrap();
+        rt.run(&mut s, None, &events().0, &CancellationToken::new())
+            .await
+            .unwrap();
+        assert_eq!(s.status, Status::Failed);
+        assert!(!w.path("04_Requirements/PRD-GROUND.md").unwrap().exists());
+        assert_eq!(requests.lock().unwrap().len(), 2);
+        assert!(rt.store.calls(&s.id).unwrap().is_empty());
+        assert_eq!(s.draft_reviews[0].state, "failed");
+        task.abort();
+    }
+}
+#[tokio::test]
+async fn grounding_checks_transitive_evidence_and_rejects_stale_or_private_sources() {
+    use pm_agent::grounding::Packet;
+    let (_dir, w) = fixture();
+    let args = grounding_args(&w, "Integer durations from 1 through 7 are valid.");
+    let source = args["citations"][0].clone();
+    let upstream = "04_Requirements/BRD-UPSTREAM.md";
+    let metadata = json!({"id":"BRD-UPSTREAM","type":"brd","title":"Upstream","language":"en","doc_status":"draft","sources":[{"resource":source["path"],"sha256":source["sha256"]}]});
+    atomic_write(
+        &w.path(upstream).unwrap(),
+        note(
+            metadata,
+            "# Upstream\n\nA generated summary cannot authorize new business facts.",
+        )
+        .unwrap()
+        .as_bytes(),
+    )
+    .unwrap();
+    let mut args = args;
+    args["citations"] =
+        json!([{"path":upstream,"sha256":hash(w.read(upstream).unwrap().as_bytes())}]);
+    let packet = Packet::prepare(&w, &args).unwrap();
+    assert_eq!(packet.sources.len(), 2);
+    atomic_write(
+        &w.path(source["path"].as_str().unwrap()).unwrap(),
+        b"Changed source.",
+    )
+    .unwrap();
+    assert!(packet.ensure_current(&w, &args).is_err());
+    assert!(!w.path("04_Requirements/PRD-GROUND.md").unwrap().exists());
+    args["citations"] = json!([{"path":".pm-agent/config.toml","sha256":"ignored"}]);
+    assert!(Packet::prepare(&w, &args).is_err());
+}
+#[tokio::test]
+async fn reported_token_pause_after_review_reuses_receipt_without_a_second_review_request() {
+    let (_dir, w) = fixture();
+    let args = grounding_args(&w, "Integer durations from 1 through 7 are valid.");
+    let usage = json!({"total_tokens":10});
+    let review = supported_review("01_Sources/Assets/grounding.txt").replace(
+        "data: [DONE]",
+        &format!(
+            "data: {}\n\ndata: [DONE]",
+            json!({"choices":[],"usage":usage})
+        ),
+    );
+    let (url, _, requests, task) = server(vec![
+        budget_chat("", vec![call(0, "draft", "write_draft", args)], usage),
+        review,
+        budget_chat("Saved.", vec![], json!({"total_tokens":2})),
+    ])
+    .await;
+    let mut cfg = config(url, Protocol::ChatCompletions);
+    cfg.session_limits.max_total_tokens = Some(15);
+    let rt = Runtime::open(w.clone(), cfg.clone()).await.unwrap();
+    let mut s = Session::new(&cfg, "prd").unwrap();
+    rt.input(&mut s, "Create the supported draft.").unwrap();
+    rt.run(&mut s, None, &events().0, &CancellationToken::new())
+        .await
+        .unwrap();
+    assert_eq!(s.status, Status::LimitReached);
+    assert!(!w.path("04_Requirements/PRD-GROUND.md").unwrap().exists());
+    assert_eq!(s.draft_reviews.len(), 1);
+    let id = s.id.clone();
+    drop(rt);
+    cfg.session_limits.max_total_tokens = Some(50);
+    let rt = Runtime::open(w.clone(), cfg).await.unwrap();
+    let mut s: Session = rt.store.load(&id).unwrap();
+    s.status = Status::Ready;
+    rt.run(&mut s, None, &events().0, &CancellationToken::new())
+        .await
+        .unwrap();
+    assert_eq!(s.status, Status::Completed, "{:?}", s.error);
+    assert!(w.path("04_Requirements/PRD-GROUND.md").unwrap().exists());
+    assert_eq!(requests.lock().unwrap().len(), 3);
+    assert_eq!(s.draft_reviews.len(), 1);
+    assert_eq!(
+        pm_agent::budget::summary(s.request_ledger.as_ref()).complete_total_tokens,
+        Some(22)
+    );
+    task.abort();
+}
+#[tokio::test]
+async fn cancelling_read_only_grounding_preserves_pending_draft_without_uncertain_write() {
+    let (_dir, w) = fixture();
+    let args = grounding_args(&w, "Integer durations from 1 through 7 are valid.");
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let seen = Arc::new(tokio::sync::Notify::new());
+    let state = (args, seen.clone());
+    async fn handler(
+        State((args, seen)): State<(Value, Arc<tokio::sync::Notify>)>,
+        Json(req): Json<Value>,
+    ) -> impl IntoResponse {
+        if req["tools"][0]["function"]["name"] == "submit_grounding_review" {
+            seen.notify_one();
+            tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+            (
+                [("content-type", "text/event-stream")],
+                supported_review("01_Sources/Assets/grounding.txt"),
+            )
+        } else {
+            (
+                [("content-type", "text/event-stream")],
+                chat("", vec![call(0, "draft", "write_draft", args)]),
+            )
+        }
+    }
+    let cfg = config(
+        format!("http://{}/v1", listener.local_addr().unwrap()),
+        Protocol::ChatCompletions,
+    );
+    let task = tokio::spawn(async move {
+        axum::serve(
+            listener,
+            Router::new()
+                .route("/v1/chat/completions", post(handler))
+                .with_state(state),
+        )
+        .await
+        .unwrap()
+    });
+    let rt = Runtime::open(w.clone(), cfg.clone()).await.unwrap();
+    let mut s = Session::new(&cfg, "prd").unwrap();
+    rt.input(&mut s, "Create draft.").unwrap();
+    let cancel = CancellationToken::new();
+    let (tx, _) = events();
+    let (result, _) = tokio::join!(rt.run(&mut s, None, &tx, &cancel), async {
+        tokio::time::timeout(std::time::Duration::from_secs(5), seen.notified())
+            .await
+            .unwrap();
+        cancel.cancel();
+    });
+    result.unwrap();
+    assert_eq!(s.status, Status::Cancelled);
+    assert_eq!(s.draft_reviews[0].state, "cancelled");
+    assert!(!w.path("04_Requirements/PRD-GROUND.md").unwrap().exists());
+    assert!(rt.store.calls(&s.id).unwrap().is_empty());
+    assert_eq!(s.pending.len(), 1);
+    assert!(matches!(
+        s.request_ledger.as_ref().unwrap().requests[1].state,
+        pm_agent::budget::State::Cancelled
+    ));
+    task.abort();
 }

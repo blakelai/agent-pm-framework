@@ -25,6 +25,15 @@ This policy applies to every project-management stage, including direct Skill or
 
 ## Completion
 
+Before drafting, map each business assertion to a source passage or an explicit, supported deduction. Check inherited BRD/PRD claims against original evidence as well as their upstream document. Use these distinctions when reviewing:
+
+- Missing measurements remain unknown; ask for a baseline and observation method. A universal validation rule does not establish an observed percentage or an agreed business KPI.
+- Static code is a bounded implementation observation. Confirm the deployed process before stating current capabilities or claiming their absence.
+- Excluded integrations define scope; unprovided dependency information stays unknown until the system inventory supports a completeness claim.
+- Exception-handling sections identify questions when timeout, atomicity, retry or compensation behavior is unspecified. Templates identify topics to investigate; they do not supply requirements.
+
+The Rust runtime applies an [automated source-to-claim review](../agent/Grounding.md) before Agent draft writes. Its findings trigger actual scoped questions. A supported model judgment does not replace the review obligations below.
+
 Before marking work complete, confirm that every detected gap was asked about, each relied-upon answer has provenance, and no requested conclusion depends on an unresolved gap. List unresolved questions and their affected work in the English Run and in the response to the user. Placeholder templates and isolated test fixtures remain explicitly non-project data.
 
 Local validation checks structure and selected evidence fields. Passing it does not prove that a claim is grounded or that an agent followed this policy; review the actual sources, questions and outputs.

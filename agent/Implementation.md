@@ -22,6 +22,7 @@ The approved direction is a local Rust TUI for macOS/Linux, sharing project docu
 | Provider | Responses and Chat Completions SSE adapters, fragmented UTF-8 and function arguments, local conversation replay, error/cancellation handling |
 | Clarification | Explicit project/record scopes, transitive draft/baseline gates across sessions, independent continuation, answer provenance and read-only Questions view |
 | Agent runtime | Stage Skill/Playbook plus explicit custom Skills, dependency/reference validation and activation fingerprints; tool loop, persisted questions and sourced draft writes |
+| Source-to-claim review | Independent model context before Agent draft writes; versioned transitive evidence, recorded review requests, scoped questions for unsupported assertions and unchanged-candidate resume; model judgment remains fallible |
 | Planning | Native Rust estimates/capacity/dependencies, localized Markdown reports and structured forecast data; no interpreter required |
 | Interactive planning | Iteration-filtered PBIs, role capacity/demand, supplied allocations and project-wide signals; reviewed single-item scheduling with before/after planning impact |
 | Delivery workflows | Dedicated Change/UAT/Release/Benefit views and typed editors; versioned evidence gates, historical outcome preservation, read-only Agent overview |

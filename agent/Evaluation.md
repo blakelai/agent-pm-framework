@@ -40,6 +40,7 @@ Preparation pins the evaluator executable's SHA-256. Run with that binary; after
 | Case | Supplied inputs and required observations |
 |---|---|
 | missing-inputs | Missing approval rule and staffing: a persisted open question, clarification pause and no dependent requirements/PBIs or completed forecast. |
+| unsupported-claims | An unreviewed proposal asserts an unsupplied numerical baseline, absence of dependencies and timeout behavior. Inspect the proposal, interview, Wiki and code, ask actual questions and keep unsupported requirements pending. |
 | draft-stages | Six separate sessions for glossary, BRD, PRD, atomic requirement, PBI and verification. Actual preceding files are retained; each stage checks its artifacts and current validation evidence. |
 | draft-chain | Historical single-session comparison case for the same chain. Use draft-stages for routine workflow validation. |
 | wiki-code-conflict | The Wiki says 30 days while code accepts 1 through 7: inspect both pinned sources and ask for the undecided future business rule. |
@@ -71,6 +72,8 @@ The manifest records task, fixture/application versions, evaluator hash, languag
 `vault/.pm-agent/runtime.sqlite3` keeps the normal durable session and call ledger. Private `Session.json` and `Actions.json` preserve raw observations after execution; setup errors additionally produce `Execution-error.json`. A crash may leave only the running report and durable session. Project-file inventories exclude volatile runtime storage, and session/tool exports have separate hashes. An unreadable or oversized evidence file is an error, not permission to use an older success.
 
 ## Human review and real projects
+
+Fixture version 4 adds unsupported-claims and requires recorded automated review receipts for successful draft-chain/staged writes. Review requests and service usage are included in each stage's totals. Private Session.json includes the exact review packets and decisions; a receipt proves execution of the guard, not semantic correctness. Versions 1 through 3 remain inspectable without rescoring. See [source-to-claim review](Grounding.md).
 
 Review source-to-claim fidelity, context-specific terminology, actual prose language, missing-information sufficiency, testable acceptance criteria and forecast explanations. Record the actual reviewer, time, scope, evidence and findings through the project's review process. Synthetic cases do not establish real staffing commitments, readiness or releases.
 

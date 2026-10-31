@@ -185,11 +185,14 @@ pub(super) fn evaluate(
         });
     }
     match m.case.id.as_str() {
-        "missing-inputs" | "wiki-code-conflict" => {
+        "missing-inputs" | "wiki-code-conflict" | "unsupported-claims" => {
             out.push(checked("actual_unresolved_question",s.status==Status::WaitingClarification && s.questions.iter().any(|q| !q.resolved && q.answer.is_none() && records.active.iter().any(|d|d.path==q.path && d.kind=="question" && d.metadata["workflow_status"]=="open")),"Requires a persisted open question, no synthetic answer receipt, and an actual clarification pause"));
             out.push(checked("dependent_work_pending",new.iter().all(|d|!["brd","prd","requirement","pbi"].contains(&d.kind.as_str())) && !records.active.iter().any(|d|d.metadata["workflow_status"]=="forecast"),"No dependent requirement/PBI or completed forecast may be created while the supplied rule is missing"));
             if m.case.id == "wiki-code-conflict" {
                 out.push(checked("both_pinned_sources_inspected",read_path(calls,|p|p.contains("03_Systems/Snapshots/")&&p.ends_with("/openwiki/Access.md"))&&read_path(calls,|p|p.contains("03_Systems/Snapshots/")&&p.ends_with("/src/access.rs")),"Requires successful reads of both the pinned Wiki and code, not merely the repository catalog"));
+            }
+            if m.case.id == "unsupported-claims" {
+                out.push(checked("proposal_and_system_evidence_inspected", read_path(calls, |p|p=="01_Sources/Assets/proposal.txt") && read_path(calls,|p|p.contains("03_Systems/Snapshots/")&&p.ends_with("/openwiki/Access.md")) && read_path(calls,|p|p.contains("03_Systems/Snapshots/")&&p.ends_with("/src/access.rs")), "Requires actual proposal, Wiki and code reads. Question completeness and source-to-claim fidelity still require separate review."));
             }
         }
         "draft-chain" | "draft-stages" => {
@@ -236,6 +239,9 @@ pub(super) fn evaluate(
                 }
             }
             out.push(checked("versioned_draft_citations",!new.is_empty() && new.iter().all(|d|writes.contains_key(&d.path)&&has_origin(&d.path,&writes,&m.inputs,&mut vec![])),"Final draft bytes must match successful write evidence, current source hashes and a citation path to supplied source material"));
+            if m.fixture_version >= 4 {
+                out.push(checked("source_review_before_write", calls.iter().filter(|c|c.name=="write_draft").filter_map(decoded).all(|(_,r)| r["status"]!="draft_saved" || (r["grounding_review"]["decision"]=="supported" && r["grounding_review"]["packet_sha256"].as_str().is_some_and(|v|v.len()==64))), "Every saved draft requires a recorded automated review bound to its candidate and source versions. This does not certify semantic correctness."));
+            }
             let pbis: Vec<_> = new.iter().filter(|d| d.kind == "pbi").collect();
             out.push(checked("unscheduled_unknown_effort",!pbis.is_empty()&&pbis.iter().all(|d|d.metadata["sprint"].is_null() && crate::planning::table(&d.body,&["Role","O","M","P"]).is_ok_and(|rows|rows.iter().all(|r|r.iter().skip(1).all(|v|v.trim().is_empty())))),"No supplied effort or iteration: PBI sprint and estimate values must remain unknown"));
             out.push(checked(
