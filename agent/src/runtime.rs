@@ -147,6 +147,14 @@ impl Runtime {
         self.store.save(&s.id, s)
     }
     pub fn input(&self, s: &mut Session, input: &str) -> Result<()> {
+        self.input_with_images(s, input, &[])
+    }
+    pub fn input_with_images(
+        &self,
+        s: &mut Session,
+        input: &str,
+        images: &[crate::chat_images::Image],
+    ) -> Result<()> {
         self.refresh_questions(s)?;
         let open: Vec<_> = s.questions.iter().filter(|q| !q.resolved).collect();
         let target = if s.status == Status::WaitingClarification && !open.is_empty() {
@@ -158,9 +166,18 @@ impl Runtime {
         } else {
             None
         };
-        self.accept_input(s, input, target.as_deref())
+        self.accept_input(s, input, target.as_deref(), images)
     }
     pub fn answer(&self, s: &mut Session, id: &str, input: &str) -> Result<()> {
+        self.answer_with_images(s, id, input, &[])
+    }
+    pub fn answer_with_images(
+        &self,
+        s: &mut Session,
+        id: &str,
+        input: &str,
+        images: &[crate::chat_images::Image],
+    ) -> Result<()> {
         self.refresh_questions(s)?;
         ensure!(
             !matches!(
@@ -202,7 +219,7 @@ impl Runtime {
                 .resolved,
             "Question is already resolved"
         );
-        self.accept_input(s, input, Some(&path))
+        self.accept_input(s, input, Some(&path), images)
     }
     pub fn continue_independent(&self, s: &mut Session) -> Result<()> {
         ensure!(
@@ -225,8 +242,17 @@ impl Runtime {
         }
         Ok(())
     }
-    fn accept_input(&self, s: &mut Session, input: &str, target: Option<&str>) -> Result<()> {
-        ensure!(!input.trim().is_empty(), "Input cannot be empty");
+    fn accept_input(
+        &self,
+        s: &mut Session,
+        input: &str,
+        target: Option<&str>,
+        images: &[crate::chat_images::Image],
+    ) -> Result<()> {
+        ensure!(
+            !input.trim().is_empty() || !images.is_empty(),
+            "Input cannot be empty"
+        );
         ensure!(
             s.status != Status::LimitReached || s.pending.is_empty(),
             "Limit-paused tools are pending; review limits and use /continue before sending another message"
@@ -247,8 +273,11 @@ impl Runtime {
                 }
             }
         }
+        let images = crate::chat_images::save(&self.workspace, images)?;
+        let descriptors = crate::chat_images::source_descriptors(&images);
+        let captured = format!("{input}{descriptors}");
         let source = format!("01_Sources/Assets/USER-{}.txt", uuid::Uuid::new_v4());
-        atomic_write(&self.workspace.path(&source)?, input.as_bytes())?;
+        atomic_write(&self.workspace.path(&source)?, captured.as_bytes())?;
         if let Some(target) = target {
             let q = s
                 .questions
@@ -268,15 +297,21 @@ impl Runtime {
                 } else {
                     "User response (resolution pending)"
                 };
-                body.push_str(&format!("\n\n## {heading}\n\n{input}\n"));
+                body.push_str(&format!("\n\n## {heading}\n\n{captured}\n"));
                 atomic_write(
                     &self.workspace.path(&q.path)?,
                     note(meta, &body)?.as_bytes(),
                 )?;
             }
-            q.answer = Some(input.into());
+            q.answer = Some(captured.clone());
         }
-        s.history.push(json!({"role":"user","content":format!("{input}\n\n[Application source locator: {source}; SHA256: {}; answer target: {}]",hash(input.as_bytes()),target.unwrap_or("none"))}));
+        let content = format!(
+            "{input}\n\n[Application source locator: {source}; SHA256: {}; answer target: {}]{descriptors}",
+            hash(captured.as_bytes()),
+            target.unwrap_or("none")
+        );
+        s.history
+            .push(crate::chat_images::message(content, &images));
         s.status = Status::Ready;
         s.error = None;
         self.save(s)
@@ -683,6 +718,11 @@ impl Runtime {
                 serde_json::to_vec(&s.history)?.len() < 700_000,
                 "Session context limit reached; start a new scoped session. No history was silently dropped."
             );
+            let wire_history = crate::chat_images::hydrate(
+                &self.workspace,
+                &s.history,
+                &self.config.active()?.protocol,
+            )?;
             s.usage = None;
             // Persist the attempt before dispatch. A crash or missing usage cannot
             // silently restore capacity or fabricate a zero-token request.
@@ -695,7 +735,7 @@ impl Runtime {
             self.save(s)?;
             let result = self
                 .provider
-                .complete(&system, &s.history, &specs, events, cancel)
+                .complete(&system, &wire_history, &specs, events, cancel)
                 .await;
             let state = if result.is_ok() {
                 crate::budget::State::Completed

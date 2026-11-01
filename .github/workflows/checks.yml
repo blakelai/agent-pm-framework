@@ -42,3 +42,8 @@ jobs:
         run: cargo clippy --manifest-path agent/Cargo.toml --all-targets --locked -- -D warnings
       - name: Test runtime and local provider and MCP fixtures
         run: cargo test --manifest-path agent/Cargo.toml --locked
+      - name: Test clipboard on an isolated Linux display
+        if: runner.os == 'Linux'
+        env:
+          PM_TEST_ISOLATED_CLIPBOARD: "1"
+        run: xvfb-run -a cargo test --manifest-path agent/Cargo.toml --locked --test clipboard -- --ignored

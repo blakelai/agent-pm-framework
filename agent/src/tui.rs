@@ -41,6 +41,7 @@ enum Outcome {
     Pm(String),
     Probe(crate::probe::Observation),
     Error(String),
+    RejectedInput { text: String, error: String },
 }
 enum Action {
     Message(String),
@@ -102,8 +103,15 @@ pub async fn run(workspace: Workspace, config_path: PathBuf, lock: WorkspaceLock
     let mut material_running = false;
     let mut material_ticket = 0u64;
     let (recovery_tx, mut recovery_rx) = mpsc::unbounded_channel();
+    let (clipboard_tx, mut clipboard_rx) = mpsc::unbounded_channel();
+    let mut clipboard_running = false;
     loop {
         tokio::select! {
+            Some((generation, result)) = clipboard_rx.recv() => {
+                clipboard_running = false;
+                app.finish_clipboard(generation, result);
+                dirty = true;
+            },
             _ = polling.tick(), if !app.recovery.as_ref().is_some_and(|p| p.running()) => {
                 if let Some(request) = monitor.request(refresh::Views::of(&app), app.refresh_error.is_some()) {
                     let workspace = workspace.clone();
@@ -142,7 +150,7 @@ pub async fn run(workspace: Workspace, config_path: PathBuf, lock: WorkspaceLock
                 dirty = true;
                 monitor.invalidate();
                 app.busy=false;
-                let failed = matches!(outcome, Outcome::Error(_));
+                let failed = matches!(outcome, Outcome::Error(_) | Outcome::RejectedInput { .. });
                 match outcome {
                     Outcome::Session(s)=>{
                         app.messages.sync_tools(&s);
@@ -157,6 +165,10 @@ pub async fn run(workspace: Workspace, config_path: PathBuf, lock: WorkspaceLock
                         app.status=if observation.report.cancelled() {"Probe cancelled; partial observations saved"} else {"Probe finished; review individual observations"}.into();
                     },
                     Outcome::Error(text)=>app.notice(&format!("Error: {text}")),
+                    Outcome::RejectedInput{text,error}=>{
+                        if app.input.text.is_empty() { app.input.insert(&text); }
+                        app.notice(&format!("Input was not accepted; attachments retained: {error}\n\n{text}"));
+                    },
                 }
                 refresh(&workspace,&mut app,&mut store);
                 if exit_when_idle && !failed { break; }
@@ -193,6 +205,18 @@ pub async fn run(workspace: Workspace, config_path: PathBuf, lock: WorkspaceLock
                     Command::Open(target)=>{
                         let result=if target.starts_with("https://") || target.starts_with("http://") {open_document(PathBuf::from(target))} else {workspace.path(&target).and_then(open_document)};
                         if let Err(e)=result {app.status=format!("Open failed: {e}");}
+                    },
+                    Command::PasteClipboard=>{
+                        if clipboard_running { app.status="Previous clipboard read is finishing; try again shortly".into(); }
+                        else {
+                            clipboard_running = true;
+                            let generation = app.start_clipboard(); let sender = clipboard_tx.clone();
+                            tokio::spawn(async move {
+                                let result = tokio::task::spawn_blocking(crate::chat_images::clipboard).await
+                                    .context("Clipboard worker failed").and_then(|r|r);
+                                let _ = sender.send((generation,result));
+                            });
+                        }
                     },
                     Command::RefreshSkills=>match Catalog::discover(&workspace) { Ok(c)=>app.update_skills(&c), Err(e)=>{app.clear_skills();app.notice(&format!("Skills unavailable: {e}"));} },
                     Command::Skills=>match Catalog::discover(&workspace) {Ok(c)=>app.skills_menu(c),Err(e)=>app.notice(&e.to_string())},
@@ -515,6 +539,7 @@ fn dispatch(
     }
     let config = config?;
     app.model = config.active()?.model.clone();
+    let submitted_text = input.clone();
     let action = match input.as_str() {
         "/approve" => Action::Decision(true),
         "/deny" => Action::Decision(false),
@@ -524,7 +549,11 @@ fn dispatch(
             if let Some(answer) = input.strip_prefix("/answer ") {
                 let (id, text) = answer
                     .split_once(char::is_whitespace)
-                    .context("Use /answer QUESTION-ID TEXT")?;
+                    .unwrap_or((answer, ""));
+                anyhow::ensure!(
+                    !id.is_empty() && (!text.trim().is_empty() || !app.attachments.is_empty()),
+                    "Use /answer QUESTION-ID TEXT or attach an image"
+                );
                 Action::Answer(id.into(), text.trim().into())
             } else if let Some(result) = input.strip_prefix("/reconcile ") {
                 Action::Reconcile(result.into())
@@ -534,6 +563,11 @@ fn dispatch(
                 Action::Message(input)
             }
         }
+    };
+    let images = if matches!(action, Action::Message(_) | Action::Answer(_, _)) {
+        app.attachments.clone()
+    } else {
+        vec![]
     };
     let mut session = app
         .session
@@ -551,13 +585,18 @@ fn dispatch(
     let cancel = CancellationToken::new();
     let signal = cancel.clone();
     tokio::spawn(async move {
+        let mut input_accepted = false;
         let result = async {
             let runtime = Runtime::open(workspace, config).await?;
             let mut approved = None;
             match action {
-                Action::Message(input) => runtime.input(&mut session, &input)?,
+                Action::Message(input) => {
+                    runtime.input_with_images(&mut session, &input, &images)?
+                }
                 Action::Independent => runtime.continue_independent(&mut session)?,
-                Action::Answer(id, text) => runtime.answer(&mut session, &id, &text)?,
+                Action::Answer(id, text) => {
+                    runtime.answer_with_images(&mut session, &id, &text, &images)?
+                }
                 Action::Decision(yes) => {
                     if yes {
                         approved = session.pending.first().map(|c| c.id.clone());
@@ -577,11 +616,21 @@ fn dispatch(
                 }
                 Action::Reconcile(result) => runtime.reconcile(&mut session, &result)?,
             }
+            input_accepted = true;
+            if !images.is_empty() {
+                let _ = tx.send(Event::InputAccepted(
+                    images.iter().map(|image| image.id.clone()).collect(),
+                ));
+            }
             runtime.run(&mut session, approved, &tx, &signal).await
         }
         .await;
         let _ = done.send(match result {
             Ok(()) => Outcome::Session(Box::new(session)),
+            Err(e) if !input_accepted && !images.is_empty() => Outcome::RejectedInput {
+                text: submitted_text,
+                error: e.to_string(),
+            },
             Err(e) => Outcome::Error(e.to_string()),
         });
     });
@@ -592,6 +641,67 @@ fn dispatch(
 mod tests {
     use super::*;
     use crate::workspace::Document;
+    #[tokio::test]
+    async fn rejected_image_input_and_local_commands_preserve_pending_attachments() {
+        let dir = tempfile::tempdir().unwrap();
+        crate::workspace::atomic_write(&dir.path().join("00_Governance/Project.md"),crate::workspace::note(serde_json::json!({"type":"project","id":"PROJECT-TEST","language":"en","title":"Synthetic"}),"# Synthetic").unwrap().as_bytes()).unwrap();
+        let w = Workspace::open(dir.path()).unwrap();
+        let path = w.path(".pm-agent/config.toml").unwrap();
+        crate::workspace::atomic_write(
+            &path,
+            br#"
+provider = "fixture"
+[providers.fixture]
+protocol = "chat_completions"
+base_url = "http://127.0.0.1:9/v1"
+model = "fixture"
+"#,
+        )
+        .unwrap();
+        let config = Config::load(&path).unwrap();
+        let mut app = App::new(vec![]);
+        let mut session = Session::new(&config, "workflow").unwrap();
+        session.status = Status::WaitingApproval;
+        app.session = Some(session);
+        app.attachments
+            .push(crate::chat_images::Image::from_rgba(1, 1, &[255; 4]).unwrap());
+        let id = app.attachments[0].id.clone();
+        let store = Store::open(&w.path(".pm-agent/runtime.sqlite3").unwrap()).unwrap();
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let (done, mut finished) = mpsc::unbounded_channel();
+        assert!(
+            dispatch(&w, &path, &mut app, &store, "/status".into(), &tx, &done)
+                .unwrap()
+                .is_none()
+        );
+        assert_eq!(app.attachments[0].id, id);
+        dispatch(
+            &w,
+            &path,
+            &mut app,
+            &store,
+            "Image draft".into(),
+            &tx,
+            &done,
+        )
+        .unwrap()
+        .unwrap();
+        let outcome = tokio::time::timeout(std::time::Duration::from_secs(5), finished.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        let Outcome::RejectedInput { text, error } = outcome else {
+            panic!("Expected rejected input")
+        };
+        assert_eq!(text, "Image draft");
+        assert!(error.contains("pending tool"));
+        assert_eq!(app.attachments[0].id, id);
+        assert!(
+            !std::iter::from_fn(|| rx.try_recv().ok())
+                .any(|e| matches!(e, Event::InputAccepted(_)))
+        );
+        assert!(!w.root.join("01_Sources/Assets").exists());
+    }
     #[test]
     fn budget_query_is_local_and_preserves_chat_input_context_and_session() {
         let dir = tempfile::tempdir().unwrap();

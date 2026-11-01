@@ -76,9 +76,13 @@ Interactive execution has no request-count or step-count cap. Work continues unt
 | Up/Down at the first/last input line | Recall submitted input / restore the unfinished draft |
 | Ctrl+T / click a detail heading | Expand/collapse all execution details / one entry |
 | Alt+Enter / supported Shift+Enter / Ctrl+J | Insert a newline; multiline paste never sends |
-| Esc in transcript | Latest output, resume following, return input focus |
-| Esc in composer | Request cancellation when running; retain the draft |
-| Ctrl+C in Chat | Clear only the input; do not cancel or exit |
+| Ctrl+W in Chat | Delete the whitespace-delimited word before the cursor |
+| Ctrl+V in Chat | Paste a clipboard image as a pending attachment, or insert clipboard text |
+| Ctrl+X / click an attachment | Remove the last pending image / the clicked image |
+| Click / scroll Chat transcript | Read or expand details while the composer stays ready for typing |
+| Esc while reading older output | Latest output, resume following, return input focus |
+| Esc in composer while following | Request cancellation when running; retain the draft |
+| Ctrl+C in Chat | Clear text and pending attachments; do not cancel or exit |
 | /exit or /quit in Chat / Ctrl+D in an empty composer | Exit; active work stops and records its outcome first |
 | Ctrl+Q / q in Browse | Exit when idle |
 | F1 | Show help |
@@ -86,6 +90,8 @@ Interactive execution has no request-count or step-count cap. Work continues unt
 The transcript and composer are borderless; the input has a gray background and supports multiple lines, cursor movement and Unicode grapheme deletion. The browser and conversation render Markdown. Ordinary replies remain visible; thinking supplied by the service, tool arguments/results and activity notices are collapsed by default. Click a heading or use Ctrl+T to inspect them. The status line shows the model, state, short session ID and service-reported input usage; click it or use `/status` for full details. Missing usage remains unavailable, with no estimates or inferred percentages.
 
 See the [interaction contract](Interaction.md) for focus priority, terminal compatibility, link handling and cancellation semantics.
+
+Clipboard images require a local desktop clipboard and a service/model accepting image inputs. Enter submits pending images, with or without text; they become hash-checked source assets that persist with the session. New sources still require review. Ctrl+D exits only when there is no text, image or clipboard read in progress. See [clipboard images](Interaction.md#clipboard-images) for removal, limits, Linux compositor support and provider behavior.
 
 F8 or the document context menu opens [Impact and Compare](Inspection.md). Follow recorded reference chains, explicitly select a baseline to compare, or compare repository evidence against the latest synchronized snapshot. Changes clear stale results; R revalidates. Missing inputs remain visible and no business state is inferred from text differences.
 

@@ -35,7 +35,7 @@ pub const TABS: &[(&str, &str)] = &[
 ];
 pub const HELP: &str = "# PM Agent\n\nF2 switches Browse / Chat. F1 opens help. Ctrl+Q exits when idle.\n\n## Browse\nAlt+1…9 selects a category; Alt+0 lists all categories. Alt+Left/Right cycles categories.\nEnter opens the selected document; Esc returns to the list. F3 collapses the list; F4 maximizes the document. F6 toggles emoji.\nTab switches focus. PgUp/PgDn scroll. Mouse wheel scrolls the pointed pane; drag the right scrollbar. Right-click opens actions. L shows document links. P shows properties. O opens the original in the desktop application. R refreshes immediately. Local knowledge files also refresh automatically every two seconds; drafts are retained and changed inputs require a new preview. E edits supported project fields; N creates a PBI, risk or decision. F5 or Planning opens the local planning view: 1 Schedule, 2 Capacity, 3 Signals; M proposes an iteration move; P/I/A edit allocations, iterations and forecast date; R refreshes; Esc returns. F7 or Delivery opens Changes, UAT, Releases and Benefits: 1-4/Alt+1-4 select tabs, N creates a draft, E edits, O opens the document, R refreshes, Enter focuses details, Esc returns.\n\nF8 or the document context menu opens Impact and Compare: 1 references, 2 baseline diff, 3 source diff; Enter explicitly compares a baseline; O opens a candidate; R revalidates; F4 maximizes; Esc returns. Changed project inputs clear results. Source comparisons use captured snapshots only.
 
-F11 opens Recovery: Alt+1/2/3 or mouse selects Backup/Check/Restore. Enter absolute paths; Tab selects fields and session inclusion. Ctrl+S reviews, then Ctrl+S executes writes. Esc/right-click backs out or requests cancellation. Unsent Chat input is preserved.\n\nF10 opens Materials: Enter/R checks the selected original and extracted text; 1/2/3/4 switch Overview/Text/Evidence/Reviews; V starts a review, E edits a draft; O opens a rechecked original, N opens the current note, [/] cycle claims, F4 maximizes.\n\nF9 opens Questions: scope, affected files, recorded answers and resolution checks. Enter focuses details; Esc returns; O opens the note; R refreshes.\n\n## Editing\nEnter/Tab edits fields; lists use one value per line. Use left/right to select enum values. Ctrl+S reviews changes, then Ctrl+S saves the reviewed result. Esc reverts the active field or returns from preview. Ctrl+D discards with confirmation.\n\n## Chat\nType immediately. Enter sends; Alt+Enter, Shift+Enter or Ctrl+J inserts a newline. Multiline paste never submits.\nScroll the conversation to read history. Esc returns to the latest message and input. A separate Esc in the input cancels an active operation. Ctrl+C clears only the draft. /exit or Ctrl+D with an empty input exits, stopping active work first.\nType / for commands or a leading $ for Skills; arrows select, Tab/Enter or click inserts, Esc closes. Up/Down at the first/last input line recalls history and restores the draft.\nTool activity and service-provided thinking are collapsed: click their headings or Ctrl+T to toggle details.\n\n## Commands\n/help, /status, /budget, /probe [PROFILE], /probe last [PROFILE], /skills, /skills clear, /search TEXT, /stage prd, /pm plan, /sessions, /resume ID, /continue, /continue-independent, /answer QUESTION-ID TEXT, /approve, /deny, /reconcile ACTUAL_OUTCOME, /new, /exit, /quit.\n/budget shows configured session limits and saved request usage without a model request.\n/probe explicitly sends up to three synthetic requests (service charges may apply); /probe last reads local observations. Use a leading $skill-name to explicitly enable a project Skill. Skills remain selected in the session until cleared. Context values come only from the service; missing values remain unavailable.";
+F11 opens Recovery: Alt+1/2/3 or mouse selects Backup/Check/Restore. Enter absolute paths; Tab selects fields and session inclusion. Ctrl+S reviews, then Ctrl+S executes writes. Esc/right-click backs out or requests cancellation. Unsent Chat input is preserved.\n\nF10 opens Materials: Enter/R checks the selected original and extracted text; 1/2/3/4 switch Overview/Text/Evidence/Reviews; V starts a review, E edits a draft; O opens a rechecked original, N opens the current note, [/] cycle claims, F4 maximizes.\n\nF9 opens Questions: scope, affected files, recorded answers and resolution checks. Enter focuses details; Esc returns; O opens the note; R refreshes.\n\n## Editing\nEnter/Tab edits fields; lists use one value per line. Use left/right to select enum values. Ctrl+S reviews changes, then Ctrl+S saves the reviewed result. Esc reverts the active field or returns from preview. Ctrl+D discards with confirmation.\n\n## Chat\nType immediately. Enter sends; Alt+Enter, Shift+Enter or Ctrl+J inserts a newline. Multiline paste never submits.\nClick or scroll the conversation without leaving the input. Esc returns to the latest message and resumes following. A separate Esc in the input cancels an active operation. Ctrl+W deletes the word before the cursor. Ctrl+V pastes a clipboard image or text; Enter sends pending images. Ctrl+X removes the last image; clicking its chip removes it. Ctrl+C clears text and attachments. /exit or Ctrl+D with no input, attachment or clipboard read exits, stopping active work first.\nType / for commands or a leading $ for Skills; arrows select, Tab/Enter or click inserts, Esc closes. Up/Down at the first/last input line recalls history and restores the draft.\nTool activity and service-provided thinking are collapsed: click their headings or Ctrl+T to toggle details.\n\n## Commands\n/help, /status, /budget, /probe [PROFILE], /probe last [PROFILE], /skills, /skills clear, /search TEXT, /stage prd, /pm plan, /sessions, /resume ID, /continue, /continue-independent, /answer QUESTION-ID TEXT, /approve, /deny, /reconcile ACTUAL_OUTCOME, /new, /exit, /quit.\n/budget shows configured session limits and saved request usage without a model request.\n/probe explicitly sends up to three synthetic requests (service charges may apply); /probe last reads local observations. Use a leading $skill-name to explicitly enable a project Skill. Skills remain selected in the session until cleared. Context values come only from the service; missing values remain unavailable.";
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Mode {
@@ -62,6 +62,7 @@ pub enum Command {
     Open(String),
     Skills,
     RefreshSkills,
+    PasteClipboard,
     Edit(String),
     New(String),
     ReviewEdit,
@@ -136,6 +137,7 @@ struct Regions {
     list: Rect,
     content: Rect,
     composer: Rect,
+    image_buttons: Vec<(Rect, usize)>,
     transcript: Rect,
     status: Rect,
     collapse: Rect,
@@ -156,6 +158,9 @@ pub struct App {
     pub scroll: usize,
     pub filter: String,
     pub input: Editor,
+    pub(super) attachments: Vec<crate::chat_images::Image>,
+    pub(super) clipboard_pending: bool,
+    clipboard_generation: u64,
     pub output: String,
     pub(super) messages: Transcript,
     pub(super) history: History,
@@ -207,6 +212,9 @@ impl App {
             scroll: 0,
             filter: String::new(),
             input: Editor::default(),
+            attachments: vec![],
+            clipboard_pending: false,
+            clipboard_generation: 0,
             output: String::new(),
             messages: Transcript::default(),
             history: History::default(),
@@ -369,11 +377,20 @@ impl App {
         self.project_output(text);
     }
     pub(super) fn user_message(&mut self, text: &str) {
-        self.messages.push(Kind::User, "You", text);
+        let mut body = text.to_string();
+        if !text.starts_with('/') || text.starts_with("/answer ") {
+            for (i, image) in self.attachments.iter().enumerate() {
+                body.push_str(&format!("\n\n[Image {} · {}]", i + 1, image.label()));
+            }
+        }
+        self.messages.push(Kind::User, "You", &body);
         self.project_output(text);
     }
     pub(super) fn provider_event(&mut self, event: crate::provider::Event) {
         match event {
+            crate::provider::Event::InputAccepted(ids) => {
+                self.attachments.retain(|image| !ids.contains(&image.id))
+            }
             crate::provider::Event::Text(text) => self.append(&text),
             crate::provider::Event::Reasoning(text) => self.messages.delta(Kind::Reasoning, &text),
             crate::provider::Event::Tool {
@@ -390,7 +407,49 @@ impl App {
             }
         }
     }
+    pub(super) fn start_clipboard(&mut self) -> u64 {
+        self.clipboard_pending = true;
+        self.clipboard_generation = self.clipboard_generation.wrapping_add(1);
+        self.clipboard_generation
+    }
+    fn discard_paste(&mut self) {
+        self.clipboard_pending = false;
+        self.clipboard_generation = self.clipboard_generation.wrapping_add(1);
+    }
+    pub(super) fn finish_clipboard(
+        &mut self,
+        generation: u64,
+        result: anyhow::Result<crate::chat_images::ClipboardContent>,
+    ) {
+        if generation != self.clipboard_generation {
+            return;
+        }
+        self.clipboard_pending = false;
+        match result {
+            Ok(crate::chat_images::ClipboardContent::Image(image)) => {
+                if self.attachments.len() >= crate::chat_images::MAX_IMAGES {
+                    self.status =
+                        "Four images are already attached; remove one before pasting another"
+                            .into();
+                } else {
+                    self.status = format!(
+                        "Image attached · {} · Enter sends · Ctrl+X removes the last image",
+                        image.label()
+                    );
+                    self.attachments.push(image);
+                    self.dismiss_completion();
+                }
+            }
+            Ok(crate::chat_images::ClipboardContent::Text(text)) => {
+                self.input.insert(&text);
+                self.history.edited();
+                self.refresh_completion();
+            }
+            Err(e) => self.status = format!("Paste unavailable: {e:#}"),
+        }
+    }
     pub(super) fn reset_chat(&mut self) {
+        self.discard_paste();
         self.output.clear();
         self.messages = Transcript::default();
         self.chat_cache = (usize::MAX, 0);
@@ -761,7 +820,6 @@ impl App {
     fn scroll_by(&mut self, down: bool, n: usize) {
         let (pos, max) = if self.mode == Mode::Chat {
             self.dismiss_completion();
-            self.focus = Focus::Transcript;
             self.follow = false;
             (
                 &mut self.transcript_scroll,
@@ -803,7 +861,6 @@ impl App {
         if self.mode == Mode::Chat {
             self.transcript_scroll = offset.min(max);
             self.follow = false;
-            self.focus = Focus::Transcript;
         } else {
             self.scroll = offset.min(max);
             self.focus = Focus::Content;
@@ -910,7 +967,29 @@ impl App {
                         self.dismiss_completion();
                     }
                 }
+                if self.mode == Mode::Chat
+                    && (self.regions.transcript.contains(p) || self.regions.bar.contains(p))
+                {
+                    self.focus = Focus::Composer;
+                }
                 match mouse.kind {
+                    MouseEventKind::Down(MouseButton::Left)
+                        if self
+                            .regions
+                            .image_buttons
+                            .iter()
+                            .any(|(r, _)| r.contains(p)) =>
+                    {
+                        if let Some((_, index)) = self
+                            .regions
+                            .image_buttons
+                            .iter()
+                            .find(|(r, _)| r.contains(p))
+                            && *index < self.attachments.len()
+                        {
+                            self.attachments.remove(*index);
+                        }
+                    }
                     MouseEventKind::Up(_) => self.dragging = false,
                     MouseEventKind::Drag(MouseButton::Left) if self.dragging => {
                         self.bar_position(mouse.row)
@@ -979,7 +1058,7 @@ impl App {
                         } else if self.regions.content.contains(p) {
                             self.focus = Focus::Content;
                         } else if self.regions.transcript.contains(p) {
-                            self.focus = Focus::Transcript;
+                            self.focus = Focus::Composer;
                             self.follow = false;
                             if button == MouseButton::Left {
                                 let row = self.transcript_scroll
@@ -1000,7 +1079,11 @@ impl App {
                                 mouse.column.saturating_sub(self.regions.composer.x + 1) as usize,
                             );
                         }
-                        if button == MouseButton::Right {
+                        if button == MouseButton::Right
+                            && !(self.mode == Mode::Chat
+                                && (self.regions.transcript.contains(p)
+                                    || self.regions.bar.contains(p)))
+                        {
                             self.context_menu();
                         }
                     }
@@ -1051,6 +1134,8 @@ impl App {
             && self.mode == Mode::Chat
         {
             self.input.clear();
+            self.attachments.clear();
+            self.discard_paste();
             self.history.edited();
             self.dismiss_completion();
             return Command::None;
@@ -1077,6 +1162,19 @@ impl App {
             return Command::None;
         }
         if self.mode == Mode::Chat {
+            if self.focus == Focus::Composer && key.modifiers.contains(KeyModifiers::CONTROL) {
+                if key.code == KeyCode::Char('v') {
+                    if !self.clipboard_pending {
+                        self.dismiss_completion();
+                        return Command::PasteClipboard;
+                    }
+                    return Command::None;
+                }
+                if key.code == KeyCode::Char('x') {
+                    self.attachments.pop();
+                    return Command::None;
+                }
+            }
             if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('t') {
                 self.messages.toggle_all();
                 return Command::None;
@@ -1085,6 +1183,8 @@ impl App {
                 && key.code == KeyCode::Char('d')
                 && self.focus == Focus::Composer
                 && self.input.text.is_empty()
+                && self.attachments.is_empty()
+                && !self.clipboard_pending
             {
                 return Command::Quit;
             }
@@ -1229,7 +1329,7 @@ impl App {
                 {
                     self.history.recall(&mut self.input, true)
                 }
-                KeyCode::Esc if self.focus == Focus::Transcript => self.latest(),
+                KeyCode::Esc if self.focus == Focus::Transcript || !self.follow => self.latest(),
                 KeyCode::Esc if self.busy => return Command::Cancel,
                 KeyCode::Esc => {}
                 KeyCode::PageUp => self.scroll_by(false, self.regions.transcript.height as usize),
@@ -1255,9 +1355,12 @@ impl App {
                     if matches!(self.input.text.trim(), "/exit" | "/quit") {
                         return Command::Quit;
                     }
-                    if self.busy {
+                    if self.clipboard_pending {
+                        self.status =
+                            "Waiting for clipboard content; Ctrl+C discards the draft".into();
+                    } else if self.busy {
                         self.status = "Running — draft retained; Esc cancels".into();
-                    } else if !self.input.text.trim().is_empty() {
+                    } else if !self.input.text.trim().is_empty() || !self.attachments.is_empty() {
                         self.follow = true;
                         self.history.remember(&self.input.text);
                         return Command::Submit(self.input.take());
@@ -1798,6 +1901,28 @@ impl App {
         );
         let bg = Style::default().bg(Color::DarkGray).fg(Color::White);
         f.render_widget(Block::default().style(bg), rows[1]);
+        let mut x = rows[1].x;
+        for (index, image) in self.attachments.iter().enumerate() {
+            let label = format!(" [Image {} · {} ×] ", index + 1, image.label());
+            let width = (label.width() as u16).min(rows[1].right().saturating_sub(x));
+            let chip = Rect::new(x, rows[1].y, width, rows[1].height.min(1));
+            if width > 0 {
+                f.render_widget(Paragraph::new(label).style(bg.fg(Color::Cyan)), chip);
+                self.regions.image_buttons.push((chip, index));
+            }
+            x = x.saturating_add(width);
+        }
+        if self.clipboard_pending {
+            f.render_widget(
+                Paragraph::new(" Reading clipboard… ").style(bg.fg(Color::Yellow)),
+                Rect::new(
+                    x,
+                    rows[1].y,
+                    rows[1].right().saturating_sub(x),
+                    rows[1].height.min(1),
+                ),
+            );
+        }
         let inner = Rect::new(
             rows[1].x.saturating_add(1),
             rows[1].y.saturating_add(1),
@@ -1873,6 +1998,129 @@ mod tests {
     }
     fn buffer_text(buffer: &ratatui::buffer::Buffer) -> String {
         buffer.content.iter().map(|c| c.symbol()).collect()
+    }
+    fn paste_image(app: &mut App) -> String {
+        let image = crate::chat_images::Image::from_rgba(2, 1, &[255; 8]).unwrap();
+        let id = image.id.clone();
+        let ticket = app.start_clipboard();
+        app.finish_clipboard(
+            ticket,
+            Ok(crate::chat_images::ClipboardContent::Image(image)),
+        );
+        id
+    }
+    #[test]
+    fn transcript_mouse_actions_preserve_immediate_editing_and_reading_position() {
+        let mut a = App::new(vec![]);
+        a.switch(Mode::Chat);
+        a.append(&"History\n\n".repeat(60));
+        a.input.insert("before suffix");
+        a.input.cursor = "before".len();
+        draw(&mut a, 90, 24);
+        let transcript = a.regions.transcript;
+        let bar = a.regions.bar;
+        for (kind, area) in [
+            (MouseEventKind::ScrollUp, transcript),
+            (MouseEventKind::Down(MouseButton::Left), transcript),
+            (MouseEventKind::Down(MouseButton::Right), transcript),
+            (MouseEventKind::Down(MouseButton::Left), bar),
+            (
+                MouseEventKind::Drag(MouseButton::Left),
+                Rect::new(bar.x, bar.y + 2, 1, 1),
+            ),
+            (MouseEventKind::Up(MouseButton::Left), bar),
+            (MouseEventKind::Down(MouseButton::Right), bar),
+        ] {
+            a.event(mouse(kind, area));
+            assert_eq!(a.focus, Focus::Composer);
+            assert!(a.menu.is_none());
+            assert_eq!(a.input.cursor, 6);
+            assert_eq!(a.input.text, "before suffix");
+            assert!(!a.follow);
+            let offset = a.transcript_scroll;
+            key(&mut a, KeyCode::Char('中'));
+            assert_eq!(a.input.text, "before中 suffix");
+            key(&mut a, KeyCode::Backspace);
+            draw(&mut a, 90, 24);
+            assert_eq!(a.transcript_scroll, offset);
+        }
+        ctrl(&mut a, 'w');
+        assert_eq!(a.input.text, " suffix");
+    }
+    #[test]
+    fn clipboard_drafts_are_explicit_removable_and_acknowledged_by_identity() {
+        let mut a = App::new(vec![]);
+        assert_eq!(ctrl(&mut a, 'v'), Command::None);
+        a.switch(Mode::Chat);
+        assert_eq!(ctrl(&mut a, 'v'), Command::PasteClipboard);
+        let pending = a.start_clipboard();
+        assert_eq!(ctrl(&mut a, 'v'), Command::None);
+        assert_eq!(key(&mut a, KeyCode::Enter), Command::None);
+        assert_eq!(ctrl(&mut a, 'd'), Command::None);
+        a.finish_clipboard(pending, Err(anyhow::anyhow!("Clipboard unavailable")));
+        assert!(a.attachments.is_empty());
+        assert!(a.status.contains("Clipboard unavailable"));
+        let first = paste_image(&mut a);
+        assert_eq!(ctrl(&mut a, 'd'), Command::None);
+        assert_eq!(key(&mut a, KeyCode::Enter), Command::Submit(String::new()));
+        assert_eq!(a.attachments.len(), 1); // Retained until runtime accepts the input.
+        let second = paste_image(&mut a);
+        a.provider_event(crate::provider::Event::InputAccepted(vec![first]));
+        assert_eq!(a.attachments[0].id, second);
+        let rendered = buffer_text(&draw(&mut a, 100, 24));
+        assert!(rendered.contains("Image 1 · 2×1 PNG"));
+        a.event(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            a.regions.image_buttons[0].0,
+        ));
+        // A second click before repaint must not index an already removed attachment.
+        a.event(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            a.regions.image_buttons[0].0,
+        ));
+        assert!(a.attachments.is_empty());
+        paste_image(&mut a);
+        ctrl(&mut a, 'x');
+        assert!(a.attachments.is_empty());
+        for _ in 0..5 {
+            paste_image(&mut a);
+        }
+        assert_eq!(a.attachments.len(), crate::chat_images::MAX_IMAGES);
+        for (w, h) in [(1, 1), (2, 2), (20, 7), (100, 24)] {
+            draw(&mut a, w, h);
+        }
+        a.input.insert("draft");
+        a.busy = true;
+        assert_eq!(key(&mut a, KeyCode::Enter), Command::None);
+        ctrl(&mut a, 'c');
+        assert!(a.attachments.is_empty() && a.input.text.is_empty());
+        assert!(a.busy);
+    }
+    #[test]
+    fn late_clipboard_results_cannot_restore_cleared_drafts_and_text_paste_does_not_submit() {
+        let mut a = App::new(vec![]);
+        a.switch(Mode::Chat);
+        let ticket = a.start_clipboard();
+        ctrl(&mut a, 'c');
+        a.finish_clipboard(
+            ticket,
+            Ok(crate::chat_images::ClipboardContent::Text("late".into())),
+        );
+        assert!(a.input.text.is_empty());
+        a.input.insert("prefix suffix");
+        a.input.cursor = 6;
+        let ticket = a.start_clipboard();
+        a.finish_clipboard(
+            ticket,
+            Ok(crate::chat_images::ClipboardContent::Text("\n中文".into())),
+        );
+        assert_eq!(a.input.text, "prefix\n中文 suffix");
+        assert!(a.session.is_none());
+        paste_image(&mut a);
+        let ticket = a.start_clipboard();
+        a.finish_clipboard(ticket, Err(anyhow::anyhow!("Not an image")));
+        assert_eq!(a.attachments.len(), 1);
+        assert_eq!(a.input.text, "prefix\n中文 suffix");
     }
     #[test]
     fn exit_requires_empty_composer_or_exact_command_and_preserves_cancellation_controls() {
@@ -1997,7 +2245,7 @@ mod tests {
         assert!(!visible.contains("SERVICE_DETAIL"));
         assert!(visible.contains("Readable answer"));
         assert!(a.busy);
-        assert_eq!(a.focus, Focus::Transcript);
+        assert_eq!(a.focus, Focus::Composer);
         assert_eq!(key(&mut a, KeyCode::Esc), Command::None);
         assert_eq!(a.focus, Focus::Composer);
     }
@@ -2071,7 +2319,7 @@ mod tests {
         a.replace_documents(vec![doc("A"), doc("B"), doc("C")]);
         draw(&mut a, 80, 24);
         assert_eq!(a.mode, Mode::Chat);
-        assert_eq!(a.focus, Focus::Transcript);
+        assert_eq!(a.focus, Focus::Composer);
         assert!(!a.follow);
         assert_eq!(a.transcript_scroll, reading);
         assert_eq!(a.input.text, "Draft 中文");
@@ -2266,7 +2514,7 @@ mod tests {
         a.append(&"\n\nHistory\n".repeat(60));
         draw(&mut a, 80, 24);
         a.event(mouse(MouseEventKind::ScrollUp, a.regions.transcript));
-        assert_eq!(a.focus, Focus::Transcript);
+        assert_eq!(a.focus, Focus::Composer);
         assert!(!a.follow);
         assert_eq!(key(&mut a, KeyCode::Esc), Command::None);
         assert_eq!(a.focus, Focus::Composer);
@@ -2357,7 +2605,7 @@ mod tests {
             a.transcript_scroll,
             a.transcript.lines.len() - a.regions.transcript.height as usize
         );
-        assert_eq!(a.focus, Focus::Transcript);
+        assert_eq!(a.focus, Focus::Composer);
         key(&mut a, KeyCode::Esc);
         draw(&mut a, 70, 20);
         assert!(a.follow);

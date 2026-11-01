@@ -9,6 +9,7 @@ use tokio_util::sync::CancellationToken;
 
 #[derive(Debug, Clone)]
 pub enum Event {
+    InputAccepted(Vec<String>),
     Text(String),
     Reasoning(String),
     Tool {

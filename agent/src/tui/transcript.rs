@@ -206,7 +206,10 @@ impl Transcript {
             }
             let role = item["role"].as_str().unwrap_or("");
             if matches!(role, "user" | "assistant") {
-                let body = message_text(item);
+                let mut body = message_text(item);
+                for label in crate::chat_images::labels(item) {
+                    body.push_str(&format!("\n\n{label}"));
+                }
                 if !body.is_empty() {
                     transcript.push(
                         if role == "user" {
@@ -405,6 +408,7 @@ mod tests {
         assert!(s.reasoning_summaries.is_empty());
         s.history = vec![
             json!({"role":"user","content":"Question\n\n[Application source locator: PRIVATE_LOCATOR]"}),
+            json!({"role":"user","content":[{"type":"text","text":"\n\n[Application source locator: PRIVATE_LOCATOR]"},{"type":"pm_image","image":{"width":20,"height":10,"path":"PRIVATE_LOCATOR"}}]}),
             json!({"role":"assistant","content":"Answer", "tool_calls":[{"id":"chat-call","function":{"name":"read","arguments":"{}"}}]}),
             json!({"role":"tool","tool_call_id":"chat-call","content":"{\"error\":\"SYNTHETIC_ERROR\"}"}),
             json!({"type":"reasoning","encrypted_content":"OPAQUE_SECRET","summary":[{"type":"summary_text","text":"PUBLIC_SUMMARY"}]}),
@@ -416,6 +420,7 @@ mod tests {
         let mut t = Transcript::from_session(&s);
         let collapsed = visible(&t);
         assert!(collapsed.contains("Answer"));
+        assert!(collapsed.contains("Image 1 · 20×10 PNG"));
         assert!(collapsed.contains("Error reported"));
         assert!(collapsed.contains("blocked_by_clarification"));
         assert!(!collapsed.contains("PUBLIC_SUMMARY"));

@@ -1,6 +1,7 @@
 pub mod backup;
 pub mod baselines;
 pub mod budget;
+pub mod chat_images;
 pub mod clarification;
 pub mod config;
 pub mod delivery;

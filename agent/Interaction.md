@@ -10,7 +10,7 @@ The user-approved interface separates project browsing and Agent chat. It preser
 
 ## Modes and navigation
 
-F2 or a click on the top mode labels switches modes. Browse starts with the document list focused; Chat starts with the composer focused. F1 opens help. Ctrl+Q exits only when idle; Browse also accepts q. Chat accepts `/exit` (or `/quit`) and Ctrl+D with an exactly empty composer. Ctrl+D does not discard a nonempty draft and has no exit action while reading the transcript.
+F2 or a click on the top mode labels switches modes. Browse starts with the document list focused; Chat starts with the composer focused. F1 opens help. Ctrl+Q exits only when idle; Browse also accepts q. Chat accepts `/exit` (or `/quit`) and Ctrl+D with an exactly empty composer, no attachments and no pending clipboard read. Ctrl+D does not discard a nonempty draft and has no exit action in explicit keyboard transcript focus.
 
 Browse uses Alt+1–9 for the first nine categories, Alt+0 for the complete eleven-category menu, and Alt+Left/Right to cycle. Category labels are clickable; overflow remains available through More. F6 switches emoji on/off. Type-based document icons retain readable titles.
 
@@ -30,7 +30,7 @@ F5 or the Planning button in Browse opens [interactive scheduling](Planning-View
 
 The browser and transcript share a terminal Markdown renderer: headings, emphasis, lists, task markers, quotes, fenced/inline code, tables and links. Obsidian links navigate to an unambiguous local document. Links in code remain literal. Images and diagrams are not visually rendered; linked originals can be opened using the desktop application. Metadata is shown through Properties instead of raw frontmatter.
 
-The right scrollbar uses rendered rows after wrapping. Wheel events operate on the pointed pane; scrollbar clicks and drags change its position. Scrolling the conversation enters reading focus and pauses following new output. New streamed text does not pull the reader to the bottom.
+The right scrollbar uses rendered rows after wrapping. Wheel events operate on the pointed pane; scrollbar clicks and drags change its position. Clicking or scrolling the conversation keeps the composer focused and preserves its cursor. This includes right-clicks and scrollbar dragging; they do not open a blocking menu. Reading older output pauses automatic following independently of keyboard focus. New streamed text does not pull the reader to the bottom, and typing remains available immediately. Shift+Tab explicitly selects keyboard transcript navigation; Tab or Esc returns to the composer.
 
 ## Recovery
 
@@ -38,16 +38,16 @@ Browse offers F11 Recovery, a top-bar action and a document context-menu entry. 
 
 ## Chat input and cancellation
 
-The transcript and composer are borderless. Only the composer has a gray background. Input is immediately editable; Enter submits. Alt+Enter, supported Shift+Enter and Ctrl+J insert a newline. Bracketed multiline paste inserts text without submitting. Arrow/Home/End and grapheme-aware deletion edit the draft; clicking the composer places the cursor. The input grows to a bounded height and then scrolls internally.
+The transcript and composer are borderless. Only the composer has a gray background. Input is immediately editable; Enter submits. Alt+Enter, supported Shift+Enter and Ctrl+J insert a newline. Bracketed multiline paste inserts text without submitting. Arrow/Home/End and grapheme-aware deletion edit the draft; clicking the composer places the cursor. Ctrl+W deletes preceding whitespace followed by one whitespace-delimited word before the cursor, preserving text after it. Combining characters and Emoji remain intact; punctuation and unspaced Chinese belong to the same word. The input grows to a bounded height and then scrolls internally.
 
 Up at the first logical input line recalls a previous submitted input; Down at the last line advances through history and restores the unfinished draft. Within a multiline draft, Up/Down still move between lines. Recall is local to the running interface (up to 200 inputs); loading a session also makes its saved user messages available.
 
-While an operation runs, the next draft remains editable but cannot be submitted automatically. Drafts survive mode changes. Ctrl+C clears the draft without cancelling an operation or exiting.
+While an operation runs, the next draft remains editable but cannot be submitted automatically. Drafts survive mode changes. Ctrl+C clears the draft and pending image attachments without cancelling an operation or exiting.
 
 Esc is handled by exactly one layer:
 
 1. An open command/Skill suggestion or action menu handles Esc by closing itself.
-2. Transcript focus handles Esc by jumping to the latest output, resuming following and returning focus to the composer.
+2. Paused following or explicit transcript focus handles Esc by jumping to the latest output, resuming following and returning focus to the composer. This also applies after mouse scrolling while the composer stayed focused.
 3. Composer focus handles a separate Esc by requesting cancellation of an active operation.
 4. An idle composer leaves its draft and mode unchanged.
 
@@ -56,6 +56,22 @@ Reported repeat key events do not trigger another action. Keyboard enhancement r
 Exit during active Chat work requests cancellation and waits for the recorded outcome before restoring the terminal. A native `/pm` worker cannot be forcibly rolled back: the interface waits for it to finish. If the background operation fails to return a recorded outcome, the error remains visible and a separate idle exit is available.
 
 Cancellation shows a pending state until the runtime records an outcome. A tool with an uncertain outcome still requires reconciliation; returning focus never implies cancellation, rollback or tool completion.
+
+## Clipboard images
+
+Ctrl+V in the composer reads the system clipboard once on a background worker. A decoded image becomes a pending PNG attachment, with its number and dimensions shown above the text inside the gray composer. If no image is available, readable clipboard text is inserted at the cursor without submission. The application never polls or overwrites the clipboard. It does not fetch remote image URLs or interpret clipboard filenames as image bytes.
+
+Click an attachment chip to remove it, or use Ctrl+X to remove the last pending image. Ctrl+C clears text and images and discards a delayed clipboard result. Enter waits for a pending read to finish; it then sends the text and images together, including an image-only message. Up to four images may be attached to one message. Each normalized PNG is limited to 8 MiB and 32 megapixels; the total raw PNG payload in a request is limited to 20 MiB. These byte limits are unrelated to service-reported Context usage. Pixels are not resized to meet a limit. Very narrow terminals may hide chips; Ctrl+X and Ctrl+C remain available.
+
+Local commands retain pending attachments; `/answer QUESTION-ID` can send an image without additional text. Attachments are removed from the composer only after the runtime accepts that submitted input. Newer images pasted while it starts remain pending for the next message. An input rejection preserves attachments and restores its text when the composer is empty. If a provider later rejects the request, the accepted input and images remain in the session; `/continue` retains them. There is no automatic retry that silently omits images.
+
+Submitted PNGs use ordinary `01_Sources/Assets` storage and source notes, so the existing Vault backup and Materials workflows include them. Sessions save local references, dimensions and SHA-256 hashes, not base64. Every request rechecks the asset before constructing the protocol payload. Missing, changed or out-of-scope images block sending; no image is silently dropped. Session replay displays attachment labels, not pixels. Unsent attachments are held in memory and are not restored after exit.
+
+Pasting is not visual review, OCR, source approval or clarification resolution. New source records remain pending review; reusing an existing image does not change its review state. The draft grounding gate still requires supported, reviewable text evidence for claims. Image-dependent facts must pass the existing material review and evidence workflow before becoming project assertions.
+
+The selected service and model must accept image inputs. Responses uses `input_image` and Chat Completions uses `image_url`, with PNG data URLs, following the official [image input formats](https://developers.openai.com/api/docs/guides/images-vision?api-mode=chat), checked on 2026-11-01. Protocol fixture tests do not establish a particular model's visual interpretation accuracy.
+
+Native clipboard access uses [arboard](https://docs.rs/arboard/latest/arboard/): macOS requires access to the local desktop clipboard; Linux uses X11 or a Wayland compositor supporting the data-control protocol. Headless/SSH environments and unsupported clipboard formats may be unavailable; failures appear in the status line and preserve the draft. A terminal that intercepts Ctrl+V must be configured to forward the key. Text remains available through ordinary terminal paste. Desktop clipboard APIs decode images before the application checks pixel limits.
 
 ## Command and Skill suggestions
 
@@ -69,7 +85,7 @@ Skill discovery refreshes when entering a new `$` completion context. Invalid en
 
 User messages and ordinary Agent replies remain expanded and use the shared Markdown renderer, with separate labels and spacing. Thinking, tool calls and activity notices appear as collapsed rows by default. Left-click a detail row's heading to expand/collapse that entry; Ctrl+T expands all details if any are collapsed, otherwise collapses them. New entries follow that preference. These actions never invoke a tool, change an approval or cancel execution.
 
-Tool headings distinguish requested/running/pending calls and recorded result status. Expanded calls show arguments and results as literal text, with formatted JSON where possible. An error or blocked result does not become a success just because a call returned. Approval requests, clarification prompts and errors retain a visible heading while their details are collapsed. Scrolling still pauses following; Esc from reading focus returns to the latest output and composer.
+Tool headings distinguish requested/running/pending calls and recorded result status. Expanded calls show arguments and results as literal text, with formatted JSON where possible. An error or blocked result does not become a success just because a call returned. Approval requests, clarification prompts and errors retain a visible heading while their details are collapsed. Scrolling pauses following while keeping input available; Esc resumes following at the latest output.
 
 Thinking is displayed only when the service supplies it: Responses public `response.reasoning_summary_text.delta` events (or completed output summaries), and compatible Chat Completions `delta.reasoning_content` / `delta.reasoning` string fields. No thinking is inferred from ordinary answer text, tool calls or elapsed time. Opaque encrypted continuation items are retained for Responses history but never rendered. The internal grounding reviewer remains isolated from the conversation.
 

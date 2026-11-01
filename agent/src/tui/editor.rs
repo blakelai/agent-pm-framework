@@ -97,8 +97,27 @@ impl Editor {
         let line = self.text[target..].split('\n').next().unwrap_or("");
         self.cursor = target + line.graphemes(true).take(col).map(str::len).sum::<usize>();
     }
+    /// Shell-style backward word deletion: trailing whitespace, then one non-whitespace run.
+    /// Grapheme boundaries keep combining characters and emoji sequences intact.
+    fn delete_word(&mut self) {
+        let mut start = self.cursor;
+        let mut in_word = false;
+        for (offset, grapheme) in self.text[..self.cursor].grapheme_indices(true).rev() {
+            let whitespace = grapheme.chars().all(char::is_whitespace);
+            if in_word && whitespace {
+                break;
+            }
+            in_word |= !whitespace;
+            start = offset;
+        }
+        self.text.replace_range(start..self.cursor, "");
+        self.cursor = start;
+    }
     pub fn key(&mut self, key: KeyEvent) {
         match key.code {
+            KeyCode::Char('w') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                self.delete_word()
+            }
             KeyCode::Char('j') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                 self.insert("\n")
             }
@@ -164,6 +183,27 @@ impl Editor {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn backward_word_deletion_handles_cursor_whitespace_unicode_and_start() {
+        let mut e = Editor::default();
+        let erase = KeyEvent::new(KeyCode::Char('w'), KeyModifiers::CONTROL);
+        e.key(erase);
+        assert_eq!(e.cursor, 0);
+        e.insert("first second   suffix");
+        e.cursor = "first second   ".len();
+        e.key(erase);
+        assert_eq!(e.text, "first suffix");
+        assert_eq!(e.cursor, 6);
+        e.clear();
+        e.insert("前段\n中文👩‍💻e\u{301}  ");
+        e.key(erase);
+        assert_eq!(e.text, "前段\n");
+        e.key(erase);
+        assert!(e.text.is_empty());
+        e.insert("one two-three");
+        e.key(erase);
+        assert_eq!(e.text, "one ");
+    }
     #[test]
     fn edits_graphemes_and_multiline_paste_without_submission() {
         let mut e = Editor::default();

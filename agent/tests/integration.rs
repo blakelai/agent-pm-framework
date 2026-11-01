@@ -18,6 +18,173 @@ use tokio_util::sync::CancellationToken;
 type Queue = Arc<Mutex<VecDeque<String>>>;
 
 #[tokio::test]
+async fn image_inputs_roundtrip_both_protocols_and_resume_without_persisting_base64() {
+    use base64::Engine;
+    use pm_agent::chat_images;
+    for protocol in [Protocol::Responses, Protocol::ChatCompletions] {
+        let (_dir, w) = fixture();
+        let response = match protocol {
+            Protocol::ChatCompletions => chat("Synthetic image receipt", vec![]),
+            Protocol::Responses => format!(
+                "data: {}\n\n",
+                json!({"type":"response.completed","response":{"status":"completed","output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Synthetic image receipt"}]}]}})
+            ),
+        };
+        let (url, _, requests, server) = server(vec![response.clone(), response]).await;
+        let cfg = config(url, protocol.clone());
+        let rt = Runtime::open(w.clone(), cfg.clone()).await.unwrap();
+        let mut session = Session::new(&cfg, "workflow").unwrap();
+        let pixels = [255, 0, 0, 255, 0, 255, 0, 255];
+        let image = chat_images::Image::from_rgba(2, 1, &pixels).unwrap();
+        rt.input_with_images(&mut session, "", &[image]).unwrap();
+        let stored = session.history[0].clone();
+        assert_eq!(chat_images::labels(&stored), ["[Image 1 · 2×1 PNG]"]);
+        assert!(!stored.to_string().contains("base64"));
+        let reference = &stored["content"][1]["image"];
+        let source =
+            pm_agent::records::read(&w, reference["source_note"].as_str().unwrap()).unwrap();
+        assert_eq!(source.metadata["review_status"], "pending");
+        rt.run(&mut session, None, &events().0, &CancellationToken::new())
+            .await
+            .unwrap();
+        assert_eq!(session.status, Status::Completed, "{:?}", session.error);
+        let mut resumed: Session = rt.store.load(&session.id).unwrap();
+        assert_eq!(resumed.history[0], stored);
+        rt.input(&mut resumed, "Retain the image in the next request")
+            .unwrap();
+        rt.run(&mut resumed, None, &events().0, &CancellationToken::new())
+            .await
+            .unwrap();
+        assert_eq!(resumed.status, Status::Completed);
+        for request in requests.lock().unwrap().iter() {
+            assert!(!request.to_string().contains("pm_image"));
+            let field = if protocol == Protocol::Responses {
+                "input"
+            } else {
+                "messages"
+            };
+            let user = request[field]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|i| i["role"] == "user")
+                .unwrap();
+            let url = if protocol == Protocol::Responses {
+                assert_eq!(user["content"][0]["type"], "input_text");
+                assert_eq!(user["content"][1]["type"], "input_image");
+                user["content"][1]["image_url"].as_str().unwrap()
+            } else {
+                assert_eq!(user["content"][0]["type"], "text");
+                assert_eq!(user["content"][1]["type"], "image_url");
+                user["content"][1]["image_url"]["url"].as_str().unwrap()
+            };
+            let png = base64::engine::general_purpose::STANDARD
+                .decode(url.strip_prefix("data:image/png;base64,").unwrap())
+                .unwrap();
+            assert_eq!(
+                image::load_from_memory(&png).unwrap().to_rgba8().as_raw(),
+                &pixels
+            );
+        }
+        assert_eq!(requests.lock().unwrap().len(), 2);
+        // Missing assets stop before a new attempt; no silent text-only fallback.
+        std::fs::remove_file(w.path(reference["path"].as_str().unwrap()).unwrap()).unwrap();
+        rt.input(&mut resumed, "Missing image must block sending")
+            .unwrap();
+        rt.run(&mut resumed, None, &events().0, &CancellationToken::new())
+            .await
+            .unwrap();
+        assert_eq!(resumed.status, Status::Failed);
+        assert_eq!(resumed.request_ledger.unwrap().requests.len(), 2);
+        assert_eq!(requests.lock().unwrap().len(), 2);
+        assert!(resumed.error.unwrap().contains("Image unavailable"));
+        server.abort();
+    }
+}
+
+#[test]
+fn image_references_reject_tampering_escape_and_oversize_without_changing_history() {
+    use pm_agent::chat_images;
+    let (_dir, w) = fixture();
+    let image = chat_images::Image::from_rgba(1, 1, &[255; 4]).unwrap();
+    let saved = chat_images::save(&w, std::slice::from_ref(&image)).unwrap();
+    assert_eq!(
+        chat_images::save(&w, std::slice::from_ref(&image)).unwrap()[0].path,
+        saved[0].path
+    );
+    assert!(chat_images::save(&w, &vec![image; 5]).is_err());
+    let original = chat_images::message("Test".into(), &saved);
+    for (field, bad) in [
+        ("path", json!("01_Sources/Assets/../../secret.png")),
+        ("path", json!("00_Governance/Project.md")),
+        ("sha256", json!("bad")),
+        ("width", json!(100)),
+        ("bytes", json!(chat_images::MAX_IMAGE_BYTES + 1)),
+    ] {
+        let mut altered = original.clone();
+        altered["content"][1]["image"][field] = bad;
+        assert!(chat_images::hydrate(&w, &[altered], &Protocol::Responses).is_err());
+    }
+    let path = w.path(&saved[0].path).unwrap();
+    let bytes = std::fs::read(&path).unwrap();
+    let mut altered = bytes.clone();
+    *altered.last_mut().unwrap() ^= 1;
+    std::fs::write(&path, altered).unwrap();
+    assert!(
+        chat_images::hydrate(
+            &w,
+            std::slice::from_ref(&original),
+            &Protocol::ChatCompletions
+        )
+        .is_err()
+    );
+    std::fs::remove_file(&path).unwrap();
+    #[cfg(unix)]
+    {
+        let external = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(external.path(), bytes).unwrap();
+        std::os::unix::fs::symlink(external.path(), &path).unwrap();
+        assert!(
+            chat_images::hydrate(&w, std::slice::from_ref(&original), &Protocol::Responses)
+                .is_err()
+        );
+    }
+    assert_eq!(original, chat_images::message("Test".into(), &saved));
+}
+
+#[tokio::test]
+async fn image_clarification_answer_records_receipt_without_resolving_or_approving() {
+    use pm_agent::chat_images;
+    let (_dir, w) = fixture();
+    let (url, _, _, server) = server(vec![chat("", vec![call(0, "ask", "ask_clarification", json!({"question":"Which workflow is required?","body":"Provide the workflow diagram."}))])]).await;
+    let cfg = config(url, Protocol::ChatCompletions);
+    let rt = Runtime::open(w.clone(), cfg.clone()).await.unwrap();
+    let mut s = Session::new(&cfg, "workflow").unwrap();
+    rt.input(&mut s, "Synthetic clarification fixture").unwrap();
+    rt.run(&mut s, None, &events().0, &CancellationToken::new())
+        .await
+        .unwrap();
+    assert_eq!(s.status, Status::WaitingClarification);
+    let question = s.questions[0].path.clone();
+    let image = chat_images::Image::from_rgba(1, 1, &[255; 4]).unwrap();
+    rt.answer_with_images(&mut s, &question, "", &[image])
+        .unwrap();
+    assert!(!s.questions[0].resolved);
+    assert!(
+        s.questions[0]
+            .answer
+            .as_ref()
+            .unwrap()
+            .contains("attachment does not establish source review")
+    );
+    assert_eq!(s.status, Status::Ready);
+    assert!(s.pending.is_empty());
+    let saved: Session = rt.store.load(&s.id).unwrap();
+    assert_eq!(chat_images::labels(saved.history.last().unwrap()).len(), 1);
+    server.abort();
+}
+
+#[tokio::test]
 async fn chat_activity_streams_preserve_service_reasoning_and_actual_tool_results() {
     let (_dir, w) = fixture();
     let reason = format!(
