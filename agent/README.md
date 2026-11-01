@@ -71,15 +71,19 @@ Interactive execution has no request-count or step-count cap. Work continues unt
 | F7 / Delivery in Browse | Change, UAT, release and benefit records, evidence checks and editors |
 | F8 / Impact and compare in context menu | Recorded downstream chains and explicit baseline/source differences |
 | F9 / Questions in context menu | Question scopes, affected records, response provenance and resolution checks |
-| Enter in Chat | Send the draft when idle; input is ready without pressing i |
+| Enter in Chat | Insert an open completion candidate, otherwise send the draft when idle |
+| / or $ at the start of input | Filter command or project Skill suggestions; Up/Down, Tab/Enter or click selects |
+| Up/Down at the first/last input line | Recall submitted input / restore the unfinished draft |
+| Ctrl+T / click a detail heading | Expand/collapse all execution details / one entry |
 | Alt+Enter / supported Shift+Enter / Ctrl+J | Insert a newline; multiline paste never sends |
 | Esc in transcript | Latest output, resume following, return input focus |
 | Esc in composer | Request cancellation when running; retain the draft |
 | Ctrl+C in Chat | Clear only the input; do not cancel or exit |
-| Ctrl+Q / q in Browse / /quit in Chat | Exit when idle |
+| /exit or /quit in Chat / Ctrl+D in an empty composer | Exit; active work stops and records its outcome first |
+| Ctrl+Q / q in Browse | Exit when idle |
 | F1 | Show help |
 
-The transcript and composer are borderless; the input has a gray background and supports multiple lines, cursor movement and Unicode grapheme deletion. The browser and conversation render Markdown. The status line shows the model, state, short session ID and service-reported input usage; click it or use `/status` for full details. Missing usage remains unavailable, with no estimates or inferred percentages.
+The transcript and composer are borderless; the input has a gray background and supports multiple lines, cursor movement and Unicode grapheme deletion. The browser and conversation render Markdown. Ordinary replies remain visible; thinking supplied by the service, tool arguments/results and activity notices are collapsed by default. Click a heading or use Ctrl+T to inspect them. The status line shows the model, state, short session ID and service-reported input usage; click it or use `/status` for full details. Missing usage remains unavailable, with no estimates or inferred percentages.
 
 See the [interaction contract](Interaction.md) for focus priority, terminal compatibility, link handling and cancellation semantics.
 
@@ -118,6 +122,7 @@ The [delivery views](Delivery-Workflows.md) show current workflow checks and mis
 | `/approve`, `/deny` | Decide the exact pending external/import operation |
 | `/reconcile actual outcome` | Record what happened to an interrupted operation without repeating it |
 | `/new` | Start a separate session, retaining the previous one |
+| `/exit`, `/quit` | Exit Chat, waiting for active work to stop and record its outcome |
 
 Stages are `workflow`, `intake`, `system`, `language`, `brd`, `prd`, `backlog`, `estimate` and `review`. The runtime loads the corresponding existing Skill and Playbook. Additional [custom project Skills](Skills.md) can be explicitly selected with a leading `$skill-name` or CLI `chat --skill NAME`; use `pm-agent --vault . skills` to inspect the catalog. Slash PM arguments currently split on whitespace; use the CLI for paths containing spaces or more complex arguments. Do not send secrets through either interface.
 

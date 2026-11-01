@@ -1,3 +1,4 @@
+mod completion;
 mod delivery;
 mod editor;
 mod form;
@@ -8,6 +9,7 @@ mod planner;
 mod questions;
 mod recovery;
 mod refresh;
+mod transcript;
 mod view;
 use crate::{
     config::Config,
@@ -63,6 +65,9 @@ impl Drop for InputModes {
 pub async fn run(workspace: Workspace, config_path: PathBuf, lock: WorkspaceLock) -> Result<()> {
     lock.verify(&workspace)?;
     let mut app = App::new(workspace.documents()?);
+    if let Ok(catalog) = Catalog::discover(&workspace) {
+        app.update_skills(&catalog);
+    }
     if let Ok(config) = Config::load(&config_path) {
         app.model = config.active()?.model.clone();
     }
@@ -84,6 +89,7 @@ pub async fn run(workspace: Workspace, config_path: PathBuf, lock: WorkspaceLock
     let (tx, mut rx) = mpsc::unbounded_channel::<Event>();
     let (done_tx, mut done_rx) = mpsc::unbounded_channel::<Outcome>();
     let mut cancellation = CancellationToken::new();
+    let mut exit_when_idle = false;
     let mut repaint = tokio::time::interval(std::time::Duration::from_millis(33));
     let mut dirty = true;
     let mut polling = tokio::time::interval(refresh::INTERVAL);
@@ -130,17 +136,17 @@ pub async fn run(workspace: Workspace, config_path: PathBuf, lock: WorkspaceLock
             _ = repaint.tick() => {
                 if dirty { terminal.draw(|f| app.draw(f))?; dirty = false; }
             },
-            Some(event)=rx.recv()=>{ dirty = true; match event {
-                Event::Text(text)=>app.append(&text),
-                Event::Notice(text)=>app.notice(&text),
-                Event::Usage(usage)=>app.usage=usage,
-            }},
+            Some(event)=rx.recv()=>{ dirty = true; app.provider_event(event); },
             Some(outcome)=done_rx.recv()=>{
+                while let Ok(event) = rx.try_recv() { app.provider_event(event); }
                 dirty = true;
                 monitor.invalidate();
                 app.busy=false;
+                let failed = matches!(outcome, Outcome::Error(_));
                 match outcome {
                     Outcome::Session(s)=>{
+                        app.messages.sync_tools(&s);
+                        app.messages.boundary();
                         app.status=format!("{:?} — session {}",s.status,s.id);
                         app.usage=s.usage.clone();
                         app.session=Some(*s);
@@ -153,6 +159,8 @@ pub async fn run(workspace: Workspace, config_path: PathBuf, lock: WorkspaceLock
                     Outcome::Error(text)=>app.notice(&format!("Error: {text}")),
                 }
                 refresh(&workspace,&mut app,&mut store);
+                if exit_when_idle && !failed { break; }
+                exit_when_idle = false;
             },
             event=events.next()=>{
                 dirty = true;
@@ -176,13 +184,17 @@ pub async fn run(workspace: Workspace, config_path: PathBuf, lock: WorkspaceLock
                         }
                     },
                     Command::None=>{},
-                    Command::Quit=>break,
+                    Command::Quit=>{
+                        if app.busy { cancellation.cancel(); exit_when_idle = true; app.status="Stopping before exit; waiting for the recorded outcome".into(); }
+                        else { break; }
+                    },
                     Command::Cancel=>{cancellation.cancel();app.status="Cancelling — waiting for the operation outcome".into();},
                     Command::Refresh=>refresh(&workspace,&mut app,&mut store),
                     Command::Open(target)=>{
                         let result=if target.starts_with("https://") || target.starts_with("http://") {open_document(PathBuf::from(target))} else {workspace.path(&target).and_then(open_document)};
                         if let Err(e)=result {app.status=format!("Open failed: {e}");}
                     },
+                    Command::RefreshSkills=>match Catalog::discover(&workspace) { Ok(c)=>app.update_skills(&c), Err(e)=>{app.clear_skills();app.notice(&format!("Skills unavailable: {e}"));} },
                     Command::Skills=>match Catalog::discover(&workspace) {Ok(c)=>app.skills_menu(c),Err(e)=>app.notice(&e.to_string())},
                     Command::Planning=>{
                         let snapshot=crate::schedule::Snapshot::load(&workspace);
@@ -299,11 +311,10 @@ pub async fn run(workspace: Workspace, config_path: PathBuf, lock: WorkspaceLock
                     },
                     Command::CloseEdit=>app.form=None,
                     Command::Submit(input)=>{
-                        if input.trim()=="/quit" {break;}
-                        app.append(&format!("\n\n## You\n\n{input}\n\n"));
+                        app.user_message(&input);
                         let result=dispatch(&workspace,&config_path,&mut app,&store,input.clone(),&tx,&done_tx);
                         match result {
-                            Ok(Some(token))=>{cancellation=token;app.busy=true;app.append("## Agent\n\n");},
+                            Ok(Some(token))=>{cancellation=token;app.busy=true;app.messages.boundary();},
                             Ok(None)=>{},
                             Err(e)=>{app.input.insert(&input);app.notice(&format!("Error: {e}"));},
                         }
@@ -316,44 +327,6 @@ pub async fn run(workspace: Workspace, config_path: PathBuf, lock: WorkspaceLock
 }
 fn refresh(workspace: &Workspace, app: &mut App, store: &mut Store) {
     refresh::manual(workspace, app, store);
-}
-
-fn session_transcript(s: &Session) -> String {
-    let mut text = String::new();
-    for item in &s.history {
-        let role = item["role"].as_str().unwrap_or("");
-        if !matches!(role, "user" | "assistant") {
-            continue;
-        }
-        let content = if let Some(s) = item["content"].as_str() {
-            s.to_string()
-        } else {
-            item["content"]
-                .as_array()
-                .map(|items| {
-                    items
-                        .iter()
-                        .filter_map(|i| i["text"].as_str())
-                        .collect::<Vec<_>>()
-                        .join("\n")
-                })
-                .unwrap_or_default()
-        };
-        let content = content
-            .split("\n\n[Application source locator:")
-            .next()
-            .unwrap_or(&content);
-        if !content.is_empty() {
-            text.push_str(&format!(
-                "\n\n## {}\n\n{content}",
-                if role == "user" { "You" } else { "Agent" }
-            ));
-        }
-    }
-    if text.is_empty() {
-        text = s.last_output.clone();
-    }
-    text
 }
 
 fn open_document(path: PathBuf) -> Result<()> {
@@ -380,6 +353,11 @@ fn dispatch(
     tx: &mpsc::UnboundedSender<Event>,
     done: &mpsc::UnboundedSender<Outcome>,
 ) -> Result<Option<CancellationToken>> {
+    let input = if input.starts_with('/') {
+        input.trim_end().to_owned()
+    } else {
+        input
+    };
     if input == "/skills" {
         app.skills_menu(Catalog::discover(workspace)?);
         return Ok(None);
@@ -402,7 +380,7 @@ fn dispatch(
     }
     if input == "/budget" {
         let config = Config::read(config_path)?;
-        app.notice(
+        app.append(
             &crate::budget::Report::new(&config.interactive_limits(), app.session.as_ref())
                 .markdown(),
         );
@@ -443,8 +421,8 @@ fn dispatch(
     if input == "/new" {
         app.session = None;
         app.usage = None;
-        app.output.clear();
-        app.append("# New session\n");
+        app.reset_chat();
+        app.append("New session. Describe the project work or choose a Skill with `$`.");
         app.status = "New session; previous sessions remain saved".into();
         return Ok(None);
     }
@@ -456,13 +434,9 @@ fn dispatch(
         );
         app.stage = s.stage.clone();
         app.usage = s.usage.clone();
-        app.output.clear();
-        app.append(&session_transcript(&s));
+        app.resume_chat(&s);
         for q in s.questions.iter().filter(|q| !q.resolved) {
-            app.append(&format!("\nOpen question: {}\n", q.question));
-        }
-        if let Some(c) = s.pending.first() {
-            app.append(&format!("\nPending tool: {}\n{}\n", c.name, c.arguments));
+            app.notice(&format!("Open question: {}\n{}", q.path, q.question));
         }
         app.session = Some(s);
         return Ok(None);
@@ -521,8 +495,17 @@ fn dispatch(
         let done = done.clone();
         let cancel = CancellationToken::new();
         let signal = cancel.clone();
+        let tx = tx.clone();
         tokio::spawn(async move {
-            let result = tokio::select! {_=signal.cancelled()=>Err(anyhow::anyhow!("PM operation cancelled; inspect any generated files before repeating it")),r=tools::run_pm(&workspace,&command,&args)=>r};
+            let operation = tools::run_pm(&workspace, &command, &args);
+            tokio::pin!(operation);
+            let result = tokio::select! {
+                result = &mut operation => result,
+                _ = signal.cancelled() => {
+                    let _ = tx.send(Event::Notice("Stop requested; waiting for the native PM worker to finish. No rollback is implied.".into()));
+                    operation.await
+                }
+            };
             let _ = done.send(match result {
                 Ok(v) => Outcome::Pm(serde_json::to_string_pretty(&v).unwrap_or_default()),
                 Err(e) => Outcome::Error(e.to_string()),
@@ -645,7 +628,7 @@ command = "this-command-must-not-run"
         let (tx, mut rx) = mpsc::unbounded_channel();
         let (done, mut finished) = mpsc::unbounded_channel();
         assert!(
-            dispatch(&w, &path, &mut app, &store, "/budget".into(), &tx, &done)
+            dispatch(&w, &path, &mut app, &store, "/budget ".into(), &tx, &done)
                 .unwrap()
                 .is_none()
         );

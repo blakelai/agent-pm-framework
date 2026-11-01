@@ -13,7 +13,7 @@ The approved direction is a local Rust TUI for macOS/Linux, sharing project docu
 | Module | Implemented behavior |
 |---|---|
 | Workspace | Obsidian-compatible document scan/read/search, source hashes, draft state and language checks, stale-write rejection, path/symlink restrictions |
-| TUI | Separate Browse/Chat modes, eleven document categories, shared Markdown rendering, mouse/scrollbars, collapsible/maximized reading, multiline input and focus-aware cancellation |
+| TUI | Separate Browse/Chat modes, eleven document categories, shared Markdown rendering, mouse/scrollbars, collapsible/maximized reading, multiline input, command/Skill completion, input recall, structured collapsible activity and focus-aware cancellation/exit |
 | File refresh | Background content polling for knowledge documents, baselines and catalogs; automatic browse/planning/delivery updates, retained drafts and stale-preview invalidation |
 | Structured editing | Human-operated forms for allocations, iterations, forecast dates, PBIs, risks and draft decisions; reviewed diffs, existing readiness/planning checks, optimistic conflict checks and edit records |
 | Provider probes | Explicit isolated CLI/Chat checks for completed SSE text, schema-matched function calls and tool-result continuation; private observations, configuration freshness and service-only usage |
@@ -86,3 +86,9 @@ See [application usage](README.md), [framework workflow](../00_Governance/Workfl
 ## TUI and custom Skill iteration
 
 The agreed interface and loading behavior are documented in [Interaction](Interaction.md) and [Custom Skills](Skills.md). Both protocol adapters retain service-reported usage; absent values are not estimated. Skills are explicitly selected, validated and recorded with content hashes. Changed Skill instructions cannot silently govern a pending tool operation. Automated event, rendering and local-provider tests accompany this iteration; real terminal and provider coverage remain bounded by the recorded checks.
+
+## Chat interaction refinement
+
+Chat supports `/exit` and empty-composer Ctrl+D with cancellation/persistence before exit, `/` and explicit-leading `$` completion, keyboard/mouse selection, input history, and independent message/activity blocks. Ordinary replies remain expanded; service-supplied thinking, tool details and notices are collapsed until clicked or toggled with Ctrl+T. Resume reconstructs both protocol histories, including recorded results and pending tools. Compatible reasoning fields are stored outside model wire messages; Responses encrypted items are never displayed.
+
+The added protocol fixtures and terminal event/buffer tests cover reasoning separation, durable replay, completion without execution, missing/invalid candidates, Unicode, multiline history, mouse toggles, small windows, exit conditions and the established Esc/Ctrl+C semantics. See [Interaction](Interaction.md) for supported fields and terminal limitations. This iteration adds no automatic request cap, new approval authority, inferred Context usage or synthetic thinking.

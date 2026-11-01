@@ -41,6 +41,9 @@ pub struct Session {
     pub status: Status,
     pub provider_fingerprint: String,
     pub history: Vec<Value>,
+    /// Service-provided compatible-API reasoning, kept outside model wire messages.
+    #[serde(default)]
+    pub reasoning_summaries: std::collections::BTreeMap<usize, String>,
     pub pending: Vec<Call>,
     pub questions: Vec<Question>,
     #[serde(default)]
@@ -85,6 +88,7 @@ impl Session {
             status: Status::Ready,
             provider_fingerprint: fingerprint(config)?,
             history: vec![],
+            reasoning_summaries: Default::default(),
             pending: vec![],
             questions: vec![],
             blocked_questions: vec![],
@@ -401,6 +405,13 @@ impl Runtime {
                     Status::Failed
                 };
             }
+            if let Some(call) = s.pending.first() {
+                let _ = events.send(Event::Tool {
+                    call: call.clone(),
+                    state: format!("Stopped — {:?}", s.status),
+                    result: None,
+                });
+            }
             let _ = events.send(Event::Notice(format!("{:?}: {}", s.status, e)));
         }
         self.save(s)?;
@@ -417,6 +428,14 @@ impl Runtime {
         if self.pause_for_limit(s, events)? {
             return Ok(());
         }
+        let record_tool = |history: &mut Vec<Value>, call: &Call, result: &str| {
+            self.provider.append_tool(history, call, result);
+            let _ = events.send(Event::Tool {
+                call: call.clone(),
+                state: "Result recorded".into(),
+                result: Some(result.into()),
+            });
+        };
         let system = self.system(s)?;
         let active = s
             .skill_history
@@ -442,6 +461,11 @@ impl Runtime {
             }
             while !s.pending.is_empty() {
                 let call = s.pending[0].clone();
+                let _ = events.send(Event::Tool {
+                    call: call.clone(),
+                    state: "Requested".into(),
+                    result: None,
+                });
                 ensure!(
                     call.arguments.len() <= 64 * 1024,
                     "Tool arguments exceed 64 KiB; split the operation into reviewable documents"
@@ -453,7 +477,7 @@ impl Runtime {
                     .find(|t| t.name == call.name)
                     .with_context(|| format!("Unknown tool requested: {}", call.name))?;
                 if let Err(e) = tools::validate_arguments(&spec.parameters, &args) {
-                    self.provider.append_tool(
+                    record_tool(
                         &mut s.history,
                         &call,
                         &json!({"error":e.to_string()}).to_string(),
@@ -465,11 +489,7 @@ impl Runtime {
                 // A crash after dispatch never silently repeats a potentially completed operation.
                 if let Some((status, result)) = self.store.call_result(&s.id, &call.id)? {
                     if matches!(status.as_str(), "completed" | "reconciled") {
-                        self.provider.append_tool(
-                            &mut s.history,
-                            &call,
-                            &result.unwrap_or_default(),
-                        );
+                        record_tool(&mut s.history, &call, &result.unwrap_or_default());
                         s.pending.remove(0);
                         self.save(s)?;
                         continue;
@@ -524,8 +544,7 @@ impl Runtime {
                     );
                 }
                 if let Some(gate) = gate {
-                    self.provider
-                        .append_tool(&mut s.history, &call, &gate.to_string());
+                    record_tool(&mut s.history, &call, &gate.to_string());
                     s.pending.remove(0);
                     self.save(s)?;
                     continue;
@@ -535,7 +554,7 @@ impl Runtime {
                     let packet = match grounding::Packet::prepare(&self.workspace, &args) {
                         Ok(packet) => packet,
                         Err(error) => {
-                            self.provider.append_tool(
+                            record_tool(
                                 &mut s.history,
                                 &call,
                                 &json!({"error":error.to_string()}).to_string(),
@@ -554,7 +573,7 @@ impl Runtime {
                         return Ok(());
                     }
                     if let Err(error) = packet.ensure_current(&self.workspace, &args) {
-                        self.provider.append_tool(
+                        record_tool(
                             &mut s.history,
                             &call,
                             &json!({"error":error.to_string()}).to_string(),
@@ -570,10 +589,10 @@ impl Runtime {
                         let output = json!({"status":"blocked_by_grounding","question_path":s.questions.last().unwrap().path,"findings":review.findings,"packet_sha256":packet.fingerprint()?}).to_string();
                         self.store
                             .finish_call(&s.id, &call.id, "completed", &output)?;
-                        self.provider.append_tool(&mut s.history, &call, &output);
+                        record_tool(&mut s.history, &call, &output);
                         s.pending.remove(0);
                         for later in s.pending.drain(..) {
-                            self.provider.append_tool(
+                            record_tool(
                                 &mut s.history,
                                 &later,
                                 "{\"status\":\"blocked_by_clarification\"}",
@@ -588,6 +607,11 @@ impl Runtime {
                     && approved.as_deref() != Some(&call.id)
                 {
                     s.status = Status::WaitingApproval;
+                    let _ = events.send(Event::Tool {
+                        call: call.clone(),
+                        state: "Approval required".into(),
+                        result: None,
+                    });
                     self.save(s)?;
                     let _ = events.send(Event::Notice(format!(
                         "Approval required: {}\n{}",
@@ -599,11 +623,11 @@ impl Runtime {
                 approved = None;
                 if call.name == "ask_clarification" {
                     self.ask(s, &args, events)?;
-                    self.provider.append_tool(&mut s.history,&call,&json!({"status":"waiting_for_user","question_path":s.questions.last().unwrap().path}).to_string());
+                    record_tool(&mut s.history,&call,&json!({"status":"waiting_for_user","question_path":s.questions.last().unwrap().path}).to_string());
                     s.pending.remove(0);
                     // Even noncompliant parallel tool calls cannot bypass a missing-information pause.
                     for later in s.pending.drain(..) {
-                        self.provider.append_tool(
+                        record_tool(
                             &mut s.history,
                             &later,
                             "{\"status\":\"blocked_by_clarification\"}",
@@ -614,7 +638,11 @@ impl Runtime {
                 }
                 self.store
                     .begin_call(&s.id, &call.id, &call.name, &call.arguments)?;
-                let _ = events.send(Event::Notice(format!("Tool: {}", call.name)));
+                let _ = events.send(Event::Tool {
+                    call: call.clone(),
+                    state: "Running".into(),
+                    result: None,
+                });
                 let operation = async {
                     if call.name == "resolve_clarification" {
                         self.resolve(s, &args)
@@ -647,7 +675,7 @@ impl Runtime {
                 );
                 self.store
                     .finish_call(&s.id, &call.id, "completed", &output)?;
-                self.provider.append_tool(&mut s.history, &call, &output);
+                record_tool(&mut s.history, &call, &output);
                 s.pending.remove(0);
                 self.save(s)?;
             }
@@ -683,6 +711,12 @@ impl Runtime {
             let completion = result?;
             s.usage = completion.usage.clone();
             s.last_output = completion.text.clone();
+            if self.config.active()?.protocol == crate::config::Protocol::ChatCompletions
+                && !completion.reasoning.is_empty()
+            {
+                s.reasoning_summaries
+                    .insert(s.history.len(), completion.reasoning.clone());
+            }
             self.provider.append_completion(&mut s.history, &completion);
             s.pending = completion.calls;
             // Surface a clarification before executing any other calls in the same response.

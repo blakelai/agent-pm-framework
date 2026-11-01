@@ -10,7 +10,7 @@ The user-approved interface separates project browsing and Agent chat. It preser
 
 ## Modes and navigation
 
-F2 or a click on the top mode labels switches modes. Browse starts with the document list focused; Chat starts with the composer focused. F1 opens help. Ctrl+Q exits only when idle; Browse also accepts q and Chat accepts /quit.
+F2 or a click on the top mode labels switches modes. Browse starts with the document list focused; Chat starts with the composer focused. F1 opens help. Ctrl+Q exits only when idle; Browse also accepts q. Chat accepts `/exit` (or `/quit`) and Ctrl+D with an exactly empty composer. Ctrl+D does not discard a nonempty draft and has no exit action while reading the transcript.
 
 Browse uses Alt+1–9 for the first nine categories, Alt+0 for the complete eleven-category menu, and Alt+Left/Right to cycle. Category labels are clickable; overflow remains available through More. F6 switches emoji on/off. Type-based document icons retain readable titles.
 
@@ -40,18 +40,42 @@ Browse offers F11 Recovery, a top-bar action and a document context-menu entry. 
 
 The transcript and composer are borderless. Only the composer has a gray background. Input is immediately editable; Enter submits. Alt+Enter, supported Shift+Enter and Ctrl+J insert a newline. Bracketed multiline paste inserts text without submitting. Arrow/Home/End and grapheme-aware deletion edit the draft; clicking the composer places the cursor. The input grows to a bounded height and then scrolls internally.
 
+Up at the first logical input line recalls a previous submitted input; Down at the last line advances through history and restores the unfinished draft. Within a multiline draft, Up/Down still move between lines. Recall is local to the running interface (up to 200 inputs); loading a session also makes its saved user messages available.
+
 While an operation runs, the next draft remains editable but cannot be submitted automatically. Drafts survive mode changes. Ctrl+C clears the draft without cancelling an operation or exiting.
 
 Esc is handled by exactly one layer:
 
-1. An open menu handles Esc by closing itself.
+1. An open command/Skill suggestion or action menu handles Esc by closing itself.
 2. Transcript focus handles Esc by jumping to the latest output, resuming following and returning focus to the composer.
 3. Composer focus handles a separate Esc by requesting cancellation of an active operation.
 4. An idle composer leaves its draft and mode unchanged.
 
 Reported repeat key events do not trigger another action. Keyboard enhancement reporting is enabled where supported. Legacy terminals that do not distinguish key repeats cannot establish physical key release; verify that behavior in the terminal used for deployment.
 
+Exit during active Chat work requests cancellation and waits for the recorded outcome before restoring the terminal. A native `/pm` worker cannot be forcibly rolled back: the interface waits for it to finish. If the background operation fails to return a recorded outcome, the error remains visible and a separate idle exit is available.
+
 Cancellation shows a pending state until the runtime records an outcome. A tool with an uncertain outcome still requires reconciliation; returning focus never implies cancellation, rollback or tool completion.
+
+## Command and Skill suggestions
+
+Type `/` at the start of the composer to open command suggestions; continued typing filters them. `/stage ` offers workflow stages and `/pm ` offers the native command catalog. Type `$` as a leading activation token to filter valid project Skills by name. Multiple leading Skills are supported. A `$` inside ordinary prose does not activate a Skill or open its picker.
+
+Use Up/Down or the wheel to select, then Tab, Enter or a left-click to insert the candidate. Selection only edits the draft; a separate Enter submits it. Exact `/exit` and `/quit` commands exit with one Enter. Esc dismisses suggestions without cancelling the Agent. Empty results do not execute partial text. The popup adapts to the available height; on terminals with fewer than three available transcript rows, enlarge the window to see it or dismiss it with Esc.
+
+Skill discovery refreshes when entering a new `$` completion context. Invalid entries remain diagnosable through `/skills`; runtime validation checks the selected files again before any model request. Suggestions do not grant new tools or bypass approvals. Command arguments such as session IDs and paths are entered manually.
+
+## Conversation and execution details
+
+User messages and ordinary Agent replies remain expanded and use the shared Markdown renderer, with separate labels and spacing. Thinking, tool calls and activity notices appear as collapsed rows by default. Left-click a detail row's heading to expand/collapse that entry; Ctrl+T expands all details if any are collapsed, otherwise collapses them. New entries follow that preference. These actions never invoke a tool, change an approval or cancel execution.
+
+Tool headings distinguish requested/running/pending calls and recorded result status. Expanded calls show arguments and results as literal text, with formatted JSON where possible. An error or blocked result does not become a success just because a call returned. Approval requests, clarification prompts and errors retain a visible heading while their details are collapsed. Scrolling still pauses following; Esc from reading focus returns to the latest output and composer.
+
+Thinking is displayed only when the service supplies it: Responses public `response.reasoning_summary_text.delta` events (or completed output summaries), and compatible Chat Completions `delta.reasoning_content` / `delta.reasoning` string fields. No thinking is inferred from ordinary answer text, tool calls or elapsed time. Opaque encrypted continuation items are retained for Responses history but never rendered. The internal grounding reviewer remains isolated from the conversation.
+
+Completed compatible-API reasoning is saved separately from the wire conversation; Responses summaries are replayed from their original output items. Old sessions without reasoning remain readable and do not acquire invented summaries. Loading a session reconstructs message roles, calls, results and pending status. Partial interrupted streams are display-only; the last incomplete provider response is not added to accepted history. The bounded transcript may omit older display text without truncating saved session history.
+
+The interaction draws on the official [Codex CLI command and history guidance](https://learn.chatgpt.com/docs/developer-commands?surface=cli). This application's Ctrl+C clear, Esc cancellation and Ctrl+T details follow the user's explicit contract. Provider field handling follows [Responses streaming events](https://developers.openai.com/api/reference/resources/responses/streaming-events) and [vLLM reasoning outputs](https://docs.vllm.ai/en/latest/features/reasoning_outputs/), checked on 2026-11-01. Support for these optional fields does not guarantee that every configured service/model returns them.
 
 ## Status and usage
 

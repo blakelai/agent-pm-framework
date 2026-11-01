@@ -449,7 +449,10 @@ async fn main() -> Result<()> {
                             let _ = std::io::stdout().flush();
                         }
                         Event::Notice(text) => eprintln!("\n{text}"),
-                        Event::Usage(_) => {}
+                        Event::Tool { call, state, .. } => {
+                            eprintln!("\nTool: {} — {state}", call.name)
+                        }
+                        Event::Reasoning(_) | Event::Usage(_) => {}
                     }
                 }
             });

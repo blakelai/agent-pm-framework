@@ -17,6 +17,95 @@ use tokio_util::sync::CancellationToken;
 
 type Queue = Arc<Mutex<VecDeque<String>>>;
 
+#[tokio::test]
+async fn chat_activity_streams_preserve_service_reasoning_and_actual_tool_results() {
+    let (_dir, w) = fixture();
+    let reason = format!(
+        "data: {}\n\n",
+        json!({"choices":[{"delta":{"reasoning_content":"SERVICE_REASONING"}}]})
+    );
+    let first = format!(
+        "{reason}{}",
+        chat(
+            "Checking the project.",
+            vec![call(0, "inspect-call", "list_documents", json!({}))]
+        )
+    );
+    let (url, _, requests, server) = server(vec![first, chat("Final reply.", vec![])]).await;
+    let cfg = config(url, Protocol::ChatCompletions);
+    let rt = Runtime::open(w, cfg.clone()).await.unwrap();
+    let mut s = Session::new(&cfg, "workflow").unwrap();
+    rt.input(&mut s, "Synthetic activity fixture").unwrap();
+    let (tx, mut rx) = events();
+    rt.run(&mut s, None, &tx, &CancellationToken::new())
+        .await
+        .unwrap();
+    assert_eq!(s.status, Status::Completed);
+    let entries = std::iter::from_fn(|| rx.try_recv().ok()).collect::<Vec<_>>();
+    assert!(
+        entries
+            .iter()
+            .any(|e| matches!(e, Event::Reasoning(text) if text == "SERVICE_REASONING"))
+    );
+    assert!(
+        !entries
+            .iter()
+            .any(|e| matches!(e, Event::Text(text) if text.contains("SERVICE_REASONING")))
+    );
+    assert!(entries.iter().any(|e| matches!(e, Event::Tool { call, state, result: None } if call.id == "inspect-call" && state == "Running")));
+    assert!(entries.iter().any(
+        |e| matches!(e, Event::Tool { call, result: Some(_), .. } if call.id == "inspect-call")
+    ));
+    let saved: Session = rt.store.load(&s.id).unwrap();
+    assert_eq!(
+        saved.reasoning_summaries.values().collect::<Vec<_>>(),
+        vec!["SERVICE_REASONING"]
+    );
+    assert!(saved.history.iter().any(|i| i["role"] == "tool"));
+    // Display-only compatible fields do not alter the next request's wire contract.
+    assert!(
+        !requests.lock().unwrap()[1]
+            .to_string()
+            .contains("SERVICE_REASONING")
+    );
+    server.abort();
+}
+
+#[tokio::test]
+async fn responses_public_summary_stream_is_separate_from_opaque_continuation_items() {
+    let data = [
+        json!({"type":"response.reasoning_summary_text.delta","output_index":0,"summary_index":0,"delta":"PUBLIC_SUMMARY"}),
+        json!({"type":"response.output_text.delta","delta":"Reply"}),
+        json!({"type":"response.completed","response":{"status":"completed","output":[{"type":"reasoning","id":"r1","encrypted_content":"OPAQUE","summary":[{"type":"summary_text","text":"PUBLIC_SUMMARY"}]},{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Reply"}]}]}}),
+    ].iter().map(|v| format!("data: {v}\n\n")).collect::<String>();
+    let (url, _, _, server) = server(vec![data]).await;
+    let cfg = config(url, Protocol::Responses);
+    let provider = Provider::new(cfg.active().unwrap().clone()).unwrap();
+    let (tx, mut rx) = events();
+    let completion = provider
+        .complete("Synthetic", &[], &[], &tx, &CancellationToken::new())
+        .await
+        .unwrap();
+    let entries = std::iter::from_fn(|| rx.try_recv().ok()).collect::<Vec<_>>();
+    assert_eq!(
+        entries
+            .iter()
+            .filter(|e| matches!(e, Event::Reasoning(_)))
+            .count(),
+        1
+    );
+    assert!(
+        entries
+            .iter()
+            .any(|e| matches!(e, Event::Text(t) if t == "Reply"))
+    );
+    assert!(!entries.iter().any(|e| format!("{e:?}").contains("OPAQUE")));
+    let mut history = vec![];
+    provider.append_completion(&mut history, &completion);
+    assert_eq!(history[0]["encrypted_content"], "OPAQUE");
+    server.abort();
+}
+
 fn budget_chat(text: &str, calls: Vec<Value>, usage: Value) -> String {
     chat(text, calls).replace(
         "data: [DONE]",
@@ -1419,7 +1508,7 @@ fn grounding_requires_all_source_paths_even_when_content_is_identical() {
     let packet = grounding::Packet::prepare(&w, &args).unwrap();
     assert_eq!(packet.sources.len(), 2);
     for (paths, valid) in [(json!([source]), false), (json!([source, alias]), true)] {
-        let completion=Completion{text:String::new(),calls:vec![Call{id:"review".into(),name:"submit_grounding_review".into(),arguments:json!({"decision":"supported","checked_sources":paths,"assessments":assessment_values(&packet.candidate,source,&w.read(source).unwrap()),"findings":[],"question":"","body":""}).to_string()}],items:vec![],usage:None};
+        let completion=Completion{reasoning:String::new(),text:String::new(),calls:vec![Call{id:"review".into(),name:"submit_grounding_review".into(),arguments:json!({"decision":"supported","checked_sources":paths,"assessments":assessment_values(&packet.candidate,source,&w.read(source).unwrap()),"findings":[],"question":"","body":""}).to_string()}],items:vec![],usage:None};
         assert_eq!(grounding::parse(&packet, &completion).is_ok(), valid);
     }
 }

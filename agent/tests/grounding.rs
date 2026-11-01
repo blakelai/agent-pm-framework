@@ -42,6 +42,7 @@ fn parse(packet: &Packet, value: Value) -> anyhow::Result<grounding::Review> {
     grounding::parse(
         packet,
         &Completion {
+            reasoning: String::new(),
             text: String::new(),
             calls: vec![Call {
                 id: "review".into(),

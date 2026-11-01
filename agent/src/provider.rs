@@ -10,6 +10,12 @@ use tokio_util::sync::CancellationToken;
 #[derive(Debug, Clone)]
 pub enum Event {
     Text(String),
+    Reasoning(String),
+    Tool {
+        call: Call,
+        state: String,
+        result: Option<String>,
+    },
     Notice(String),
     Usage(Option<Usage>),
 }
@@ -53,6 +59,7 @@ pub struct Call {
 #[derive(Debug)]
 pub struct Completion {
     pub text: String,
+    pub reasoning: String,
     pub calls: Vec<Call>,
     pub items: Vec<Value>,
     pub usage: Option<Usage>,
@@ -174,6 +181,10 @@ impl Provider {
             ensure!(size <= 16 * 1024 * 1024, "Provider output exceeded 16 MiB");
             for data in sse.feed(&part)? {
                 let text = decoded.accept(&data)?;
+                let reasoning = std::mem::take(&mut decoded.reasoning_delta);
+                if !reasoning.is_empty() {
+                    let _ = events.send(Event::Reasoning(reasoning));
+                }
                 if !text.is_empty() {
                     let _ = events.send(Event::Text(text));
                 }
@@ -235,6 +246,9 @@ impl Sse {
 pub struct Decoder {
     protocol: Protocol,
     text: String,
+    reasoning: String,
+    reasoning_delta: String,
+    summary_part: Option<(u64, u64)>,
     calls: BTreeMap<usize, Call>,
     items: Vec<Value>,
     finished: bool,
@@ -246,6 +260,9 @@ impl Decoder {
         Self {
             protocol,
             text: String::new(),
+            reasoning: String::new(),
+            reasoning_delta: String::new(),
+            summary_part: None,
             calls: BTreeMap::new(),
             items: vec![],
             finished: false,
@@ -267,9 +284,22 @@ impl Decoder {
             event.get("error").is_none(),
             "Provider stream returned an error; inspect provider logs"
         );
+        self.reasoning_delta.clear();
         let mut delta = String::new();
         match self.protocol {
             Protocol::Responses => match event["type"].as_str().unwrap_or("") {
+                "response.reasoning_summary_text.delta" => {
+                    let part = (
+                        event["output_index"].as_u64().unwrap_or(0),
+                        event["summary_index"].as_u64().unwrap_or(0),
+                    );
+                    if self.summary_part.is_some_and(|old| old != part) {
+                        self.reasoning_delta.push_str("\n\n");
+                    }
+                    self.summary_part = Some(part);
+                    self.reasoning_delta
+                        .push_str(event["delta"].as_str().unwrap_or(""));
+                }
                 "response.output_text.delta" => {
                     delta = event["delta"].as_str().unwrap_or("").into();
                 }
@@ -301,6 +331,18 @@ impl Decoder {
                             );
                         }
                     }
+                    if self.reasoning.is_empty() {
+                        self.reasoning_delta = self
+                            .items
+                            .iter()
+                            .filter(|item| item["type"] == "reasoning")
+                            .filter_map(|item| item["summary"].as_array())
+                            .flatten()
+                            .filter(|part| part["type"] == "summary_text")
+                            .filter_map(|part| part["text"].as_str())
+                            .collect::<Vec<_>>()
+                            .join("\n\n");
+                    }
                     self.finished = true;
                 }
                 "response.failed" | "response.incomplete" | "error" => {
@@ -314,6 +356,11 @@ impl Decoder {
                 }
                 if let Some(choice) = event["choices"].as_array().and_then(|a| a.first()) {
                     delta = choice["delta"]["content"].as_str().unwrap_or("").into();
+                    self.reasoning_delta = choice["delta"]["reasoning_content"]
+                        .as_str()
+                        .or_else(|| choice["delta"]["reasoning"].as_str())
+                        .unwrap_or("")
+                        .into();
                     if let Some(reason) = choice["finish_reason"].as_str() {
                         self.finish_reason = Some(reason.into());
                     }
@@ -340,6 +387,7 @@ impl Decoder {
                 }
             }
         }
+        self.reasoning.push_str(&self.reasoning_delta);
         self.text.push_str(&delta);
         Ok(delta)
     }
@@ -364,6 +412,7 @@ impl Decoder {
         }
         Ok(Completion {
             text: self.text,
+            reasoning: self.reasoning,
             calls,
             items: self.items,
             usage: self.usage,
@@ -374,6 +423,44 @@ impl Decoder {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn reasoning_streams_are_separate_and_responses_only_display_public_summaries() {
+        let mut d = Decoder::new(Protocol::Responses);
+        d.accept(
+            &json!({"type":"response.reasoning_text.delta","delta":"DO_NOT_DISPLAY_RAW"})
+                .to_string(),
+        )
+        .unwrap();
+        assert!(d.reasoning_delta.is_empty());
+        d.accept(&json!({"type":"response.reasoning_summary_text.delta","delta":"Summary","output_index":0,"summary_index":0}).to_string()).unwrap();
+        assert_eq!(d.reasoning_delta, "Summary");
+        d.accept(&json!({"type":"response.reasoning_summary_text.delta","delta":"第二段","output_index":0,"summary_index":1}).to_string()).unwrap();
+        assert_eq!(d.reasoning_delta, "\n\n第二段");
+        d.accept(&json!({"type":"response.completed","response":{"status":"completed","output":[{"type":"reasoning","encrypted_content":"OPAQUE","summary":[{"type":"summary_text","text":"Summary\n\n第二段"}]}]}}).to_string()).unwrap();
+        assert!(d.reasoning_delta.is_empty());
+        let c = d.finish().unwrap();
+        assert_eq!(c.reasoning, "Summary\n\n第二段");
+        assert!(c.text.is_empty());
+        assert_eq!(c.items[0]["encrypted_content"], "OPAQUE");
+        for field in ["reasoning_content", "reasoning"] {
+            let mut d = Decoder::new(Protocol::ChatCompletions);
+            d.accept(&json!({"choices":[{"delta":{field:"SERVICE", "content":"Reply"},"finish_reason":"stop"}]}).to_string()).unwrap();
+            assert_eq!(d.reasoning_delta, "SERVICE");
+            d.accept("[DONE]").unwrap();
+            let c = d.finish().unwrap();
+            assert_eq!(c.reasoning, "SERVICE");
+            assert_eq!(c.text, "Reply");
+        }
+    }
+
+    #[test]
+    fn completed_response_summary_is_a_fallback_without_deltas() {
+        let mut d = Decoder::new(Protocol::Responses);
+        d.accept(&json!({"type":"response.completed","response":{"status":"completed","output":[{"type":"reasoning","summary":[{"type":"summary_text","text":"Provided summary"}],"encrypted_content":"OPAQUE"}]}}).to_string()).unwrap();
+        assert_eq!(d.reasoning_delta, "Provided summary");
+        assert_eq!(d.finish().unwrap().reasoning, "Provided summary");
+    }
 
     #[test]
     fn usage_uses_only_reported_fields_for_both_protocols() {

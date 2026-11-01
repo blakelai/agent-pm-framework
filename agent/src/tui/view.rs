@@ -1,6 +1,8 @@
 use super::{
+    completion::{self, History, Popup},
     editor::Editor,
     markdown::{self, Rendered},
+    transcript::{self, Kind, Transcript},
 };
 use crate::{provider::Usage, runtime::Session, skills::Catalog, workspace::Document};
 use crossterm::event::{
@@ -33,7 +35,7 @@ pub const TABS: &[(&str, &str)] = &[
 ];
 pub const HELP: &str = "# PM Agent\n\nF2 switches Browse / Chat. F1 opens help. Ctrl+Q exits when idle.\n\n## Browse\nAlt+1…9 selects a category; Alt+0 lists all categories. Alt+Left/Right cycles categories.\nEnter opens the selected document; Esc returns to the list. F3 collapses the list; F4 maximizes the document. F6 toggles emoji.\nTab switches focus. PgUp/PgDn scroll. Mouse wheel scrolls the pointed pane; drag the right scrollbar. Right-click opens actions. L shows document links. P shows properties. O opens the original in the desktop application. R refreshes immediately. Local knowledge files also refresh automatically every two seconds; drafts are retained and changed inputs require a new preview. E edits supported project fields; N creates a PBI, risk or decision. F5 or Planning opens the local planning view: 1 Schedule, 2 Capacity, 3 Signals; M proposes an iteration move; P/I/A edit allocations, iterations and forecast date; R refreshes; Esc returns. F7 or Delivery opens Changes, UAT, Releases and Benefits: 1-4/Alt+1-4 select tabs, N creates a draft, E edits, O opens the document, R refreshes, Enter focuses details, Esc returns.\n\nF8 or the document context menu opens Impact and Compare: 1 references, 2 baseline diff, 3 source diff; Enter explicitly compares a baseline; O opens a candidate; R revalidates; F4 maximizes; Esc returns. Changed project inputs clear results. Source comparisons use captured snapshots only.
 
-F11 opens Recovery: Alt+1/2/3 or mouse selects Backup/Check/Restore. Enter absolute paths; Tab selects fields and session inclusion. Ctrl+S reviews, then Ctrl+S executes writes. Esc/right-click backs out or requests cancellation. Unsent Chat input is preserved.\n\nF10 opens Materials: Enter/R checks the selected original and extracted text; 1/2/3/4 switch Overview/Text/Evidence/Reviews; V starts a review, E edits a draft; O opens a rechecked original, N opens the current note, [/] cycle claims, F4 maximizes.\n\nF9 opens Questions: scope, affected files, recorded answers and resolution checks. Enter focuses details; Esc returns; O opens the note; R refreshes.\n\n## Editing\nEnter/Tab edits fields; lists use one value per line. Use left/right to select enum values. Ctrl+S reviews changes, then Ctrl+S saves the reviewed result. Esc reverts the active field or returns from preview. Ctrl+D discards with confirmation.\n\n## Chat\nType immediately. Enter sends; Alt+Enter, Shift+Enter or Ctrl+J inserts a newline. Multiline paste never submits.\nScroll the conversation to read history. Esc returns to the latest message and input. A separate Esc in the input cancels an active operation. Ctrl+C clears only the draft.\n\n## Commands\n/help, /status, /budget, /probe [PROFILE], /probe last [PROFILE], /skills, /skills clear, /search TEXT, /stage prd, /pm plan, /sessions, /resume ID, /continue, /continue-independent, /answer QUESTION-ID TEXT, /approve, /deny, /reconcile ACTUAL_OUTCOME, /new, /quit.\n/budget shows configured session limits and saved request usage without a model request.\n/probe explicitly sends up to three synthetic requests (service charges may apply); /probe last reads local observations. Use a leading $skill-name to explicitly enable a project Skill. Skills remain selected in the session until cleared. Context values come only from the service; missing values remain unavailable.";
+F11 opens Recovery: Alt+1/2/3 or mouse selects Backup/Check/Restore. Enter absolute paths; Tab selects fields and session inclusion. Ctrl+S reviews, then Ctrl+S executes writes. Esc/right-click backs out or requests cancellation. Unsent Chat input is preserved.\n\nF10 opens Materials: Enter/R checks the selected original and extracted text; 1/2/3/4 switch Overview/Text/Evidence/Reviews; V starts a review, E edits a draft; O opens a rechecked original, N opens the current note, [/] cycle claims, F4 maximizes.\n\nF9 opens Questions: scope, affected files, recorded answers and resolution checks. Enter focuses details; Esc returns; O opens the note; R refreshes.\n\n## Editing\nEnter/Tab edits fields; lists use one value per line. Use left/right to select enum values. Ctrl+S reviews changes, then Ctrl+S saves the reviewed result. Esc reverts the active field or returns from preview. Ctrl+D discards with confirmation.\n\n## Chat\nType immediately. Enter sends; Alt+Enter, Shift+Enter or Ctrl+J inserts a newline. Multiline paste never submits.\nScroll the conversation to read history. Esc returns to the latest message and input. A separate Esc in the input cancels an active operation. Ctrl+C clears only the draft. /exit or Ctrl+D with an empty input exits, stopping active work first.\nType / for commands or a leading $ for Skills; arrows select, Tab/Enter or click inserts, Esc closes. Up/Down at the first/last input line recalls history and restores the draft.\nTool activity and service-provided thinking are collapsed: click their headings or Ctrl+T to toggle details.\n\n## Commands\n/help, /status, /budget, /probe [PROFILE], /probe last [PROFILE], /skills, /skills clear, /search TEXT, /stage prd, /pm plan, /sessions, /resume ID, /continue, /continue-independent, /answer QUESTION-ID TEXT, /approve, /deny, /reconcile ACTUAL_OUTCOME, /new, /exit, /quit.\n/budget shows configured session limits and saved request usage without a model request.\n/probe explicitly sends up to three synthetic requests (service charges may apply); /probe last reads local observations. Use a leading $skill-name to explicitly enable a project Skill. Skills remain selected in the session until cleared. Context values come only from the service; missing values remain unavailable.";
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Mode {
@@ -59,6 +61,7 @@ pub enum Command {
     Refresh,
     Open(String),
     Skills,
+    RefreshSkills,
     Edit(String),
     New(String),
     ReviewEdit,
@@ -154,6 +157,12 @@ pub struct App {
     pub filter: String,
     pub input: Editor,
     pub output: String,
+    pub(super) messages: Transcript,
+    pub(super) history: History,
+    completions: Vec<completion::Item>,
+    completion: Option<Popup>,
+    dismissed_completion: Option<(String, usize)>,
+    chat_headers: Vec<(usize, usize)>,
     pub status: String,
     pub(super) refresh_status: String,
     pub(super) refresh_error: Option<String>,
@@ -198,7 +207,13 @@ impl App {
             scroll: 0,
             filter: String::new(),
             input: Editor::default(),
-            output: HELP.into(),
+            output: String::new(),
+            messages: Transcript::default(),
+            history: History::default(),
+            completions: vec![],
+            completion: None,
+            dismissed_completion: None,
+            chat_headers: vec![],
             status: "Ready — browsing is local".into(),
             refresh_status: "Automatic file refresh enabled (2s polling)".into(),
             refresh_error: None,
@@ -329,6 +344,10 @@ impl App {
         self.focus = Focus::Content;
     }
     pub fn append(&mut self, text: &str) {
+        self.messages.delta(Kind::Assistant, text);
+        self.project_output(text);
+    }
+    fn project_output(&mut self, text: &str) {
         self.output.push_str(text);
         // Keep a bounded display projection; complete history stays in the session database.
         if self.output.len() > 200_000 {
@@ -346,7 +365,77 @@ impl App {
     }
     pub fn notice(&mut self, text: &str) {
         self.status = text.lines().next().unwrap_or("").into();
-        self.append(&format!("\n\n### Activity\n\n{text}\n\n"));
+        self.messages.push(Kind::Activity, &self.status, text);
+        self.project_output(text);
+    }
+    pub(super) fn user_message(&mut self, text: &str) {
+        self.messages.push(Kind::User, "You", text);
+        self.project_output(text);
+    }
+    pub(super) fn provider_event(&mut self, event: crate::provider::Event) {
+        match event {
+            crate::provider::Event::Text(text) => self.append(&text),
+            crate::provider::Event::Reasoning(text) => self.messages.delta(Kind::Reasoning, &text),
+            crate::provider::Event::Tool {
+                call,
+                state,
+                result,
+            } => self.messages.tool(&call, &state, result.as_deref()),
+            crate::provider::Event::Notice(text) => self.notice(&text),
+            crate::provider::Event::Usage(usage) => {
+                if usage.is_none() {
+                    self.messages.boundary();
+                }
+                self.usage = usage;
+            }
+        }
+    }
+    pub(super) fn reset_chat(&mut self) {
+        self.output.clear();
+        self.messages = Transcript::default();
+        self.chat_cache = (usize::MAX, 0);
+        self.follow = true;
+        self.transcript_scroll = 0;
+    }
+    pub(super) fn resume_chat(&mut self, session: &Session) {
+        self.reset_chat();
+        self.messages = Transcript::from_session(session);
+        for item in &session.history {
+            if item["role"] == "user" {
+                self.history.remember(&transcript::message_text(item));
+            }
+        }
+    }
+    pub(super) fn clear_skills(&mut self) {
+        self.completions.clear();
+        self.refresh_completion();
+    }
+    pub(super) fn update_skills(&mut self, catalog: &Catalog) {
+        self.completions = completion::skills(catalog);
+        self.refresh_completion();
+    }
+    fn refresh_completion(&mut self) {
+        let signature = (self.input.text.clone(), self.input.cursor);
+        self.completion = if self.mode == Mode::Chat
+            && self.focus == Focus::Composer
+            && self.menu.is_none()
+            && self.dismissed_completion.as_ref() != Some(&signature)
+        {
+            completion::suggest(&self.input, &self.completions)
+        } else {
+            None
+        };
+    }
+    fn dismiss_completion(&mut self) {
+        self.completion = None;
+        self.dismissed_completion = Some((self.input.text.clone(), self.input.cursor));
+    }
+    fn accept_completion(&mut self) {
+        if let Some(popup) = self.completion.take() {
+            popup.insert(&mut self.input);
+        }
+        self.history.edited();
+        self.dismiss_completion();
     }
     pub fn usage_text(&self) -> String {
         match &self.usage {
@@ -391,6 +480,7 @@ impl App {
             return;
         }
         self.menu = None;
+        self.dismiss_completion();
         if self.mode == Mode::Browse {
             self.browser_focus = self.focus;
         }
@@ -670,6 +760,7 @@ impl App {
     }
     fn scroll_by(&mut self, down: bool, n: usize) {
         let (pos, max) = if self.mode == Mode::Chat {
+            self.dismiss_completion();
             self.focus = Focus::Transcript;
             self.follow = false;
             (
@@ -719,6 +810,21 @@ impl App {
         }
     }
     pub fn event(&mut self, event: Event) -> Command {
+        let before = (self.input.text.clone(), self.input.cursor);
+        let was_skill = self.completion.as_ref().is_some_and(|p| p.skill);
+        let command = self.handle_event(event);
+        if before != (self.input.text.clone(), self.input.cursor) {
+            self.refresh_completion();
+            if command == Command::None
+                && !was_skill
+                && self.completion.as_ref().is_some_and(|p| p.skill)
+            {
+                return Command::RefreshSkills;
+            }
+        }
+        command
+    }
+    fn handle_event(&mut self, event: Event) -> Command {
         if let Some(panel) = &mut self.recovery {
             return panel.event(event);
         }
@@ -751,7 +857,8 @@ impl App {
                     && self.focus == Focus::Composer
                     && self.menu.is_none() =>
             {
-                self.input.insert(&text)
+                self.input.insert(&text);
+                self.history.edited();
             }
             Event::Key(key) if key.kind == KeyEventKind::Press => return self.key(key),
             Event::Mouse(mouse) => {
@@ -778,6 +885,30 @@ impl App {
                         _ => {}
                     }
                     return Command::None;
+                }
+                if let Some(popup) = &mut self.completion {
+                    if popup.area.contains(p) {
+                        match mouse.kind {
+                            MouseEventKind::ScrollUp => popup.move_by(false),
+                            MouseEventKind::ScrollDown => popup.move_by(true),
+                            MouseEventKind::Down(MouseButton::Left) => {
+                                let n = popup.offset
+                                    + mouse.row.saturating_sub(popup.area.y + 1) as usize;
+                                if mouse.row > popup.area.y
+                                    && mouse.row < popup.area.bottom().saturating_sub(1)
+                                    && n < popup.items.len()
+                                {
+                                    popup.selected = n;
+                                    self.accept_completion();
+                                }
+                            }
+                            _ => {}
+                        }
+                        return Command::None;
+                    }
+                    if matches!(mouse.kind, MouseEventKind::Down(_)) {
+                        self.dismiss_completion();
+                    }
                 }
                 match mouse.kind {
                     MouseEventKind::Up(_) => self.dragging = false,
@@ -849,6 +980,16 @@ impl App {
                             self.focus = Focus::Content;
                         } else if self.regions.transcript.contains(p) {
                             self.focus = Focus::Transcript;
+                            self.follow = false;
+                            if button == MouseButton::Left {
+                                let row = self.transcript_scroll
+                                    + mouse.row.saturating_sub(self.regions.transcript.y) as usize;
+                                if let Some((_, index)) =
+                                    self.chat_headers.iter().find(|(r, _)| *r == row)
+                                {
+                                    self.messages.toggle(*index);
+                                }
+                            }
                         } else if self.regions.composer.contains(p) {
                             self.focus = Focus::Composer;
                             self.input.click(
@@ -910,6 +1051,8 @@ impl App {
             && self.mode == Mode::Chat
         {
             self.input.clear();
+            self.history.edited();
+            self.dismiss_completion();
             return Command::None;
         }
         // A key is consumed by one layer only. Repeat events never cascade Esc into cancellation.
@@ -932,6 +1075,46 @@ impl App {
                 _ => {}
             }
             return Command::None;
+        }
+        if self.mode == Mode::Chat {
+            if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('t') {
+                self.messages.toggle_all();
+                return Command::None;
+            }
+            if key.modifiers.contains(KeyModifiers::CONTROL)
+                && key.code == KeyCode::Char('d')
+                && self.focus == Focus::Composer
+                && self.input.text.is_empty()
+            {
+                return Command::Quit;
+            }
+            if self.focus == Focus::Composer && self.completion.is_some() {
+                match key.code {
+                    KeyCode::Esc => {
+                        self.dismiss_completion();
+                        return Command::None;
+                    }
+                    KeyCode::Up => {
+                        self.completion.as_mut().unwrap().move_by(false);
+                        return Command::None;
+                    }
+                    KeyCode::Down => {
+                        self.completion.as_mut().unwrap().move_by(true);
+                        return Command::None;
+                    }
+                    KeyCode::Tab | KeyCode::Enter if key.modifiers.is_empty() => {
+                        // Exact exit commands remain a single Enter even with suggestions open.
+                        if key.code == KeyCode::Enter
+                            && matches!(self.input.text.trim(), "/exit" | "/quit")
+                        {
+                            return Command::Quit;
+                        }
+                        self.accept_completion();
+                        return Command::None;
+                    }
+                    _ => {}
+                }
+            }
         }
         if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('q') {
             return if self.busy {
@@ -1034,13 +1217,28 @@ impl App {
             }
         } else {
             match key.code {
+                KeyCode::Up
+                    if self.focus == Focus::Composer
+                        && !self.input.text[..self.input.cursor].contains('\n') =>
+                {
+                    self.history.recall(&mut self.input, false)
+                }
+                KeyCode::Down
+                    if self.focus == Focus::Composer
+                        && !self.input.text[self.input.cursor..].contains('\n') =>
+                {
+                    self.history.recall(&mut self.input, true)
+                }
                 KeyCode::Esc if self.focus == Focus::Transcript => self.latest(),
                 KeyCode::Esc if self.busy => return Command::Cancel,
                 KeyCode::Esc => {}
                 KeyCode::PageUp => self.scroll_by(false, self.regions.transcript.height as usize),
                 KeyCode::PageDown => self.scroll_by(true, self.regions.transcript.height as usize),
                 KeyCode::Tab if self.focus == Focus::Transcript => self.focus = Focus::Composer,
-                KeyCode::BackTab => self.focus = Focus::Transcript,
+                KeyCode::BackTab => {
+                    self.dismiss_completion();
+                    self.focus = Focus::Transcript;
+                }
                 KeyCode::Home if self.focus == Focus::Transcript => {
                     self.follow = false;
                     self.transcript_scroll = 0;
@@ -1054,14 +1252,24 @@ impl App {
                             .modifiers
                             .intersects(KeyModifiers::ALT | KeyModifiers::SHIFT) =>
                 {
+                    if matches!(self.input.text.trim(), "/exit" | "/quit") {
+                        return Command::Quit;
+                    }
                     if self.busy {
                         self.status = "Running — draft retained; Esc cancels".into();
                     } else if !self.input.text.trim().is_empty() {
                         self.follow = true;
+                        self.history.remember(&self.input.text);
                         return Command::Submit(self.input.take());
                     }
                 }
-                _ if self.focus == Focus::Composer => self.input.key(key),
+                _ if self.focus == Focus::Composer => {
+                    let before = self.input.text.clone();
+                    self.input.key(key);
+                    if before != self.input.text {
+                        self.history.edited();
+                    }
+                }
                 _ => {}
             }
         }
@@ -1470,6 +1678,71 @@ impl App {
             &mut state,
         );
     }
+    fn draw_completion(&mut self, f: &mut ratatui::Frame) {
+        if self.focus != Focus::Composer || self.menu.is_some() {
+            return;
+        }
+        let Some(popup) = &mut self.completion else {
+            return;
+        };
+        let available = self.regions.transcript.height;
+        if available < 3 {
+            popup.area = Rect::default();
+            return;
+        }
+        let height = (popup.items.len().clamp(1, 8) as u16 + 2).min(available);
+        popup.area = Rect::new(
+            self.regions.composer.x,
+            self.regions.composer.y.saturating_sub(height),
+            self.regions.composer.width,
+            height,
+        );
+        let count = height.saturating_sub(2) as usize;
+        if popup.selected < popup.offset {
+            popup.offset = popup.selected;
+        }
+        if popup.selected >= popup.offset + count {
+            popup.offset = popup.selected + 1 - count;
+        }
+        let width = popup.area.width.saturating_sub(2) as usize;
+        let rows = if popup.items.is_empty() {
+            vec![ListItem::new(if popup.skill {
+                "No valid matching Skills · /skills lists errors"
+            } else {
+                "No matching commands · Esc dismisses"
+            })]
+        } else {
+            popup
+                .items
+                .iter()
+                .skip(popup.offset)
+                .take(count)
+                .enumerate()
+                .map(|(i, item)| {
+                    ListItem::new(transcript::one_line(
+                        &format!("{}  {}", item.value, item.description),
+                        width,
+                    ))
+                    .style(if popup.offset + i == popup.selected {
+                        Style::default().fg(Color::Black).bg(Color::Cyan)
+                    } else {
+                        Style::default().fg(Color::White)
+                    })
+                })
+                .collect()
+        };
+        let title = format!(
+            "{} · ↑↓ select · Tab/Enter insert · Esc close",
+            if popup.skill { "Skills" } else { "Commands" }
+        );
+        f.render_widget(Clear, popup.area);
+        f.render_widget(
+            List::new(rows)
+                .block(Block::default().borders(Borders::ALL).title(title))
+                .style(Style::default().bg(Color::Black)),
+            popup.area,
+        );
+    }
     fn draw_chat(&mut self, f: &mut ratatui::Frame, area: Rect) {
         let width = area.width.saturating_sub(2).max(1) as usize;
         let (input, caret) = self.input.rows(width);
@@ -1487,9 +1760,12 @@ impl App {
             rows[0].height,
         );
         self.regions.composer = rows[1];
-        let key = (self.output.len(), self.regions.transcript.width as usize);
+        let key = (
+            self.messages.revision,
+            self.regions.transcript.width as usize,
+        );
         if self.chat_cache != key {
-            self.transcript = markdown::render(&self.output, key.1);
+            (self.transcript, self.chat_headers) = self.messages.render(key.1);
             self.chat_cache = key;
         }
         let max = self
@@ -1545,11 +1821,12 @@ impl App {
         f.render_widget(Paragraph::new(lines).style(bg), inner);
         if self.input.text.is_empty() {
             f.render_widget(
-                Paragraph::new("Message…  /skills  Enter sends · Alt+Enter newline")
+                Paragraph::new("Message…  / commands · $ Skills · ↑ history · Ctrl+T details")
                     .style(bg.fg(Color::Gray)),
                 inner,
             );
         }
+        self.draw_completion(f);
         if self.focus == Focus::Composer
             && self.menu.is_none()
             && inner.width > 0
@@ -1588,6 +1865,159 @@ fn icon(doc: &Document) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+    fn ctrl(app: &mut App, c: char) -> Command {
+        app.event(Event::Key(KeyEvent::new(
+            KeyCode::Char(c),
+            KeyModifiers::CONTROL,
+        )))
+    }
+    fn buffer_text(buffer: &ratatui::buffer::Buffer) -> String {
+        buffer.content.iter().map(|c| c.symbol()).collect()
+    }
+    #[test]
+    fn exit_requires_empty_composer_or_exact_command_and_preserves_cancellation_controls() {
+        let mut a = App::new(vec![]);
+        a.switch(Mode::Chat);
+        a.busy = true;
+        a.event(Event::Paste("unsent".into()));
+        assert_eq!(ctrl(&mut a, 'd'), Command::None);
+        assert_eq!(a.input.text, "unsent");
+        assert_eq!(ctrl(&mut a, 'c'), Command::None);
+        assert!(a.busy);
+        assert_eq!(ctrl(&mut a, 'd'), Command::Quit);
+        a.focus = Focus::Transcript;
+        assert_eq!(ctrl(&mut a, 'd'), Command::None);
+        key(&mut a, KeyCode::Esc);
+        for command in ["/exit", "/quit", "/exit "] {
+            a.input.clear();
+            a.event(Event::Paste(command.into()));
+            assert_eq!(key(&mut a, KeyCode::Enter), Command::Quit);
+        }
+        a.input.clear();
+        a.event(Event::Paste("/exit later".into()));
+        assert_eq!(key(&mut a, KeyCode::Enter), Command::None);
+        assert_eq!(a.input.text, "/exit later");
+    }
+    #[test]
+    fn autocomplete_filters_inserts_without_dispatch_and_consumes_escape_once() {
+        let mut a = App::new(vec![]);
+        a.switch(Mode::Chat);
+        key(&mut a, KeyCode::Char('/'));
+        assert!(buffer_text(&draw(&mut a, 100, 24)).contains("Commands"));
+        key(&mut a, KeyCode::Char('s'));
+        key(&mut a, KeyCode::Char('t'));
+        assert_eq!(a.completion.as_ref().unwrap().items.len(), 2);
+        key(&mut a, KeyCode::Down);
+        assert_eq!(key(&mut a, KeyCode::Tab), Command::None);
+        assert_eq!(a.input.text, "/stage ");
+        key(&mut a, KeyCode::Char('p'));
+        assert_eq!(key(&mut a, KeyCode::Enter), Command::None);
+        assert_eq!(a.input.text, "/stage prd ");
+        assert_eq!(
+            key(&mut a, KeyCode::Enter),
+            Command::Submit("/stage prd ".into())
+        );
+        a.busy = true;
+        key(&mut a, KeyCode::Char('/'));
+        assert_eq!(key(&mut a, KeyCode::Esc), Command::None);
+        draw(&mut a, 80, 24);
+        assert!(a.completion.is_none());
+        assert_eq!(key(&mut a, KeyCode::Esc), Command::Cancel);
+        ctrl(&mut a, 'c');
+        a.event(Event::Paste("/approve".into()));
+        assert_eq!(key(&mut a, KeyCode::Enter), Command::None);
+        assert_eq!(a.input.text, "/approve ");
+        assert!(a.busy);
+        a.input.clear();
+        a.event(Event::Paste("/sta".into()));
+        draw(&mut a, 80, 24);
+        a.scroll_by(false, 1);
+        assert_eq!(key(&mut a, KeyCode::Esc), Command::None);
+        assert!(a.completion.is_none());
+        assert_eq!(key(&mut a, KeyCode::Esc), Command::Cancel);
+    }
+    #[test]
+    fn skill_popup_mouse_scroll_and_small_windows_never_execute_or_activate_a_skill() {
+        let mut a = App::new(vec![]);
+        a.switch(Mode::Chat);
+        a.completions = (0..12)
+            .map(|n| completion::Item {
+                value: format!("$skill-{n:02}"),
+                description: "Synthetic Skill".into(),
+            })
+            .collect();
+        assert_eq!(key(&mut a, KeyCode::Char('$')), Command::RefreshSkills);
+        draw(&mut a, 90, 24);
+        let area = a.completion.as_ref().unwrap().area;
+        a.event(mouse(MouseEventKind::ScrollDown, area));
+        assert_eq!(a.completion.as_ref().unwrap().selected, 1);
+        let row = Rect::new(area.x + 1, area.y + 2, 1, 1);
+        assert_eq!(
+            a.event(mouse(MouseEventKind::Down(MouseButton::Left), row)),
+            Command::None
+        );
+        assert_eq!(a.input.text, "$skill-01 ");
+        assert!(a.session.is_none());
+        ctrl(&mut a, 'c');
+        a.event(Event::Paste("$missing".into()));
+        assert!(a.completion.as_ref().unwrap().items.is_empty());
+        assert_eq!(key(&mut a, KeyCode::Enter), Command::None);
+        assert_eq!(a.input.text, "$missing");
+        for (w, h) in [(1, 1), (2, 2), (15, 6), (60, 20)] {
+            a.dismissed_completion = None;
+            a.refresh_completion();
+            draw(&mut a, w, h);
+        }
+    }
+    #[test]
+    fn mouse_and_ctrl_t_fold_details_without_hiding_replies_or_cancelling() {
+        let mut a = App::new(vec![]);
+        a.switch(Mode::Chat);
+        a.user_message("Question");
+        a.provider_event(crate::provider::Event::Reasoning("SERVICE_DETAIL".into()));
+        a.append("**Readable answer**");
+        a.notice("Tool status\nACTIVITY_DETAIL");
+        let visible = buffer_text(&draw(&mut a, 90, 30));
+        assert!(visible.contains("Readable answer"));
+        assert!(!visible.contains("SERVICE_DETAIL"));
+        let (row, _) = a.chat_headers[0];
+        let target = Rect::new(
+            a.regions.transcript.x,
+            a.regions.transcript.y + row as u16,
+            1,
+            1,
+        );
+        a.event(mouse(MouseEventKind::Down(MouseButton::Left), target));
+        assert!(buffer_text(&draw(&mut a, 90, 30)).contains("SERVICE_DETAIL"));
+        a.busy = true;
+        ctrl(&mut a, 't');
+        assert!(buffer_text(&draw(&mut a, 90, 30)).contains("ACTIVITY_DETAIL"));
+        ctrl(&mut a, 't');
+        let visible = buffer_text(&draw(&mut a, 90, 30));
+        assert!(!visible.contains("SERVICE_DETAIL"));
+        assert!(visible.contains("Readable answer"));
+        assert!(a.busy);
+        assert_eq!(a.focus, Focus::Transcript);
+        assert_eq!(key(&mut a, KeyCode::Esc), Command::None);
+        assert_eq!(a.focus, Focus::Composer);
+    }
+    #[test]
+    fn input_history_respects_multiline_editing_and_restores_unsent_draft() {
+        let mut a = App::new(vec![]);
+        a.switch(Mode::Chat);
+        a.history.remember("first");
+        a.history.remember("second");
+        a.event(Event::Paste("中文\ndraft".into()));
+        key(&mut a, KeyCode::Up);
+        assert_eq!(a.input.text, "中文\ndraft");
+        key(&mut a, KeyCode::Up);
+        assert_eq!(a.input.text, "second");
+        key(&mut a, KeyCode::Up);
+        assert_eq!(a.input.text, "first");
+        key(&mut a, KeyCode::Down);
+        key(&mut a, KeyCode::Down);
+        assert_eq!(a.input.text, "中文\ndraft");
+    }
     fn key(app: &mut App, code: KeyCode) -> Command {
         app.event(Event::Key(KeyEvent::new(code, KeyModifiers::NONE)))
     }
@@ -1907,6 +2337,7 @@ mod tests {
     fn streaming_keeps_reading_position_and_scrollbar_drag_can_reach_bottom() {
         let mut a = App::new(vec![]);
         a.switch(Mode::Chat);
+        a.append(&"History\n\n".repeat(40));
         let buffer = draw(&mut a, 70, 20);
         assert_eq!(
             buffer[(a.regions.bar.x, a.regions.bar.bottom() - 1)].symbol(),
@@ -1935,7 +2366,7 @@ mod tests {
     fn chat_is_borderless_and_input_has_gray_background() {
         let mut a = App::new(vec![]);
         a.switch(Mode::Chat);
-        a.output = "**Rendered**".into();
+        a.append("**Rendered**");
         let buffer = draw(&mut a, 90, 24);
         assert_eq!(
             buffer[(a.regions.composer.x, a.regions.composer.y)].bg,
