@@ -42,21 +42,26 @@ pub enum McpConfig {
         args: Vec<String>,
         #[serde(default)]
         env_names: Vec<String>,
-        #[serde(default)]
-        allowed_tools: Vec<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        allowed_tools: Option<Vec<String>>,
     },
     Http {
         url: String,
         bearer_token_env: Option<String>,
-        #[serde(default)]
-        allowed_tools: Vec<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        allowed_tools: Option<Vec<String>>,
     },
 }
 impl McpConfig {
-    pub fn allowed_tools(&self) -> &[String] {
-        match self {
+    /// Omission exposes all discovered tools; an explicit list matches exact names.
+    /// An empty list exposes none. This does not authorize tool execution.
+    pub fn allows_tool(&self, name: &str) -> bool {
+        let allowed_tools = match self {
             Self::Stdio { allowed_tools, .. } | Self::Http { allowed_tools, .. } => allowed_tools,
-        }
+        };
+        allowed_tools
+            .as_ref()
+            .is_none_or(|names| names.iter().any(|allowed| allowed == name))
     }
 }
 
@@ -193,6 +198,32 @@ pub fn validate_endpoint(value: &str) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn mcp_tool_selection_preserves_omitted_empty_and_explicit_lists_on_roundtrip() {
+        for transport in [
+            "transport = 'stdio'\ncommand = '/example/mcp-server'\n",
+            "transport = 'http'\nurl = 'https://example.test/mcp'\n",
+        ] {
+            for (setting, echo_allowed, other_allowed) in [
+                ("", true, true),
+                ("allowed_tools = []\n", false, false),
+                ("allowed_tools = ['echo']\n", true, false),
+                ("allowed_tools = ['*']\n", false, false),
+            ] {
+                let cfg: McpConfig = toml::from_str(&format!("{transport}{setting}")).unwrap();
+                let encoded = toml::to_string(&cfg).unwrap();
+                assert_eq!(encoded.contains("allowed_tools"), !setting.is_empty());
+                let restored: McpConfig = toml::from_str(&encoded).unwrap();
+                for config in [cfg, restored] {
+                    assert_eq!(config.allows_tool("echo"), echo_allowed);
+                    assert_eq!(config.allows_tool("other"), other_allowed);
+                    assert_eq!(config.allows_tool("Echo"), other_allowed);
+                    assert_eq!(config.allows_tool("mcp_fixture_echo"), other_allowed);
+                }
+            }
+        }
+    }
+
     #[test]
     fn missing_config_and_invalid_active_profile_keep_path_and_cause() {
         let dir = tempfile::tempdir().unwrap();

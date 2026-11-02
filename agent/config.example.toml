@@ -48,15 +48,18 @@ tools = true
 
 # MCP servers are started only from this operator-selected config.
 # Every MCP call requires confirmation of the exact tool and arguments in the TUI.
-# An empty allowed_tools list exposes no tools (discovery remains available).
+# Omit allowed_tools to expose every discovered tool to the model.
+# Set allowed_tools = [] to expose none (discovery remains available).
+# A nonempty list exposes only exact original tool names; no wildcard matching.
+# Older versions treated omission as an empty list; use [] to retain that behavior.
 # [mcp.knowledge]
 # transport = "stdio"
 # command = "/absolute/path/to/server"
 # args = []
 # env_names = ["KNOWLEDGE_TOKEN"]
-# allowed_tools = ["search", "read"]
+# allowed_tools = ["search", "read"] # Optional restriction; omit for all tools.
 # [mcp.remote]
 # transport = "http"
 # url = "https://your-server.example/mcp"
 # bearer_token_env = "MCP_TOKEN"
-# allowed_tools = ["search"]
+# allowed_tools = ["search"] # Optional restriction; omit for all tools.

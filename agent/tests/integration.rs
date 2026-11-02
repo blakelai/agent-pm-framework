@@ -429,7 +429,7 @@ async fn budget_cli_ignores_legacy_request_cap_and_query_remains_local() {
             command: "this-command-must-not-run".into(),
             args: vec![],
             env_names: vec![],
-            allowed_tools: vec![],
+            allowed_tools: Some(vec![]),
         },
     );
     atomic_write(&path, toml::to_string(&cfg).unwrap().as_bytes()).unwrap();
@@ -1265,26 +1265,55 @@ async fn approval_denial_does_not_execute_the_tool() {
     server.abort();
 }
 
+async fn assert_mcp_tool_selection(config: McpConfig) {
+    let base = toml::to_string(&config).unwrap();
+    assert!(!base.contains("allowed_tools"));
+    for (setting, expected) in [
+        ("", vec!["echo", "hidden"]),
+        ("allowed_tools = []\n", vec![]),
+        ("allowed_tools = ['echo']\n", vec!["echo"]),
+        ("allowed_tools = ['*']\n", vec![]),
+        ("allowed_tools = ['missing']\n", vec![]),
+    ] {
+        let config = toml::from_str(&format!("{base}{setting}")).unwrap();
+        let client = Mcp::connect(&BTreeMap::from([("fixture".into(), config)]))
+            .await
+            .unwrap();
+        assert_eq!(
+            client
+                .specs()
+                .iter()
+                .map(|t| t.name.clone())
+                .collect::<Vec<_>>(),
+            expected
+                .iter()
+                .map(|name| format!("mcp_fixture_{name}"))
+                .collect::<Vec<_>>(),
+            "Tool selection for {setting:?}"
+        );
+        for name in ["echo", "hidden", "missing"] {
+            let result = client
+                .call(&format!("mcp_fixture_{name}"), json!({"text":"fixture"}))
+                .await;
+            if expected.contains(&name) {
+                assert_eq!(result.unwrap()["content"][0]["text"], "fixture");
+            } else {
+                assert!(result.is_err(), "Unexpected route for {name}, {setting:?}");
+            }
+        }
+    }
+}
+
 #[tokio::test]
-async fn mcp_stdio_discovers_only_allowlisted_tools_and_calls_them() {
+async fn mcp_stdio_tool_selection_and_calls() {
     let script = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/mcp_fixture.py");
-    let cfg = BTreeMap::from([(
-        "fixture".into(),
-        McpConfig::Stdio {
-            command: std::env::var("PM_TEST_PYTHON").unwrap_or("python3".into()),
-            args: vec![script.to_string_lossy().into()],
-            env_names: vec![],
-            allowed_tools: vec!["echo".into()],
-        },
-    )]);
-    let client = Mcp::connect(&cfg).await.unwrap();
-    assert_eq!(client.specs().len(), 1);
-    let value = client
-        .call("mcp_fixture_echo", json!({"text":"fixture"}))
-        .await
-        .unwrap();
-    assert_eq!(value["content"][0]["text"], "fixture");
-    assert!(client.call("mcp_fixture_hidden", json!({})).await.is_err());
+    assert_mcp_tool_selection(McpConfig::Stdio {
+        command: std::env::var("PM_TEST_PYTHON").unwrap_or("python3".into()),
+        args: vec![script.to_string_lossy().into()],
+        env_names: vec![],
+        allowed_tools: None,
+    })
+    .await;
 }
 
 #[tokio::test]
@@ -1317,7 +1346,7 @@ async fn explicit_answer_adopts_manual_question_and_unresolved_questions_gate_mc
                     .into(),
             ],
             env_names: vec![],
-            allowed_tools: vec!["echo".into()],
+            allowed_tools: Some(vec!["echo".into()]),
         },
     );
     let rt = Runtime::open(w.clone(), cfg.clone()).await.unwrap();
@@ -1364,9 +1393,11 @@ async fn explicit_answer_adopts_manual_question_and_unresolved_questions_gate_mc
     server.abort();
 }
 
-#[tokio::test]
-async fn mcp_streamable_http_initializes_lists_and_calls() {
-    async fn handler(Json(message): Json<Value>) -> axum::response::Response {
+async fn mcp_http_server() -> (String, Arc<Mutex<Vec<Value>>>, tokio::task::JoinHandle<()>) {
+    async fn handler(
+        State(calls): State<Arc<Mutex<Vec<Value>>>>,
+        Json(message): Json<Value>,
+    ) -> axum::response::Response {
         if message.get("id").is_none() {
             return StatusCode::ACCEPTED.into_response();
         }
@@ -1375,9 +1406,13 @@ async fn mcp_streamable_http_initializes_lists_and_calls() {
                 json!({"protocolVersion":message["params"]["protocolVersion"],"capabilities":{"tools":{}},"serverInfo":{"name":"fixture","version":"1"}})
             }
             "tools/list" => {
-                json!({"tools":[{"name":"echo","inputSchema":{"type":"object","properties":{"text":{"type":"string"}},"required":["text"]}}]})
+                json!({"tools":[
+                    {"name":"echo","inputSchema":{"type":"object","properties":{"text":{"type":"string"}},"required":["text"]}},
+                    {"name":"hidden","inputSchema":{"type":"object","properties":{"text":{"type":"string"}},"required":["text"]}}
+                ]})
             }
             "tools/call" => {
+                calls.lock().unwrap().push(message["params"].clone());
                 json!({"content":[{"type":"text","text":message["params"]["arguments"]["text"]}]})
             }
             _ => json!({}),
@@ -1386,27 +1421,103 @@ async fn mcp_streamable_http_initializes_lists_and_calls() {
     }
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let url = format!("http://{}/mcp", listener.local_addr().unwrap());
+    let calls = Arc::new(Mutex::new(vec![]));
+    let app = Router::new()
+        .route("/mcp", post(handler))
+        .with_state(calls.clone());
     let task = tokio::spawn(async move {
-        axum::serve(listener, Router::new().route("/mcp", post(handler)))
+        axum::serve(listener, app).await.unwrap();
+    });
+    (url, calls, task)
+}
+
+#[tokio::test]
+async fn mcp_streamable_http_tool_selection_and_calls() {
+    let (url, calls, task) = mcp_http_server().await;
+    assert_mcp_tool_selection(McpConfig::Http {
+        url,
+        bearer_token_env: None,
+        allowed_tools: None,
+    })
+    .await;
+    assert_eq!(calls.lock().unwrap().len(), 3);
+    task.abort();
+}
+
+#[tokio::test]
+async fn mcp_without_allowlist_still_requires_an_exact_call_decision() {
+    for approve in [false, true] {
+        let (_dir, w) = fixture();
+        let (mcp_url, calls, mcp_server) = mcp_http_server().await;
+        let args = json!({"text":"Synthetic approval check"});
+        let (url, _, requests, model_server) = server(vec![
+            chat(
+                "",
+                vec![call(0, "mcp-decision", "mcp_fixture_hidden", args.clone())],
+            ),
+            chat("The operator decision was handled.", vec![]),
+        ])
+        .await;
+        let mut cfg = config(url, Protocol::ChatCompletions);
+        cfg.mcp.insert(
+            "fixture".into(),
+            McpConfig::Http {
+                url: mcp_url,
+                bearer_token_env: None,
+                allowed_tools: None,
+            },
+        );
+        let rt = Runtime::open(w, cfg.clone()).await.unwrap();
+        let mut s = Session::new(&cfg, "workflow").unwrap();
+        rt.input(&mut s, "Use the synthetic MCP echo tool.")
+            .unwrap();
+        rt.run(&mut s, None, &events().0, &CancellationToken::new())
             .await
             .unwrap();
-    });
-    let cfg = BTreeMap::from([(
-        "http".into(),
-        McpConfig::Http {
-            url,
-            bearer_token_env: None,
-            allowed_tools: vec!["echo".into()],
-        },
-    )]);
-    let mcp = Mcp::connect(&cfg).await.unwrap();
-    assert_eq!(
-        mcp.call("mcp_http_echo", json!({"text":"ok"}))
-            .await
-            .unwrap()["content"][0]["text"],
-        "ok"
-    );
-    task.abort();
+        assert_eq!(s.status, Status::WaitingApproval, "{:?}", s.error);
+        assert_eq!(s.pending[0].id, "mcp-decision");
+        assert_eq!(s.pending[0].name, "mcp_fixture_hidden");
+        assert_eq!(
+            serde_json::from_str::<Value>(&s.pending[0].arguments).unwrap(),
+            args
+        );
+        assert!(calls.lock().unwrap().is_empty());
+        assert!(
+            rt.store
+                .call_result(&s.id, "mcp-decision")
+                .unwrap()
+                .is_none()
+        );
+        let exposed: Vec<_> = requests.lock().unwrap()[0]["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|t| t["function"]["name"].as_str())
+            .filter(|n| n.starts_with("mcp_"))
+            .map(str::to_owned)
+            .collect();
+        assert_eq!(exposed, ["mcp_fixture_echo", "mcp_fixture_hidden"]);
+        rt.decision(&mut s, approve).unwrap();
+        rt.run(
+            &mut s,
+            approve.then(|| "mcp-decision".into()),
+            &events().0,
+            &CancellationToken::new(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(s.status, Status::Completed, "{:?}", s.error);
+        if approve {
+            let calls = calls.lock().unwrap();
+            assert_eq!(calls.len(), 1);
+            assert_eq!(calls[0]["name"], "hidden");
+            assert_eq!(calls[0]["arguments"], args);
+        } else {
+            assert!(calls.lock().unwrap().is_empty());
+        }
+        model_server.abort();
+        mcp_server.abort();
+    }
 }
 
 #[test]

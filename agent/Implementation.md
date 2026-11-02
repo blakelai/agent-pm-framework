@@ -34,7 +34,7 @@ The approved direction is a local Rust TUI for macOS/Linux, sharing project docu
 | Material review records | Human-operated version-bound review forms, actual scope/actor/time/method/outcome, explicit correction history and shared current-review checks; originals and claims remain unchanged |
 | Impact and comparison | Read-only reference chains, explicit baseline/current and pinned/latest source comparisons; background TUI reads, integrity checks and stale-result invalidation |
 | OKF exchange | Native bundle validation and staged portable export; exact raw attachments and typed Skill concepts |
-| MCP | Official Rust SDK, stdio/Streamable HTTP, configured tool allowlist, schema validation, exact-call authorization |
+| MCP | Official Rust SDK, stdio/Streamable HTTP, all discovered tools by default with optional exact-name restrictions or an explicit empty list, schema validation, exact-call authorization |
 | Store | Versioned SQLite sessions, tool ledger and document projection; checked legacy adoption with a mandatory safety snapshot, operator inspect/migrate commands and rejection of unsupported schemas; unknown outcomes require reconciliation |
 | Backup and restore | Operator CLI and TUI Recovery panel, reviewed writes, cancellable background operations, manifest-bound restore checks, optional consistent SQLite snapshot and standalone recovery into a new private Vault |
 | Distribution | Native macOS Apple Silicon/Linux x86_64 package pipeline, clean starter and checksums, verified user-prefix installation with retained versions, package smoke checks, tag-triggered draft releases and source-build CI |

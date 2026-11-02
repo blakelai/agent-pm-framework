@@ -99,7 +99,7 @@ impl Mcp {
                 .with_context(|| format!("MCP server '{name}' tool discovery timed out; check its tools/list response"))?
                 .with_context(|| format!("MCP server '{name}' tool discovery failed"))?;
             for tool in discovered {
-                if !cfg.allowed_tools().contains(&tool.name.to_string()) {
+                if !cfg.allows_tool(tool.name.as_ref()) {
                     continue;
                 }
                 let alias = format!("mcp_{name}_{}", tool.name);
@@ -151,7 +151,7 @@ mod tests {
                 command: command.clone(),
                 args: vec!["SECRET_ARGUMENT_VALUE".into()],
                 env_names: vec!["SECRET_ENVIRONMENT_NAME".into()],
-                allowed_tools: vec![],
+                allowed_tools: Some(vec![]),
             },
         )]);
         let error = Mcp::connect(&config).await.err().unwrap();
@@ -179,7 +179,7 @@ mod tests {
             McpConfig::Http {
                 url: "https://example.test/mcp?token=SECRET_TOKEN".into(),
                 bearer_token_env: None,
-                allowed_tools: vec![],
+                allowed_tools: Some(vec![]),
             },
         )]);
         let error = Mcp::connect(&config).await.err().unwrap();
@@ -198,7 +198,7 @@ mod tests {
                 command: "/bin/sh".into(),
                 args: vec!["-c".into(), "exit 7 # SECRET_ARGUMENT".into()],
                 env_names: vec![],
-                allowed_tools: vec![],
+                allowed_tools: Some(vec![]),
             },
         )]);
         let error = Mcp::connect(&config).await.err().unwrap();

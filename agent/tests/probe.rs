@@ -209,7 +209,7 @@ fn config(url: String, protocol: Protocol) -> Config {
                 command: "/this/must/not/start".into(),
                 args: vec![],
                 env_names: vec![],
-                allowed_tools: vec![],
+                allowed_tools: Some(vec![]),
             },
         )]),
     }

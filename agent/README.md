@@ -173,7 +173,19 @@ O/M/P effort, availability and dates must be supplied. Unknown capacity is not z
 
 Configure `mcp` profiles in the local config using the commented examples. The official Rust MCP SDK handles initialization and transport negotiation for stdio and Streamable HTTP. Stdio commands run only from operator configuration. Their environment is restricted to basic process variables and explicit `env_names`; server stderr is suppressed to avoid disrupting the terminal or persisting accidental secrets.
 
-Only tools listed in `allowed_tools` are exposed to the model. Every model-requested MCP invocation displays its exact tool and arguments for approval. Schemas are checked locally; external schema references are rejected. Tool descriptions/results remain untrusted data. Remote credentials use an environment variable. OAuth discovery, interactive OAuth login, server-requested sampling and elicitation are not implemented in this milestone.
+Tool exposure is configured independently for each server, for both transports:
+
+| `allowed_tools` setting | Tools exposed to the model |
+|---|---|
+| Omitted | All tools returned by discovery |
+| `[]` | None; connection and discovery still run |
+| `["search", "read"]` | Only discovered tools with those exact original names |
+
+Names are case-sensitive; `*` is not a wildcard. The model sees names such as `mcp_knowledge_search`, but the list uses the server's original name, `search`. Existing tool-name compatibility checks still apply. The active provider must have tools enabled to receive tool definitions.
+
+Upgrade note: earlier versions treated an omitted `allowed_tools` as an empty list. Set `allowed_tools = []` explicitly to retain that behavior. Existing explicit lists keep their meaning. Restart PM Agent after changing the configuration.
+
+Every model-requested MCP invocation still displays its exact tool and arguments for approval, including when the list is omitted. Discovery does not authorize execution. Schemas are checked locally; external schema references are rejected. Tool descriptions/results remain untrusted data. Remote credentials use an environment variable. OAuth discovery, interactive OAuth login, server-requested sampling and elicitation are not implemented in this milestone.
 
 ## Clarification, recovery and persistence
 

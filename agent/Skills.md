@@ -56,6 +56,6 @@ Each runtime invocation records the selected stage Skill, explicit Skills, decla
 
 A selected Skill change is picked up on the next turn and recorded as another activation. If a tool is already pending, instruction changes block continuation until the recorded files are restored. Missing or invalid explicitly requested Skills fail before sending a model request.
 
-Skills define methods and prompts; tools remain the existing native PM tools and configured MCP allowlists. Adding a Skill does not grant filesystem scope, shell execution, new tools or approval bypass. Bundled scripts are not executed. Governance, source provenance, mandatory clarification and baseline protections remain in effect.
+Skills define methods and prompts; tools remain the existing native PM tools and MCP tools exposed by operator configuration. See [MCP tool selection](README.md#mcp-tools) for omitted, empty and explicit `allowed_tools` lists. Adding a Skill does not grant filesystem scope, shell execution, new tools or approval bypass. Bundled scripts are not executed. Governance, source provenance, mandatory clarification and baseline protections remain in effect.
 
 See [terminal operation](README.md) and [interaction contract](Interaction.md).

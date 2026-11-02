@@ -80,7 +80,7 @@ async fn server(script: Vec<String>) -> (Config, Script, tokio::task::JoinHandle
                 command: "nonexistent-evaluation-mcp".into(),
                 args: vec![],
                 env_names: vec![],
-                allowed_tools: vec![],
+                allowed_tools: Some(vec![]),
             },
         )]),
     };

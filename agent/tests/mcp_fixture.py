@@ -14,6 +14,9 @@ for line in sys.stdin:
     elif method == 'tools/list':
         result = {'tools': [{'name': 'echo', 'description': 'Return the supplied fixture text',
                             'inputSchema': {'type': 'object', 'properties': {'text': {'type': 'string'}},
+                                            'required': ['text'], 'additionalProperties': False}},
+                           {'name': 'hidden', 'description': 'A second synthetic echo tool',
+                            'inputSchema': {'type': 'object', 'properties': {'text': {'type': 'string'}},
                                             'required': ['text'], 'additionalProperties': False}}]}
     elif method == 'tools/call':
         result = {'content': [{'type': 'text', 'text': message['params']['arguments']['text']}]}
