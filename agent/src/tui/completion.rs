@@ -10,6 +10,7 @@ pub const COMMANDS: &[(&str, &str)] = &[
     ("/budget", "Inspect reported session usage and token guard"),
     ("/skills", "Choose a project Skill"),
     ("/skills clear", "Clear additional Skills for this session"),
+    ("/language", "Choose the response language for new sessions"),
     ("/stage", "Choose a workflow stage for a new session"),
     ("/search", "Filter project documents"),
     ("/pm", "Run a native project-management command"),
@@ -86,6 +87,21 @@ pub fn suggest(editor: &Editor, skills: &[Item]) -> Option<Popup> {
                     description: "Workflow stage (new sessions only)".into(),
                 })
                 .collect()
+        } else if before.starts_with("/language ") {
+            [
+                ("auto", "Follow user preference"),
+                ("en", "English"),
+                ("zh-TW", "Traditional Chinese (Taiwan)"),
+                ("zh-CN", "Simplified Chinese"),
+                ("ja-JP", "Japanese"),
+                ("ko-KR", "Korean"),
+            ]
+            .into_iter()
+            .map(|(tag, label)| Item {
+                value: format!("/language {tag}"),
+                description: label.into(),
+            })
+            .collect()
         } else if before.starts_with("/pm ") {
             crate::tools::specs()
                 .into_iter()

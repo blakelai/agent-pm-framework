@@ -891,6 +891,7 @@ fn call(index: usize, id: &str, name: &str, args: Value) -> Value {
 fn config(url: String, protocol: Protocol) -> Config {
     Config {
         provider: "fixture".into(),
+        response_language: None,
         max_steps: 12,
         session_limits: Default::default(),
         mcp: BTreeMap::new(),
@@ -2113,4 +2114,74 @@ async fn cancelling_read_only_grounding_preserves_pending_draft_without_uncertai
         pm_agent::budget::State::Cancelled
     ));
     task.abort();
+}
+
+#[tokio::test]
+async fn response_language_is_in_both_system_prompts_and_pinned_on_resume() {
+    for protocol in [Protocol::ChatCompletions, Protocol::Responses] {
+        let (_dir, w) = fixture();
+        let reply = if protocol == Protocol::ChatCompletions {
+            chat("Synthetic reply", vec![])
+        } else {
+            format!(
+                "data: {}\n\n",
+                json!({"type":"response.completed","response":{"status":"completed","output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Synthetic reply"}]}]}})
+            )
+        };
+        let (url, _, requests, server) = server(vec![reply.clone(), reply.clone(), reply]).await;
+        let mut cfg = config(url, protocol.clone());
+        cfg.response_language = Some("zh-TW".into());
+        let rt = Runtime::open(w.clone(), cfg.clone()).await.unwrap();
+        let mut s = Session::new(&cfg, "workflow").unwrap();
+        let (tx, _rx) = events();
+        rt.input(&mut s, "Synthetic first message").unwrap();
+        rt.run(&mut s, None, &tx, &CancellationToken::new())
+            .await
+            .unwrap();
+        assert_eq!(s.status, Status::Completed);
+        cfg.response_language = Some("ja-JP".into());
+        let rt = Runtime::open(w, cfg.clone()).await.unwrap();
+        let mut saved: Session = rt.store.load(&s.id).unwrap();
+        assert_eq!(saved.response_language.as_deref(), Some("zh-TW"));
+        assert_eq!(
+            Session::new(&cfg, "workflow")
+                .unwrap()
+                .response_language
+                .as_deref(),
+            Some("ja-JP")
+        );
+        rt.input(&mut saved, "Synthetic continuation").unwrap();
+        rt.run(&mut saved, None, &tx, &CancellationToken::new())
+            .await
+            .unwrap();
+        assert_eq!(saved.status, Status::Completed);
+        let mut legacy = serde_json::to_value(&saved).unwrap();
+        legacy.as_object_mut().unwrap().remove("response_language");
+        let mut legacy: Session = serde_json::from_value(legacy).unwrap();
+        assert!(legacy.response_language.is_none());
+        rt.input(&mut legacy, "Legacy continuation").unwrap();
+        rt.run(&mut legacy, None, &tx, &CancellationToken::new())
+            .await
+            .unwrap();
+        let reqs = requests.lock().unwrap();
+        assert_eq!(reqs.len(), 3);
+        for (i, req) in reqs.iter().enumerate() {
+            let prompt = if protocol == Protocol::ChatCompletions {
+                &req["messages"][0]["content"]
+            } else {
+                &req["instructions"]
+            };
+            let prompt = prompt.as_str().unwrap();
+            if i < 2 {
+                assert!(prompt.contains("Default conversational response language: zh-TW."));
+                assert!(prompt.contains("unless the user explicitly requests another language"));
+            } else {
+                assert!(!prompt.contains("Default conversational response language:"));
+            }
+            assert!(prompt.contains("Authored project prose must use en."));
+            assert!(prompt.contains("Agent instructions and operational records use English."));
+            assert!(!prompt.contains("Default conversational response language: ja-JP."));
+        }
+        server.abort();
+    }
 }

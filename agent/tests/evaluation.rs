@@ -60,6 +60,7 @@ async fn server(script: Vec<String>) -> (Config, Script, tokio::task::JoinHandle
     });
     let cfg = Config {
         provider: "fixture".into(),
+        response_language: None,
         max_steps: 32,
         session_limits: Default::default(),
         providers: BTreeMap::from([(

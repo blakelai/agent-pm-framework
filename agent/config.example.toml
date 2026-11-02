@@ -6,6 +6,11 @@
 # latest local result without requests. Probes do not modify these settings.
 provider = "ollama"
 
+# Default conversational reply language (language tag). Omit to follow user preference.
+# Applies to new TUI and CLI Chat sessions, not project documents or English Agent records.
+# Existing sessions retain their saved language. TUI: /language TAG before starting a session.
+# response_language = "zh-TW"
+
 # Interactive execution has no request-count cap. Esc in the TUI composer stops work.
 # Optional reported-token guard. Omitted means disabled; 0 pauses immediately.
 # Totals use only service-reported total_tokens, never input + output estimates.

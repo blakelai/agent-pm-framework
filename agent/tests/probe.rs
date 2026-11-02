@@ -189,6 +189,7 @@ async fn serve(protocol: Protocol, mode: Mode) -> (String, Requests, tokio::task
 fn config(url: String, protocol: Protocol) -> Config {
     Config {
         provider: "fixture".into(),
+        response_language: None,
         max_steps: 32,
         session_limits: Default::default(),
         providers: BTreeMap::from([(

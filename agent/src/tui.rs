@@ -398,6 +398,31 @@ fn dispatch(
         app.status = "Custom Skills cleared; the stage Skill remains active".into();
         return Ok(None);
     }
+    if input == "/language" || input.starts_with("/language ") {
+        if let Some(tag) = input.strip_prefix("/language ") {
+            anyhow::ensure!(
+                app.session.is_none(),
+                "Use /new before selecting a response language"
+            );
+            let tag = tag.trim();
+            let language = if tag == "auto" {
+                None
+            } else {
+                crate::config::validate_response_language(tag)?;
+                Some(tag.to_string())
+            };
+            app.response_language = Some(language);
+        }
+        let language = match &app.session {
+            Some(session) => session.response_language.clone(),
+            None => match &app.response_language {
+                Some(language) => language.clone(),
+                None => Config::read(config_path)?.response_language,
+            },
+        };
+        app.append(&format!("Response language: {}. For new sessions use /language TAG or /language auto after /new. This TUI selection lasts until exit; set response_language in config.toml for a persistent default.", language.as_deref().unwrap_or("auto (user preference)")));
+        return Ok(None);
+    }
     if input == "/status" {
         app.append(&app.status_details());
         return Ok(None);
@@ -537,7 +562,10 @@ fn dispatch(
         });
         return Ok(Some(cancel));
     }
-    let config = config?;
+    let mut config = config?;
+    if let Some(language) = &app.response_language {
+        config.response_language = language.clone();
+    }
     app.model = config.active()?.model.clone();
     let submitted_text = input.clone();
     let action = match input.as_str() {
@@ -812,6 +840,7 @@ command = "this-command-must-not-run"
         let w = Workspace::open(dir.path()).unwrap();
         let config = Config {
             provider: "fixture".into(),
+            response_language: None,
             max_steps: 32,
             session_limits: Default::default(),
             providers: std::collections::BTreeMap::from([(
@@ -919,5 +948,88 @@ command = "this-command-must-not-run"
                 terminal.draw(|f| app.draw(f)).unwrap();
             }
         }
+    }
+    #[test]
+    fn language_selection_is_local_and_requires_a_new_session() {
+        let dir = tempfile::tempdir().unwrap();
+        crate::workspace::atomic_write(&dir.path().join("00_Governance/Project.md"), crate::workspace::note(serde_json::json!({"type":"project","id":"PROJECT-TEST","language":"en","title":"Synthetic"}), "# Synthetic").unwrap().as_bytes()).unwrap();
+        let w = Workspace::open(dir.path()).unwrap();
+        let path = w.path(".pm-agent/config.toml").unwrap();
+        crate::workspace::atomic_write(
+            &path,
+            br#"provider = "fixture"
+response_language = "ja-JP"
+[providers.fixture]
+protocol = "chat_completions"
+base_url = "http://127.0.0.1:9/v1"
+model = "fixture"
+"#,
+        )
+        .unwrap();
+        let config = Config::load(&path).unwrap();
+        let mut app = App::new(vec![]);
+        let store = Store::open(&w.path(".pm-agent/runtime.sqlite3").unwrap()).unwrap();
+        let (tx, mut events) = mpsc::unbounded_channel();
+        let (done, mut outcomes) = mpsc::unbounded_channel();
+        dispatch(
+            &w,
+            &path,
+            &mut app,
+            &store,
+            "/language zh-TW".into(),
+            &tx,
+            &done,
+        )
+        .unwrap();
+        assert_eq!(app.response_language, Some(Some("zh-TW".into())));
+        assert!(
+            dispatch(
+                &w,
+                &path,
+                &mut app,
+                &store,
+                "/language en bad".into(),
+                &tx,
+                &done
+            )
+            .is_err()
+        );
+        assert_eq!(app.response_language, Some(Some("zh-TW".into())));
+        app.session = Some(Session::new(&config, "workflow").unwrap());
+        assert!(
+            dispatch(
+                &w,
+                &path,
+                &mut app,
+                &store,
+                "/language en".into(),
+                &tx,
+                &done
+            )
+            .is_err()
+        );
+        assert_eq!(
+            app.session.as_ref().unwrap().response_language.as_deref(),
+            Some("ja-JP")
+        );
+        dispatch(&w, &path, &mut app, &store, "/new".into(), &tx, &done).unwrap();
+        assert_eq!(app.response_language, Some(Some("zh-TW".into())));
+        dispatch(
+            &w,
+            &path,
+            &mut app,
+            &store,
+            "/language auto".into(),
+            &tx,
+            &done,
+        )
+        .unwrap();
+        assert_eq!(app.response_language, Some(None));
+        assert_eq!(
+            Config::read(&path).unwrap().response_language.as_deref(),
+            Some("ja-JP")
+        );
+        assert!(events.try_recv().is_err());
+        assert!(outcomes.try_recv().is_err());
     }
 }

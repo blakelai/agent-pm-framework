@@ -53,6 +53,14 @@ Interactive execution has no request-count or step-count cap. Work continues unt
 
 `doctor` checks local configuration, key presence and required Chat guidance for the selected stage (`--stage workflow` by default). It reports the resolved Vault/configuration paths and independent missing-file or Skill-reference failures. It does not write runtime state, spawn MCP or send model requests. See [Chat troubleshooting](Troubleshooting.md) for older Vaults and expanded error details. Endpoint authentication, route availability, model quality, tool support and usage accounting still require live acceptance tests. HTTPS is required for remote endpoints; HTTP is allowed on loopback.
 
+## Choose the default Chat response language
+
+Set the top-level `response_language = "zh-TW"` in `.pm-agent/config.toml` (before any TOML section) to default new TUI and CLI Chat replies to Traditional Chinese. Other language tags such as `en` and `ja-JP` are accepted. Omission keeps automatic replies following the user's preferred language; older configurations remain valid.
+
+In TUI Chat, use `/language` to inspect the current selection, or type `/language ` and select a suggested language with arrows and Tab/Enter. `/language TAG` accepts other language tags; `/language auto` returns to automatic replies. Select before sending the first message, or use `/new` first. This selection applies to subsequent new sessions until the TUI exits; edit the configuration for a persistent default. Local language selection sends no model request.
+
+New sessions save the selected language and include its instruction in the initial system prompt for either provider protocol. Resumed sessions retain that selection even after the configuration changes; legacy sessions without it retain automatic replies. The language is a default: an explicit request in the conversation can ask for another reply language. Project documents still follow `document_language`, operational records remain English, and original quotations and identifiers are preserved.
+
 ## Use the terminal workbench
 
 | Control | Action |
@@ -111,6 +119,7 @@ The [delivery views](Delivery-Workflows.md) show current workflow checks and mis
 |---|---|
 | `/skills`, `/skills clear` | Select project Skills / clear additional selections |
 | `/probe [PROFILE]`, `/probe last [PROFILE]` | Explicit synthetic provider check / local observation replay; leaves the current Agent session unchanged |
+| `/language [TAG or auto]` | Inspect or select the reply language for new sessions in this TUI |
 | `/status` | Full session, active selection and service-reported usage details |
 | `/budget` | Current operator limits and cumulative session observations; local query without a model request |
 | `/search text` | Literal search, including Chinese and code identifiers; `/search` clears it |
