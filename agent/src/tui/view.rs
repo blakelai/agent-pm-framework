@@ -373,7 +373,16 @@ impl App {
     }
     pub fn notice(&mut self, text: &str) {
         self.status = text.lines().next().unwrap_or("").into();
-        self.messages.push(Kind::Activity, &self.status, text);
+        let kind = if text.starts_with("Failed:")
+            || text.starts_with("Error:")
+            || text.starts_with("NeedsReconciliation:")
+            || text.starts_with("Input was not accepted;")
+        {
+            Kind::Error
+        } else {
+            Kind::Activity
+        };
+        self.messages.push(kind, &self.status, text);
         self.project_output(text);
     }
     pub(super) fn user_message(&mut self, text: &str) {
@@ -445,7 +454,7 @@ impl App {
                 self.history.edited();
                 self.refresh_completion();
             }
-            Err(e) => self.status = format!("Paste unavailable: {e:#}"),
+            Err(e) => self.notice(&format!("Error: {}", crate::diagnostics::format_error(&e))),
         }
     }
     pub(super) fn reset_chat(&mut self) {
@@ -1998,6 +2007,27 @@ mod tests {
     }
     fn buffer_text(buffer: &ratatui::buffer::Buffer) -> String {
         buffer.content.iter().map(|c| c.symbol()).collect()
+    }
+    #[test]
+    fn expanded_failures_preserve_literal_file_paths_and_multiline_causes() {
+        let mut a = App::new(vec![]);
+        a.switch(Mode::Chat);
+        let path = "90_Agent/**legacy**/policy_[v1].md";
+        let diagnostic = format!(
+            "Failed: Load Agent guidance\nFile: {path}\nCause: No such file or directory (os error 2)\nNext: Restore the missing guidance file."
+        );
+        a.provider_event(crate::provider::Event::Notice(diagnostic));
+        let collapsed = buffer_text(&draw(&mut a, 100, 30));
+        assert!(collapsed.contains("Failed"));
+        assert!(!collapsed.contains("os error 2"));
+        ctrl(&mut a, 't');
+        let expanded = buffer_text(&draw(&mut a, 100, 30));
+        assert!(
+            expanded.contains(path),
+            "Path changed in rendered diagnostics: {expanded}"
+        );
+        assert!(expanded.contains("No such file or directory (os error 2)"));
+        assert!(expanded.contains("Restore the missing guidance file"));
     }
     fn paste_image(app: &mut App) -> String {
         let image = crate::chat_images::Image::from_rgba(2, 1, &[255; 8]).unwrap();

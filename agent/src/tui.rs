@@ -204,7 +204,7 @@ pub async fn run(workspace: Workspace, config_path: PathBuf, lock: WorkspaceLock
                     Command::Refresh=>refresh(&workspace,&mut app,&mut store),
                     Command::Open(target)=>{
                         let result=if target.starts_with("https://") || target.starts_with("http://") {open_document(PathBuf::from(target))} else {workspace.path(&target).and_then(open_document)};
-                        if let Err(e)=result {app.status=format!("Open failed: {e}");}
+                        if let Err(e)=result {app.notice(&format!("Error: Open document\n{}", crate::diagnostics::format_error(&e)));}
                     },
                     Command::PasteClipboard=>{
                         if clipboard_running { app.status="Previous clipboard read is finishing; try again shortly".into(); }
@@ -218,8 +218,8 @@ pub async fn run(workspace: Workspace, config_path: PathBuf, lock: WorkspaceLock
                             });
                         }
                     },
-                    Command::RefreshSkills=>match Catalog::discover(&workspace) { Ok(c)=>app.update_skills(&c), Err(e)=>{app.clear_skills();app.notice(&format!("Skills unavailable: {e}"));} },
-                    Command::Skills=>match Catalog::discover(&workspace) {Ok(c)=>app.skills_menu(c),Err(e)=>app.notice(&e.to_string())},
+                    Command::RefreshSkills=>match Catalog::discover(&workspace) { Ok(c)=>app.update_skills(&c), Err(e)=>{app.clear_skills();app.notice(&format!("Error: Load Skills\n{}", crate::diagnostics::format_error(&e)));} },
+                    Command::Skills=>match Catalog::discover(&workspace) {Ok(c)=>app.skills_menu(c),Err(e)=>app.notice(&format!("Error: Load Skills\n{}", crate::diagnostics::format_error(&e)))},
                     Command::Planning=>{
                         let snapshot=crate::schedule::Snapshot::load(&workspace);
                         if let Some(planner)=&mut app.planner {planner.replace(snapshot);} else {app.planner=Some(planner::Planner::new(snapshot));}
@@ -340,7 +340,7 @@ pub async fn run(workspace: Workspace, config_path: PathBuf, lock: WorkspaceLock
                         match result {
                             Ok(Some(token))=>{cancellation=token;app.busy=true;app.messages.boundary();},
                             Ok(None)=>{},
-                            Err(e)=>{app.input.insert(&input);app.notice(&format!("Error: {e}"));},
+                            Err(e)=>{app.input.insert(&input);app.notice(&format!("Error: {}", crate::diagnostics::format_error(&e)));},
                         }
                     },
                 }
@@ -501,7 +501,7 @@ fn dispatch(
             .await;
             let _ = done.send(match result {
                 Ok(observation) => Outcome::Probe(observation),
-                Err(e) => Outcome::Error(e.to_string()),
+                Err(e) => Outcome::Error(crate::diagnostics::format_error(&e)),
             });
         });
         return Ok(Some(cancel));
@@ -532,7 +532,7 @@ fn dispatch(
             };
             let _ = done.send(match result {
                 Ok(v) => Outcome::Pm(serde_json::to_string_pretty(&v).unwrap_or_default()),
-                Err(e) => Outcome::Error(e.to_string()),
+                Err(e) => Outcome::Error(crate::diagnostics::format_error(&e)),
             });
         });
         return Ok(Some(cancel));
@@ -629,9 +629,9 @@ fn dispatch(
             Ok(()) => Outcome::Session(Box::new(session)),
             Err(e) if !input_accepted && !images.is_empty() => Outcome::RejectedInput {
                 text: submitted_text,
-                error: e.to_string(),
+                error: crate::diagnostics::format_error(&e),
             },
-            Err(e) => Outcome::Error(e.to_string()),
+            Err(e) => Outcome::Error(crate::diagnostics::format_error(&e)),
         });
     });
     Ok(Some(cancel))
@@ -641,6 +641,60 @@ fn dispatch(
 mod tests {
     use super::*;
     use crate::workspace::Document;
+    #[tokio::test]
+    async fn worker_startup_failure_retains_mcp_program_and_underlying_cause_without_arguments() {
+        let dir = tempfile::tempdir().unwrap();
+        crate::workspace::atomic_write(&dir.path().join("00_Governance/Project.md"),crate::workspace::note(serde_json::json!({"type":"project","id":"PROJECT-TEST","language":"en","title":"Synthetic"}),"# Synthetic").unwrap().as_bytes()).unwrap();
+        let w = Workspace::open(dir.path()).unwrap();
+        let path = w.path(".pm-agent/config.toml").unwrap();
+        let program = dir.path().join("missing-mcp-fixture");
+        let config = format!(
+            r#"
+provider = "fixture"
+[providers.fixture]
+protocol = "chat_completions"
+base_url = "http://127.0.0.1:9/v1"
+model = "fixture"
+[mcp.fixture]
+transport = "stdio"
+command = {}
+args = ["SYNTHETIC_SECRET_DO_NOT_DISPLAY"]
+"#,
+            serde_json::to_string(program.to_str().unwrap()).unwrap()
+        );
+        crate::workspace::atomic_write(&path, config.as_bytes()).unwrap();
+        let mut app = App::new(vec![]);
+        let store = Store::open(&w.path(".pm-agent/runtime.sqlite3").unwrap()).unwrap();
+        let (tx, _) = mpsc::unbounded_channel();
+        let (done, mut finished) = mpsc::unbounded_channel();
+        dispatch(
+            &w,
+            &path,
+            &mut app,
+            &store,
+            "Synthetic startup fixture".into(),
+            &tx,
+            &done,
+        )
+        .unwrap()
+        .unwrap();
+        let outcome = tokio::time::timeout(std::time::Duration::from_secs(5), finished.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        let Outcome::Error(error) = outcome else {
+            panic!("Expected startup error")
+        };
+        assert!(
+            error.contains(program.to_str().unwrap()),
+            "Program is missing from diagnostic: {error}"
+        );
+        assert!(
+            error.contains("os error 2"),
+            "Underlying cause is missing: {error}"
+        );
+        assert!(!error.contains("SYNTHETIC_SECRET_DO_NOT_DISPLAY"));
+    }
     #[tokio::test]
     async fn rejected_image_input_and_local_commands_preserve_pending_attachments() {
         let dir = tempfile::tempdir().unwrap();

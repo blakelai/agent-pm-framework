@@ -18,6 +18,40 @@ use tokio_util::sync::CancellationToken;
 type Queue = Arc<Mutex<VecDeque<String>>>;
 
 #[tokio::test]
+async fn missing_governance_failure_names_the_file_before_any_model_request() {
+    let (_dir, w) = fixture();
+    let missing = "90_Agent/Evidence-and-Clarification-Policy.md";
+    std::fs::remove_file(w.path(missing).unwrap()).unwrap();
+    let cfg = config("http://127.0.0.1:9/v1".into(), Protocol::ChatCompletions);
+    let rt = Runtime::open(w.clone(), cfg.clone()).await.unwrap();
+    let mut s = Session::new(&cfg, "workflow").unwrap();
+    rt.input(&mut s, "Synthetic legacy workspace diagnosis")
+        .unwrap();
+    let (tx, mut rx) = events();
+    rt.run(&mut s, None, &tx, &CancellationToken::new())
+        .await
+        .unwrap();
+    assert_eq!(s.status, Status::Failed);
+    assert!(s.request_ledger.as_ref().unwrap().requests.is_empty());
+    let error = s.error.as_deref().unwrap();
+    assert!(
+        error.contains(missing),
+        "File path is missing from diagnostic: {error}"
+    );
+    assert!(
+        error.contains(w.root.to_str().unwrap()),
+        "Vault root is missing: {error}"
+    );
+    assert!(
+        error.contains("os error 2"),
+        "Underlying cause is missing: {error}"
+    );
+    let saved: Session = rt.store.load(&s.id).unwrap();
+    assert_eq!(saved.error, s.error);
+    assert!(std::iter::from_fn(|| rx.try_recv().ok()).any(|event| matches!(event, Event::Notice(text) if text.contains(missing) && text.contains("os error 2"))));
+}
+
+#[tokio::test]
 async fn image_inputs_roundtrip_both_protocols_and_resume_without_persisting_base64() {
     use base64::Engine;
     use pm_agent::chat_images;

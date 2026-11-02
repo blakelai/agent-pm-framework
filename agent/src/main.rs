@@ -86,8 +86,11 @@ enum Command {
         #[arg(long, requires_all = ["session","prompt"], conflicts_with_all = ["approve","deny","reconcile"])]
         answer: Option<String>,
     },
-    /// Validate configuration and local prerequisites without making model requests.
-    Doctor,
+    /// Validate configuration and selected Chat prerequisites without contacting services.
+    Doctor {
+        #[arg(long, default_value = "workflow")]
+        stage: String,
+    },
     /// Explicit synthetic provider check (up to 3 requests; service charges may apply).
     Probe {
         /// Select a configured profile for this check without changing the active profile.
@@ -255,9 +258,13 @@ async fn main() -> Result<()> {
         println!("{}", serde_json::to_string_pretty(&report)?);
         return Ok(());
     }
-    let lock = WorkspaceLock::acquire(&workspace)?;
     let state_dir = workspace.path(".pm-agent")?;
     let config_path = cli.config.unwrap_or_else(|| state_dir.join("config.toml"));
+    if let Some(Command::Doctor { stage }) = &cli.command {
+        // Diagnosis must work without creating a session, spawning MCP or acquiring a writer.
+        return pm_agent::doctor::run(&workspace, &config_path, stage);
+    }
+    let lock = WorkspaceLock::acquire(&workspace)?;
     match cli.command.unwrap_or(Command::Tui) {
         Command::Eval { .. } => {
             unreachable!("Evaluations are dispatched before opening the selected Vault")
@@ -352,35 +359,7 @@ async fn main() -> Result<()> {
                 std::process::exit(result["exit_code"].as_i64().unwrap_or(2) as i32);
             }
         }
-        Command::Doctor => {
-            let c = Config::load(&config_path)?;
-            println!(
-                "Workspace: {}\nProject language: {}\nProvider profile: {}\nProtocol: {:?}\nModel: {}",
-                workspace.root.display(),
-                workspace.language()?,
-                c.provider,
-                c.active()?.protocol,
-                c.active()?.model
-            );
-            if let Some(key) = &c.active()?.api_key_env {
-                ensure!(
-                    std::env::var(key).is_ok_and(|v| !v.is_empty()),
-                    "Missing environment variable {key}"
-                );
-                println!("API key environment variable: present (value hidden)");
-            }
-            let commands = tools::specs().into_iter().find(|t| t.name == "pm").unwrap();
-            println!(
-                "PM operations: native Rust ({} commands)",
-                commands.parameters["properties"]["command"]["enum"]
-                    .as_array()
-                    .unwrap()
-                    .len()
-            );
-            println!(
-                "Local configuration passed. Provider/MCP live compatibility has NOT been tested."
-            );
-        }
+        Command::Doctor { .. } => unreachable!("Doctor runs before acquiring a writer"),
         Command::Chat {
             prompt,
             stage,

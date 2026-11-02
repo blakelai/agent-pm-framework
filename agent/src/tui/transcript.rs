@@ -14,6 +14,7 @@ pub enum Kind {
     Reasoning,
     Tool,
     Activity,
+    Error,
 }
 impl Kind {
     fn foldable(self) -> bool {
@@ -153,6 +154,7 @@ impl Transcript {
                 Kind::Assistant => Color::Green,
                 Kind::Tool => Color::Blue,
                 Kind::Reasoning | Kind::Activity => Color::Gray,
+                Kind::Error => Color::Red,
             };
             let prefix = if entry.kind.foldable() {
                 if entry.expanded { "▾ " } else { "▸ " }
@@ -169,7 +171,11 @@ impl Transcript {
             ));
             if entry.expanded {
                 rendered.lines.push(Line::default());
-                let body = markdown::render(&entry.body, width);
+                let body = if entry.kind == Kind::Error {
+                    diagnostic_text(&entry.body, width)
+                } else {
+                    markdown::render(&entry.body, width)
+                };
                 rendered.lines.extend(body.lines);
                 rendered.links.extend(body.links);
             }
@@ -247,6 +253,17 @@ impl Transcript {
             transcript.apply_result(item);
         }
         transcript.sync_tools(session);
+        if let Some(error) = session.error.as_deref().filter(|e| !e.is_empty()) {
+            transcript.push(
+                Kind::Error,
+                &format!(
+                    "{:?}: {}",
+                    session.status,
+                    error.lines().next().unwrap_or("")
+                ),
+                error,
+            );
+        }
         transcript.boundary();
         transcript
     }
@@ -327,6 +344,25 @@ fn literal(text: &str) -> String {
         .collect::<Vec<_>>()
         .join("\n")
 }
+/// Errors are plain diagnostic data. Preserve path punctuation and line breaks,
+/// never interpret it as Markdown, links or terminal control sequences.
+fn diagnostic_text(text: &str, width: usize) -> Rendered {
+    let clean: String = text
+        .chars()
+        .filter(|c| !c.is_control() || matches!(c, '\n' | '\t'))
+        .collect();
+    Rendered {
+        lines: markdown::wrap(
+            clean
+                .replace('\t', "    ")
+                .lines()
+                .map(|s| Line::raw(s.to_owned()))
+                .collect(),
+            width,
+        ),
+        links: vec![],
+    }
+}
 pub fn one_line(text: &str, width: usize) -> String {
     use unicode_segmentation::UnicodeSegmentation;
     use unicode_width::UnicodeWidthStr;
@@ -399,6 +435,47 @@ mod tests {
         assert!(t.omitted);
         assert!(t.entries[0].body.len() <= 150_000);
         assert_eq!(one_line("\u{1b}\n中文abc", 5), "中文a");
+    }
+    #[test]
+    fn replay_restores_saved_failure_details_without_inventing_missing_information() {
+        use serde_json::json;
+        let error = "Load instructions\nFile: /tmp/**old**/Schema_[v1].md\nCause: No such file or directory (os error 2)\nNext: Check the selected Vault.";
+        let s: Session = serde_json::from_value(json!({"id":"fixture", "status":"failed", "provider_fingerprint":"fixture", "history":[], "pending":[], "questions":[], "last_output":"", "error":error, "stage":"workflow"})).unwrap();
+        let mut t = Transcript::from_session(&s);
+        assert!(visible(&t).contains("Failed"));
+        assert!(!visible(&t).contains("Schema_[v1].md"));
+        t.toggle_all();
+        let expanded = visible(&t);
+        assert!(expanded.contains("/tmp/**old**/Schema_[v1].md"));
+        assert!(expanded.contains("os error 2"));
+        assert!(expanded.contains("Check the selected Vault"));
+        let mut old = s;
+        old.error = Some("No such file or directory (os error 2)".into());
+        let mut t = Transcript::from_session(&old);
+        t.toggle_all();
+        assert!(!visible(&t).contains("Schema_[v1].md"));
+        assert!(visible(&t).contains("os error 2"));
+    }
+    #[test]
+    fn failure_details_cannot_create_links_or_emit_terminal_controls() {
+        let mut t = Transcript::default();
+        let details = "File: /tmp/**old**/[notes].md\nCause: \u{1b}[31mblocked\u{0}\n[link](https://example.test)";
+        t.push(Kind::Error, "Failed: Read guidance", details);
+        let (rendered, _) = t.render(100);
+        assert_eq!(rendered.lines[0].style.fg, Some(Color::Red));
+        assert!(!visible(&t).contains("/tmp/"));
+        t.toggle_all();
+        let (rendered, _) = t.render(100);
+        assert!(rendered.links.is_empty());
+        let body = rendered
+            .lines
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(body.contains("/tmp/**old**/[notes].md"));
+        assert!(body.contains("[link](https://example.test)"));
+        assert!(!body.contains('\u{1b}') && !body.contains('\u{0}'));
     }
     #[test]
     fn resume_reconstructs_both_protocols_without_disclosing_opaque_or_inventing_reasoning() {

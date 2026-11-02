@@ -51,7 +51,7 @@ agent/target/debug/pm-agent --vault . chat --stage prd "Review the supplied sour
 
 Interactive execution has no request-count or step-count cap. Work continues until the Agent completes, needs clarification or approval, encounters an error, or the user stops it. Esc in the Chat composer cancels execution; Ctrl+C clears the composer. CLI Chat uses Ctrl+C to cancel. Legacy `max_steps` and `session_limits.max_requests` settings are accepted but ignored. [Session usage](Session-Limits.md) remains available through `/budget` or CLI `budget --session ID`. An explicitly configured reported-token guard still applies; it is disabled by default and never estimates missing usage.
 
-`doctor` checks local configuration and key presence. It does not send a live model request. Endpoint authentication, route availability, model quality, tool support and usage accounting still require live acceptance tests. HTTPS is required for remote endpoints; HTTP is allowed on loopback.
+`doctor` checks local configuration, key presence and required Chat guidance for the selected stage (`--stage workflow` by default). It reports the resolved Vault/configuration paths and independent missing-file or Skill-reference failures. It does not write runtime state, spawn MCP or send model requests. See [Chat troubleshooting](Troubleshooting.md) for older Vaults and expanded error details. Endpoint authentication, route availability, model quality, tool support and usage accounting still require live acceptance tests. HTTPS is required for remote endpoints; HTTP is allowed on loopback.
 
 ## Use the terminal workbench
 

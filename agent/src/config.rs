@@ -82,31 +82,94 @@ impl Config {
         }
     }
     pub fn read(path: &Path) -> Result<Self> {
-        let config: Self = toml::from_str(&std::fs::read_to_string(path).with_context(|| {
+        let text = std::fs::read_to_string(path).with_context(|| {
             format!(
-                "Read config {}. Copy agent/config.example.toml and set a model.",
+                "Cannot read provider configuration {}. Check --config and file permissions; for a new configuration, copy agent/config.example.toml and set a model.",
                 path.display()
             )
-        })?)?;
-        Ok(config)
+        })?;
+        // toml::de::Error displays the raw source line and may repeat configured values.
+        // Keep the exact location and a safe failure category, never config contents.
+        toml::from_str(&text)
+            .map_err(|error: toml::de::Error| safe_parse_error(&text, &error))
+            .with_context(|| format!("Cannot parse provider configuration {}; compare the indicated location with agent/config.example.toml", path.display()))
     }
     pub fn load(path: &Path) -> Result<Self> {
         let config = Self::read(path)?;
-        let p = config.active()?;
-        if p.model.trim().is_empty() {
-            bail!("Set an explicit model in the active provider profile; no model is inferred")
-        }
-        validate_endpoint(&p.base_url)?;
-        if p.timeout_seconds == 0 {
-            bail!("Timeout must be positive")
-        }
+        (|| -> Result<()> {
+            let p = config.active()?;
+            if p.model.trim().is_empty() {
+                bail!("Set an explicit model in the active provider profile; no model is inferred")
+            }
+            validate_endpoint(&p.base_url).context("Check the provider's base_url")?;
+            if p.timeout_seconds == 0 {
+                bail!("timeout_seconds must be positive")
+            }
+            Ok(())
+        })()
+        .with_context(|| {
+            format!(
+                "Validate active provider profile {:?} in {}",
+                config.provider,
+                path.display()
+            )
+        })?;
         Ok(config)
     }
     pub fn active(&self) -> Result<&ProviderConfig> {
         self.providers
             .get(&self.provider)
-            .context("Active provider profile does not exist")
+            .with_context(|| format!("Active provider profile {:?} does not exist; make provider match an entry in [providers]", self.provider))
     }
+}
+fn safe_parse_error(text: &str, error: &toml::de::Error) -> anyhow::Error {
+    let missing_field = error
+        .message()
+        .strip_prefix("missing field `")
+        .and_then(|message| message.strip_suffix('`'))
+        .filter(|field| {
+            matches!(
+                *field,
+                "provider"
+                    | "providers"
+                    | "protocol"
+                    | "base_url"
+                    | "model"
+                    | "transport"
+                    | "command"
+                    | "url"
+            )
+        });
+    let category = if error.message().starts_with("unknown field") {
+        "Unsupported configuration field"
+    } else if error.message().starts_with("missing field") {
+        "Missing required configuration field"
+    } else if error.message().starts_with("unknown variant") {
+        "Unsupported configuration choice; check protocol and transport"
+    } else if error.message().starts_with("invalid type") {
+        "Incorrect configuration value type"
+    } else if error.message().starts_with("duplicate") {
+        "Duplicate configuration key"
+    } else {
+        "Invalid TOML syntax or configuration value"
+    };
+    let category = missing_field
+        .map(|field| format!("Missing required configuration field `{field}`"))
+        .unwrap_or_else(|| category.into());
+    let location = error
+        .span()
+        .map(|span| {
+            let mut offset = span.start.min(text.len());
+            while !text.is_char_boundary(offset) {
+                offset -= 1;
+            }
+            let before = &text[..offset];
+            let line = before.bytes().filter(|b| *b == b'\n').count() + 1;
+            let column = before.rsplit('\n').next().unwrap_or("").chars().count() + 1;
+            format!(" at line {line}, column {column}")
+        })
+        .unwrap_or_default();
+    anyhow::anyhow!("{category}{location}; configuration contents are omitted")
 }
 pub fn validate_endpoint(value: &str) -> Result<()> {
     let u = reqwest::Url::parse(value)?;
@@ -130,6 +193,45 @@ pub fn validate_endpoint(value: &str) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn missing_config_and_invalid_active_profile_keep_path_and_cause() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("provider-config.toml");
+        let error = Config::load(&path).unwrap_err();
+        let report = format!("{error:#}");
+        assert!(report.contains(path.to_str().unwrap()));
+        assert!(report.contains("--config") && report.contains("os error 2"));
+        std::fs::write(&path, "provider = \"legacy\"\nproviders = {}\n").unwrap();
+        let error = Config::load(&path).unwrap_err();
+        let report = format!("{error:#}");
+        assert!(report.contains(path.to_str().unwrap()));
+        assert!(report.contains("legacy") && report.contains("does not exist"));
+    }
+    #[test]
+    fn config_parse_failure_identifies_file_and_location_without_echoing_source() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("legacy-config.toml");
+        std::fs::write(&path, "provider = \"SECRET_CONFIG_VALUE\" invalid\n").unwrap();
+        let error = Config::read(&path).unwrap_err();
+        let report = format!("{error:#}");
+        assert!(
+            report.contains(path.to_str().unwrap()),
+            "Missing config path: {report}"
+        );
+        assert!(
+            report.contains("line 1"),
+            "Missing source location: {report}"
+        );
+        assert!(
+            !report.contains("SECRET_CONFIG_VALUE"),
+            "Config contents leaked: {report}"
+        );
+        std::fs::write(&path, "provider = \"legacy\"\n[providers.legacy]\nprotocol = \"SECRET_PROTOCOL_VALUE\"\nbase_url = \"https://example.test\"\nmodel = \"fixture\"\n").unwrap();
+        let report = format!("{:#}", Config::read(&path).unwrap_err());
+        assert!(report.contains("line 3"));
+        assert!(report.contains("Unsupported configuration choice"));
+        assert!(!report.contains("SECRET_PROTOCOL_VALUE"));
+    }
     #[test]
     fn endpoint_credentials_and_cleartext_remote_are_rejected() {
         for url in [

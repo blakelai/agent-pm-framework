@@ -25,6 +25,7 @@ pub(crate) const GUIDES: &[&str] = &[
     "agent/README.md",
     "agent/Implementation.md",
     "agent/Interaction.md",
+    "agent/Troubleshooting.md",
     "agent/Skills.md",
     "agent/Editing.md",
     "agent/Planning-View.md",
@@ -150,10 +151,11 @@ pub fn note(meta: Value, body: &str) -> Result<String> {
 
 impl Workspace {
     pub fn open(root: &Path) -> Result<Self> {
-        let root = root.canonicalize().context("Workspace does not exist")?;
+        let root = root.canonicalize().with_context(|| format!("Cannot resolve Vault directory\nPath: {}\nCheck --vault and the directory from which pm-agent was started.", root.display()))?;
         ensure!(
             root.join("00_Governance/Project.md").is_file(),
-            "Expected an Agent PM workspace containing 00_Governance/Project.md"
+            "Expected an Agent PM workspace containing 00_Governance/Project.md\nVault: {}\nCheck --vault before changing project files.",
+            root.display()
         );
         Ok(Self { root })
     }
@@ -196,12 +198,29 @@ impl Workspace {
                 ),
             "Path is outside project knowledge scope"
         );
-        let path = self.path(relative)?;
+        let path = self.path(relative).with_context(|| {
+            format!(
+                "Cannot resolve project file\nVault: {}\nRelative path: {relative}",
+                self.root.display()
+            )
+        })?;
+        let metadata = fs::metadata(&path).with_context(|| {
+            format!(
+                "Cannot inspect project file metadata\nPath: {}",
+                path.display()
+            )
+        })?;
         ensure!(
-            fs::metadata(&path)?.len() <= MAX_FILE,
-            "File exceeds the 2 MiB text limit; select a smaller source excerpt"
+            metadata.is_file(),
+            "Expected a regular project file\nPath: {}",
+            path.display()
         );
-        fs::read_to_string(&path).with_context(|| format!("Cannot read UTF-8 text: {relative}; request a reviewed extraction or open the original"))
+        ensure!(
+            metadata.len() <= MAX_FILE,
+            "File exceeds the 2 MiB text limit; select a smaller source excerpt\nPath: {}",
+            path.display()
+        );
+        fs::read_to_string(&path).with_context(|| format!("Cannot read UTF-8 text\nPath: {}\nRequest a reviewed extraction for binary source material, or restore the correct text file.", path.display()))
     }
     pub fn documents(&self) -> Result<Vec<Document>> {
         let mut documents = vec![];
@@ -275,7 +294,13 @@ impl Workspace {
         Ok(documents)
     }
     pub fn language(&self) -> Result<String> {
-        let (m, _) = parse_note(&self.read("00_Governance/Settings.md")?)?;
+        let path = "00_Governance/Settings.md";
+        let (m, _) = parse_note(&self.read(path)?).with_context(|| {
+            format!(
+                "Cannot parse project language settings\nPath: {}",
+                self.root.join(path).display()
+            )
+        })?;
         ensure!(m["agent_language"] == "en", "Agent language must be en");
         Ok(m["document_language"]
             .as_str()
@@ -425,11 +450,27 @@ impl Workspace {
 }
 pub fn atomic_write(path: &Path, bytes: &[u8]) -> Result<()> {
     let parent = path.parent().context("Missing parent")?;
-    fs::create_dir_all(parent)?;
-    let mut temp = tempfile::NamedTempFile::new_in(parent)?;
-    temp.write_all(bytes)?;
-    temp.as_file().sync_all()?;
-    temp.persist(path).map_err(|e| e.error)?;
+    fs::create_dir_all(parent).with_context(|| {
+        format!(
+            "Cannot create output directory\nPath: {}\nIntended file: {}",
+            parent.display(),
+            path.display()
+        )
+    })?;
+    let mut temp = tempfile::NamedTempFile::new_in(parent).with_context(|| {
+        format!(
+            "Cannot prepare temporary output file\nDestination: {}",
+            path.display()
+        )
+    })?;
+    temp.write_all(bytes)
+        .with_context(|| format!("Cannot write output bytes\nDestination: {}", path.display()))?;
+    temp.as_file()
+        .sync_all()
+        .with_context(|| format!("Cannot flush output file\nDestination: {}", path.display()))?;
+    temp.persist(path)
+        .map_err(|e| e.error)
+        .with_context(|| format!("Cannot publish output file\nPath: {}", path.display()))?;
     Ok(())
 }
 

@@ -158,9 +158,21 @@ impl Catalog {
         if !path.exists() {
             return Ok(catalog);
         }
-        for entry in std::fs::read_dir(path)? {
-            let entry = entry?;
-            let kind = entry.file_type()?;
+        for entry in std::fs::read_dir(&path)
+            .with_context(|| format!("Cannot scan project Skills\nPath: {}", path.display()))?
+        {
+            let entry = entry.with_context(|| {
+                format!(
+                    "Cannot read Skill directory entry\nPath: {}",
+                    path.display()
+                )
+            })?;
+            let kind = entry.file_type().with_context(|| {
+                format!(
+                    "Cannot inspect Skill entry\nPath: {}",
+                    entry.path().display()
+                )
+            })?;
             if !kind.is_dir() && !kind.is_symlink() {
                 continue;
             }
@@ -170,14 +182,18 @@ impl Catalog {
                     catalog.skills.insert(name, skill);
                 }
                 Err(e) => {
-                    catalog.errors.insert(name, e.to_string());
+                    catalog
+                        .errors
+                        .insert(name, crate::diagnostics::format_error(&e));
                 }
             }
         }
         let names = catalog.skills.keys().cloned().collect::<Vec<_>>();
         for name in names {
             if let Err(e) = catalog.resolve(std::slice::from_ref(&name)) {
-                catalog.errors.insert(name, e.to_string());
+                catalog
+                    .errors
+                    .insert(name, crate::diagnostics::format_error(&e));
             }
         }
         Ok(catalog)
