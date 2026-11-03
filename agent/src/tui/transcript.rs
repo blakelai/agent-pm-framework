@@ -1,5 +1,8 @@
 //! A bounded display projection. Session history remains the durable source of evidence.
-use super::markdown::{self, Rendered};
+use super::{
+    markdown::{self, Rendered},
+    tool_display,
+};
 use crate::{provider::Call, runtime::Session};
 use ratatui::{
     style::{Color, Modifier, Style},
@@ -25,6 +28,7 @@ struct Entry {
     kind: Kind,
     title: String,
     body: String,
+    preview: Option<String>,
     expanded: bool,
     call: Option<Call>,
 }
@@ -46,6 +50,7 @@ impl Transcript {
             kind,
             title: title.into(),
             body: body.into(),
+            preview: None,
             expanded: !kind.foldable() || self.expand_new,
             call: None,
         });
@@ -70,29 +75,21 @@ impl Transcript {
     }
     pub fn tool(&mut self, call: &Call, state: &str, result: Option<&str>) {
         self.boundary();
-        let title = format!(
-            "Tool · {} · {}",
-            call.name,
-            result.map(result_label).unwrap_or_else(|| state.into())
-        );
-        let body = format!(
-            "Arguments\n\n{}{}",
-            literal(&call.arguments),
-            result
-                .map(|s| format!("\n\nResult\n\n{}", literal(s)))
-                .unwrap_or_default()
-        );
+        let display = tool_display::present(call, state, result);
         if let Some(entry) = self
             .entries
             .iter_mut()
             .rev()
             .find(|entry| entry.call.as_ref().is_some_and(|c| c.id == call.id))
         {
-            entry.title = title;
-            entry.body = body;
+            entry.title = display.title;
+            entry.body = display.body;
+            entry.preview = Some(display.preview);
         } else {
-            self.push(Kind::Tool, &title, &body);
-            self.entries.last_mut().unwrap().call = Some(call.clone());
+            self.push(Kind::Tool, &display.title, &display.body);
+            let entry = self.entries.last_mut().unwrap();
+            entry.call = Some(call.clone());
+            entry.preview = Some(display.preview);
         }
         self.changed();
     }
@@ -122,12 +119,14 @@ impl Transcript {
         let mut bytes: usize = self
             .entries
             .iter()
-            .map(|e| e.body.len() + e.title.len())
+            .map(|e| e.body.len() + e.title.len() + e.preview.as_ref().map_or(0, String::len))
             .sum();
         if bytes > 200_000 {
             while bytes > 150_000 && self.entries.len() > 1 {
                 let entry = self.entries.remove(0);
-                bytes -= entry.body.len() + entry.title.len();
+                bytes -= entry.body.len()
+                    + entry.title.len()
+                    + entry.preview.as_ref().map_or(0, String::len);
                 self.stream = self.stream.and_then(|i| i.checked_sub(1));
             }
             if let Some(entry) = self.entries.last_mut() {
@@ -161,7 +160,7 @@ impl Transcript {
             } else {
                 "● "
             };
-            let title = one_line(&format!("{prefix}{}", entry.title), width);
+            let title = ellipsize(&format!("{prefix}{}", entry.title), width);
             if entry.kind.foldable() {
                 headers.push((rendered.lines.len(), i));
             }
@@ -171,13 +170,63 @@ impl Transcript {
             ));
             if entry.expanded {
                 rendered.lines.push(Line::default());
-                let body = if entry.kind == Kind::Error {
+                let content_marker = if entry
+                    .call
+                    .as_ref()
+                    .is_some_and(|c| c.name == "read_document")
+                {
+                    "\n\nDocument content\n"
+                } else if entry.call.as_ref().is_some_and(|c| c.name == "pm") {
+                    "\n\nReport content\n"
+                } else {
+                    ""
+                };
+                let body = if !content_marker.is_empty()
+                    && let Some((metadata, content)) = entry.body.split_once(content_marker)
+                {
+                    let mut body = diagnostic_text(metadata, width);
+                    body.lines.push(Line::default());
+                    let content = markdown::render(content, width);
+                    body.lines.extend(content.lines);
+                    body.links.extend(content.links);
+                    body
+                } else if matches!(entry.kind, Kind::Error | Kind::Tool) {
                     diagnostic_text(&entry.body, width)
                 } else {
                     markdown::render(&entry.body, width)
                 };
                 rendered.lines.extend(body.lines);
                 rendered.links.extend(body.links);
+            } else {
+                let source = entry.preview.as_deref().unwrap_or(&entry.body);
+                // Notices often repeat their heading as the first line.
+                let source = source.strip_prefix(&entry.title).unwrap_or(source).trim();
+                let body = if matches!(entry.kind, Kind::Error | Kind::Tool) {
+                    diagnostic_text(source, width)
+                } else {
+                    markdown::render(source, width)
+                };
+                let mut lines: Vec<_> = body
+                    .lines
+                    .into_iter()
+                    .filter(|line| line.width() > 0)
+                    .collect();
+                let omitted = lines.len() > 2;
+                if entry.kind == Kind::Reasoning && omitted {
+                    lines.drain(..lines.len() - 2);
+                    if let Some(first) = lines.first_mut() {
+                        *first = Line::raw(ellipsize(&format!("…{}", first), width));
+                    }
+                } else {
+                    lines.truncate(2);
+                    if omitted && let Some(last) = lines.last_mut() {
+                        *last = Line::raw(format!(
+                            "{}…",
+                            one_line(&last.to_string(), width.saturating_sub(1))
+                        ));
+                    }
+                }
+                rendered.lines.extend(lines);
             }
             rendered.lines.push(Line::default());
         }
@@ -321,28 +370,16 @@ pub fn message_text(item: &Value) -> String {
         .unwrap_or(&content)
         .into()
 }
-fn result_label(result: &str) -> String {
-    let Ok(value) = serde_json::from_str::<Value>(result) else {
-        return "Result recorded".into();
-    };
-    if value.get("error").is_some()
-        || value["success"] == false
-        || value["exit_code"].as_i64().is_some_and(|n| n != 0)
-    {
-        "Error reported".into()
+pub fn ellipsize(text: &str, width: usize) -> String {
+    let clean = one_line(text, usize::MAX);
+    use unicode_width::UnicodeWidthStr;
+    if clean.width() <= width {
+        clean
+    } else if width == 0 {
+        String::new()
     } else {
-        value["status"].as_str().unwrap_or("Result recorded").into()
+        format!("{}…", one_line(&clean, width - 1))
     }
-}
-fn literal(text: &str) -> String {
-    let text = serde_json::from_str::<Value>(text)
-        .ok()
-        .and_then(|v| serde_json::to_string_pretty(&v).ok())
-        .unwrap_or_else(|| text.into());
-    text.lines()
-        .map(|s| format!("    {s}"))
-        .collect::<Vec<_>>()
-        .join("\n")
 }
 /// Errors are plain diagnostic data. Preserve path punctuation and line breaks,
 /// never interpret it as Markdown, links or terminal control sequences.
@@ -417,12 +454,12 @@ mod tests {
             None,
         );
         assert!(visible(&t).contains("Readable reply"));
-        assert!(!visible(&t).contains("SERVICE_SUMMARY"));
+        assert!(visible(&t).contains("SERVICE_SUMMARY"));
         t.toggle_all();
         assert!(visible(&t).contains("SERVICE_SUMMARY"));
         assert!(visible(&t).contains("DETAIL"));
         t.toggle_all();
-        assert!(!visible(&t).contains("DETAIL"));
+        assert!(visible(&t).contains("DETAIL"));
         assert!(visible(&t).contains("Question"));
         t.boundary();
         t.delta(Kind::Assistant, "Next request");
@@ -437,13 +474,85 @@ mod tests {
         assert_eq!(one_line("\u{1b}\n中文abc", 5), "中文a");
     }
     #[test]
+    fn collapsed_entries_use_at_most_three_physical_lines_and_keep_replies_complete() {
+        let mut t = Transcript::default();
+        t.push(
+            Kind::Activity,
+            "Long activity heading with 中文",
+            "First detail\n\nSecond detail\n\nTHIRD_DETAIL",
+        );
+        t.delta(Kind::Reasoning, "OLD\n\nMiddle\n\n最近進度\n\nLatest");
+        for width in [12, 25, 80] {
+            let (rendered, headings) = t.render(width);
+            for (i, (start, _)) in headings.iter().enumerate() {
+                let end = headings.get(i + 1).map_or(rendered.lines.len(), |h| h.0);
+                let lines = &rendered.lines[*start..end];
+                assert!(lines.iter().filter(|l| l.width() > 0).count() <= 3);
+                assert!(lines.iter().all(|l| l.width() <= width));
+            }
+            assert!(
+                !rendered
+                    .lines
+                    .iter()
+                    .any(|l| l.to_string().contains("THIRD_DETAIL"))
+            );
+        }
+        let collapsed = visible(&t);
+        assert!(!collapsed.contains("OLD"));
+        assert!(collapsed.contains("Latest"));
+        assert!(collapsed.contains('…'));
+        t.delta(
+            Kind::Assistant,
+            "Answer start\n\nAnswer middle\n\nAnswer end",
+        );
+        assert!(visible(&t).contains("Answer end"));
+        t.toggle_all();
+        assert!(visible(&t).contains("THIRD_DETAIL"));
+        assert!(visible(&t).contains("OLD"));
+    }
+    #[test]
+    fn live_tool_updates_match_replay_and_expanded_reads_render_document_markdown() {
+        use serde_json::json;
+        let call = Call {
+            id: "r1".into(),
+            name: "read_document".into(),
+            arguments: json!({"path":"notes/[v1]**.md"}).to_string(),
+        };
+        let result = json!({"path":"notes/[v1]**.md", "sha256":"digest", "content":"# Document\n\n**Readable content**"}).to_string();
+        let mut t = Transcript::default();
+        t.tool(&call, "Requested", None);
+        t.tool(&call, "Running", None);
+        t.tool(&call, "Result recorded", Some(&result));
+        assert_eq!(t.entries.len(), 1);
+        let s: Session = serde_json::from_value(json!({"id":"fixture", "status":"completed", "provider_fingerprint":"fixture", "history":[{"type":"function_call", "call_id":"r1", "name":"read_document", "arguments":call.arguments}, {"type":"function_call_output", "call_id":"r1", "output":result}], "pending":[], "questions":[], "last_output":"", "error":null, "stage":"workflow"})).unwrap();
+        let mut replay = Transcript::from_session(&s);
+        assert_eq!(visible(&t), visible(&replay));
+        t.toggle_all();
+        replay.toggle_all();
+        assert_eq!(visible(&t), visible(&replay));
+        let expanded = visible(&t);
+        assert!(expanded.contains("notes/[v1]**.md"));
+        assert!(expanded.contains("Readable content"));
+        assert!(!expanded.contains("**Readable content**"));
+        assert!(!expanded.contains("\"sha256\""));
+        let mut reports = Transcript::default();
+        reports.tool(&Call { id:"pm1".into(), name:"pm".into(), arguments:json!({"command":"coverage","args":[]}).to_string() }, "Result recorded", Some(&json!({"exit_code":0,"reports":[{"path":"reports/[v1]**.md", "content":"# Coverage\n\n**One uncovered requirement**"}]}).to_string()));
+        assert!(visible(&reports).contains("Check requirement coverage"));
+        reports.toggle_all();
+        let expanded = visible(&reports);
+        assert!(expanded.contains("reports/[v1]**.md"));
+        assert!(expanded.contains("One uncovered requirement"));
+        assert!(!expanded.contains("**One uncovered requirement**"));
+    }
+    #[test]
     fn replay_restores_saved_failure_details_without_inventing_missing_information() {
         use serde_json::json;
         let error = "Load instructions\nFile: /tmp/**old**/Schema_[v1].md\nCause: No such file or directory (os error 2)\nNext: Check the selected Vault.";
         let s: Session = serde_json::from_value(json!({"id":"fixture", "status":"failed", "provider_fingerprint":"fixture", "history":[], "pending":[], "questions":[], "last_output":"", "error":error, "stage":"workflow"})).unwrap();
         let mut t = Transcript::from_session(&s);
         assert!(visible(&t).contains("Failed"));
-        assert!(!visible(&t).contains("Schema_[v1].md"));
+        assert!(visible(&t).contains("Schema_[v1].md"));
+        assert!(!visible(&t).contains("Check the selected Vault"));
         t.toggle_all();
         let expanded = visible(&t);
         assert!(expanded.contains("/tmp/**old**/Schema_[v1].md"));
@@ -463,7 +572,8 @@ mod tests {
         t.push(Kind::Error, "Failed: Read guidance", details);
         let (rendered, _) = t.render(100);
         assert_eq!(rendered.lines[0].style.fg, Some(Color::Red));
-        assert!(!visible(&t).contains("/tmp/"));
+        assert!(visible(&t).contains("/tmp/"));
+        assert!(rendered.links.is_empty());
         t.toggle_all();
         let (rendered, _) = t.render(100);
         assert!(rendered.links.is_empty());
@@ -499,8 +609,8 @@ mod tests {
         assert!(collapsed.contains("Answer"));
         assert!(collapsed.contains("Image 1 · 20×10 PNG"));
         assert!(collapsed.contains("Error reported"));
-        assert!(collapsed.contains("blocked_by_clarification"));
-        assert!(!collapsed.contains("PUBLIC_SUMMARY"));
+        assert!(collapsed.contains("Blocked by clarification"));
+        assert!(collapsed.contains("PUBLIC_SUMMARY"));
         t.toggle_all();
         let expanded = visible(&t);
         assert!(expanded.contains("CHAT_REASONING"));

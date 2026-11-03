@@ -243,6 +243,24 @@ async fn chat_activity_streams_preserve_service_reasoning_and_actual_tool_result
         .unwrap();
     assert_eq!(s.status, Status::Completed);
     let entries = std::iter::from_fn(|| rx.try_recv().ok()).collect::<Vec<_>>();
+    let phases = entries
+        .iter()
+        .filter_map(|e| {
+            if let Event::Progress(text) = e {
+                Some(text.as_str())
+            } else {
+                None
+            }
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        phases,
+        [
+            "Preparing conversation and active Skills",
+            "Waiting for model response",
+            "Waiting for model response"
+        ]
+    );
     assert!(
         entries
             .iter()
@@ -263,6 +281,11 @@ async fn chat_activity_streams_preserve_service_reasoning_and_actual_tool_result
         vec!["SERVICE_REASONING"]
     );
     assert!(saved.history.iter().any(|i| i["role"] == "tool"));
+    assert!(
+        !serde_json::to_string(&saved.history)
+            .unwrap()
+            .contains("Waiting for model response")
+    );
     // Display-only compatible fields do not alter the next request's wire contract.
     assert!(
         !requests.lock().unwrap()[1]

@@ -2,6 +2,8 @@ use super::{
     completion::{self, History, Popup},
     editor::Editor,
     markdown::{self, Rendered},
+    progress::Progress,
+    tool_display,
     transcript::{self, Kind, Transcript},
 };
 use crate::{provider::Usage, runtime::Session, skills::Catalog, workspace::Document};
@@ -35,7 +37,7 @@ pub const TABS: &[(&str, &str)] = &[
 ];
 pub const HELP: &str = "# PM Agent\n\nF2 switches Browse / Chat. F1 opens help. Ctrl+Q exits when idle.\n\n## Browse\nAlt+1…9 selects a category; Alt+0 lists all categories. Alt+Left/Right cycles categories.\nEnter opens the selected document; Esc returns to the list. F3 collapses the list; F4 maximizes the document. F6 toggles emoji.\nTab switches focus. PgUp/PgDn scroll. Mouse wheel scrolls the pointed pane; drag the right scrollbar. Right-click opens actions. L shows document links. P shows properties. O opens the original in the desktop application. R refreshes immediately. Local knowledge files also refresh automatically every two seconds; drafts are retained and changed inputs require a new preview. E edits supported project fields; N creates a PBI, risk or decision. F5 or Planning opens the local planning view: 1 Schedule, 2 Capacity, 3 Signals; M proposes an iteration move; P/I/A edit allocations, iterations and forecast date; R refreshes; Esc returns. F7 or Delivery opens Changes, UAT, Releases and Benefits: 1-4/Alt+1-4 select tabs, N creates a draft, E edits, O opens the document, R refreshes, Enter focuses details, Esc returns.\n\nF8 or the document context menu opens Impact and Compare: 1 references, 2 baseline diff, 3 source diff; Enter explicitly compares a baseline; O opens a candidate; R revalidates; F4 maximizes; Esc returns. Changed project inputs clear results. Source comparisons use captured snapshots only.
 
-F11 opens Recovery: Alt+1/2/3 or mouse selects Backup/Check/Restore. Enter absolute paths; Tab selects fields and session inclusion. Ctrl+S reviews, then Ctrl+S executes writes. Esc/right-click backs out or requests cancellation. Unsent Chat input is preserved.\n\nF10 opens Materials: Enter/R checks the selected original and extracted text; 1/2/3/4 switch Overview/Text/Evidence/Reviews; V starts a review, E edits a draft; O opens a rechecked original, N opens the current note, [/] cycle claims, F4 maximizes.\n\nF9 opens Questions: scope, affected files, recorded answers and resolution checks. Enter focuses details; Esc returns; O opens the note; R refreshes.\n\n## Editing\nEnter/Tab edits fields; lists use one value per line. Use left/right to select enum values. Ctrl+S reviews changes, then Ctrl+S saves the reviewed result. Esc reverts the active field or returns from preview. Ctrl+D discards with confirmation.\n\n## Chat\nType immediately. Enter sends; Alt+Enter, Shift+Enter or Ctrl+J inserts a newline. Multiline paste never submits.\nClick or scroll the conversation without leaving the input. Esc returns to the latest message and resumes following. A separate Esc in the input cancels an active operation. Ctrl+W deletes the word before the cursor. Ctrl+V pastes a clipboard image or text; Enter sends pending images. Ctrl+X removes the last image; clicking its chip removes it. Ctrl+C clears text and attachments. /exit or Ctrl+D with no input, attachment or clipboard read exits, stopping active work first.\nType / for commands or a leading $ for Skills; arrows select, Tab/Enter or click inserts, Esc closes. Up/Down at the first/last input line recalls history and restores the draft.\nTool activity and service-provided thinking are collapsed: click their headings or Ctrl+T to toggle details.\n\n## Commands\n/help, /status, /budget, /probe [PROFILE], /probe last [PROFILE], /skills, /skills clear, /search TEXT, /stage prd, /language [TAG|auto], /pm plan, /sessions, /resume ID, /continue, /continue-independent, /answer QUESTION-ID TEXT, /approve, /deny, /reconcile ACTUAL_OUTCOME, /new, /exit, /quit.\n/budget shows configured session limits and saved request usage without a model request.\n/probe explicitly sends up to three synthetic requests (service charges may apply); /probe last reads local observations. Use a leading $skill-name to explicitly enable a project Skill. Skills remain selected in the session until cleared. Context values come only from the service; missing values remain unavailable.";
+F11 opens Recovery: Alt+1/2/3 or mouse selects Backup/Check/Restore. Enter absolute paths; Tab selects fields and session inclusion. Ctrl+S reviews, then Ctrl+S executes writes. Esc/right-click backs out or requests cancellation. Unsent Chat input is preserved.\n\nF10 opens Materials: Enter/R checks the selected original and extracted text; 1/2/3/4 switch Overview/Text/Evidence/Reviews; V starts a review, E edits a draft; O opens a rechecked original, N opens the current note, [/] cycle claims, F4 maximizes.\n\nF9 opens Questions: scope, affected files, recorded answers and resolution checks. Enter focuses details; Esc returns; O opens the note; R refreshes.\n\n## Editing\nEnter/Tab edits fields; lists use one value per line. Use left/right to select enum values. Ctrl+S reviews changes, then Ctrl+S saves the reviewed result. Esc reverts the active field or returns from preview. Ctrl+D discards with confirmation.\n\n## Chat\nType immediately. Enter sends; Alt+Enter, Shift+Enter or Ctrl+J inserts a newline. Multiline paste never submits.\nClick or scroll the conversation without leaving the input. Esc returns to the latest message and resumes following. A separate Esc in the input cancels an active operation. Ctrl+W deletes the word before the cursor. Ctrl+V pastes a clipboard image or text; Enter sends pending images. Ctrl+X removes the last image; clicking its chip removes it. Ctrl+C clears text and attachments. /exit or Ctrl+D with no input, attachment or clipboard read exits, stopping active work first.\nType / for commands or a leading $ for Skills; arrows select, Tab/Enter or click inserts, Esc closes. Up/Down at the first/last input line recalls history and restores the draft.\nTools, public thinking summaries and notices preview up to three terminal rows when collapsed. Click their headings or Ctrl+T for readable details. A progress row above the input shows the current action and elapsed time; Esc cancels from the input after closing popups or returning to the latest message.\n\n## Commands\n/help, /status, /budget, /probe [PROFILE], /probe last [PROFILE], /skills, /skills clear, /search TEXT, /stage prd, /language [TAG|auto], /pm plan, /sessions, /resume ID, /continue, /continue-independent, /answer QUESTION-ID TEXT, /approve, /deny, /reconcile ACTUAL_OUTCOME, /new, /exit, /quit.\n/budget shows configured session limits and saved request usage without a model request.\n/probe explicitly sends up to three synthetic requests (service charges may apply); /probe last reads local observations. Use a leading $skill-name to explicitly enable a project Skill. Skills remain selected in the session until cleared. Context values come only from the service; missing values remain unavailable.";
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Mode {
@@ -176,6 +178,7 @@ pub struct App {
     /// Override the configured default for new sessions in this TUI.
     pub response_language: Option<Option<String>>,
     pub busy: bool,
+    pub(super) progress: Progress,
     pub model: String,
     pub usage: Option<Usage>,
     pub mode: Mode,
@@ -231,6 +234,7 @@ impl App {
             stage: "workflow".into(),
             response_language: None,
             busy: false,
+            progress: Progress::default(),
             model: "not configured".into(),
             usage: None,
             mode: Mode::Browse,
@@ -385,7 +389,18 @@ impl App {
         } else {
             Kind::Activity
         };
-        self.messages.push(kind, &self.status, text);
+        // Exact approval arguments remain readable, without a raw JSON envelope.
+        let display = if text.starts_with("Approval required:") {
+            text.split_once('\n').and_then(|(heading, data)| {
+                serde_json::from_str::<serde_json::Value>(data)
+                    .ok()
+                    .map(|value| format!("{heading}\n{}", tool_display::describe(&value)))
+            })
+        } else {
+            None
+        };
+        self.messages
+            .push(kind, &self.status, display.as_deref().unwrap_or(text));
         self.project_output(text);
     }
     pub(super) fn user_message(&mut self, text: &str) {
@@ -400,16 +415,43 @@ impl App {
     }
     pub(super) fn provider_event(&mut self, event: crate::provider::Event) {
         match event {
+            crate::provider::Event::Progress(text) => self.progress.update(text),
             crate::provider::Event::InputAccepted(ids) => {
                 self.attachments.retain(|image| !ids.contains(&image.id))
             }
-            crate::provider::Event::Text(text) => self.append(&text),
-            crate::provider::Event::Reasoning(text) => self.messages.delta(Kind::Reasoning, &text),
+            crate::provider::Event::Text(text) => {
+                self.progress.update("Writing response");
+                self.append(&text);
+            }
+            crate::provider::Event::Reasoning(text) => {
+                self.progress.update("Processing model response");
+                self.messages.delta(Kind::Reasoning, &text);
+            }
             crate::provider::Event::Tool {
                 call,
                 state,
                 result,
-            } => self.messages.tool(&call, &state, result.as_deref()),
+            } => {
+                if state == "Approval required" {
+                    self.progress
+                        .pause("Waiting for approval · /approve or /deny");
+                } else if let Some(result) = &result {
+                    let value =
+                        serde_json::from_str::<serde_json::Value>(result).unwrap_or_default();
+                    if matches!(
+                        value["status"].as_str(),
+                        Some("waiting_for_user" | "blocked_by_grounding")
+                    ) {
+                        self.progress
+                            .pause("Waiting for your answer · review Questions");
+                    } else {
+                        self.progress.update("Processing tool results");
+                    }
+                } else {
+                    self.progress.update(tool_display::action(&call));
+                }
+                self.messages.tool(&call, &state, result.as_deref());
+            }
             crate::provider::Event::Notice(text) => self.notice(&text),
             crate::provider::Event::Usage(usage) => {
                 if usage.is_none() {
@@ -418,6 +460,10 @@ impl App {
                 self.usage = usage;
             }
         }
+    }
+    pub(super) fn start_operation(&mut self) {
+        self.busy = true;
+        self.progress.start();
     }
     pub(super) fn start_clipboard(&mut self) -> u64 {
         self.clipboard_pending = true;
@@ -464,6 +510,7 @@ impl App {
         self.discard_paste();
         self.output.clear();
         self.messages = Transcript::default();
+        self.progress = Progress::default();
         self.chat_cache = (usize::MAX, 0);
         self.follow = true;
         self.transcript_scroll = 0;
@@ -471,6 +518,7 @@ impl App {
     pub(super) fn resume_chat(&mut self, session: &Session) {
         self.reset_chat();
         self.messages = Transcript::from_session(session);
+        self.progress.session(&session.status);
         for item in &session.history {
             if item["role"] == "user" {
                 self.history.remember(&transcript::message_text(item));
@@ -1871,9 +1919,15 @@ impl App {
         let height = ((input.len() + 2) as u16)
             .clamp(3, area.height.div_ceil(3).max(3))
             .min(area.height);
+        let progress_height =
+            u16::from(self.busy || self.progress.visible()).min(area.height.saturating_sub(height));
         let rows = Layout::default()
             .direction(Direction::Vertical)
-            .constraints([Constraint::Min(0), Constraint::Length(height)])
+            .constraints([
+                Constraint::Min(0),
+                Constraint::Length(progress_height),
+                Constraint::Length(height),
+            ])
             .split(area);
         self.regions.transcript = Rect::new(
             rows[0].x,
@@ -1881,7 +1935,12 @@ impl App {
             rows[0].width.saturating_sub(1),
             rows[0].height,
         );
-        self.regions.composer = rows[1];
+        self.regions.composer = rows[2];
+        f.render_widget(
+            Paragraph::new(self.progress.line(rows[1].width as usize))
+                .style(Style::default().fg(Color::Gray)),
+            rows[1],
+        );
         let key = (
             self.messages.revision,
             self.regions.transcript.width as usize,
@@ -1919,12 +1978,12 @@ impl App {
             self.transcript_scroll,
         );
         let bg = Style::default().bg(Color::DarkGray).fg(Color::White);
-        f.render_widget(Block::default().style(bg), rows[1]);
-        let mut x = rows[1].x;
+        f.render_widget(Block::default().style(bg), rows[2]);
+        let mut x = rows[2].x;
         for (index, image) in self.attachments.iter().enumerate() {
             let label = format!(" [Image {} · {} ×] ", index + 1, image.label());
-            let width = (label.width() as u16).min(rows[1].right().saturating_sub(x));
-            let chip = Rect::new(x, rows[1].y, width, rows[1].height.min(1));
+            let width = (label.width() as u16).min(rows[2].right().saturating_sub(x));
+            let chip = Rect::new(x, rows[2].y, width, rows[2].height.min(1));
             if width > 0 {
                 f.render_widget(Paragraph::new(label).style(bg.fg(Color::Cyan)), chip);
                 self.regions.image_buttons.push((chip, index));
@@ -1936,17 +1995,17 @@ impl App {
                 Paragraph::new(" Reading clipboard… ").style(bg.fg(Color::Yellow)),
                 Rect::new(
                     x,
-                    rows[1].y,
-                    rows[1].right().saturating_sub(x),
-                    rows[1].height.min(1),
+                    rows[2].y,
+                    rows[2].right().saturating_sub(x),
+                    rows[2].height.min(1),
                 ),
             );
         }
         let inner = Rect::new(
-            rows[1].x.saturating_add(1),
-            rows[1].y.saturating_add(1),
-            rows[1].width.saturating_sub(2),
-            rows[1].height.saturating_sub(2),
+            rows[2].x.saturating_add(1),
+            rows[2].y.saturating_add(1),
+            rows[2].width.saturating_sub(2),
+            rows[2].height.saturating_sub(2),
         );
         if caret.0 < self.editor_offset {
             self.editor_offset = caret.0;
@@ -2016,7 +2075,19 @@ mod tests {
         )))
     }
     fn buffer_text(buffer: &ratatui::buffer::Buffer) -> String {
-        buffer.content.iter().map(|c| c.symbol()).collect()
+        (0..buffer.area.height)
+            .map(|y| buffer_row(buffer, y))
+            .collect()
+    }
+    fn buffer_row(buffer: &ratatui::buffer::Buffer, y: u16) -> String {
+        let mut row = String::new();
+        let mut x = 0;
+        while x < buffer.area.width {
+            let symbol = buffer[(x, y)].symbol();
+            row.push_str(symbol);
+            x += symbol.width().max(1) as u16;
+        }
+        row
     }
     #[test]
     fn expanded_failures_preserve_literal_file_paths_and_multiline_causes() {
@@ -2029,7 +2100,8 @@ mod tests {
         a.provider_event(crate::provider::Event::Notice(diagnostic));
         let collapsed = buffer_text(&draw(&mut a, 100, 30));
         assert!(collapsed.contains("Failed"));
-        assert!(!collapsed.contains("os error 2"));
+        assert!(collapsed.contains("os error 2"));
+        assert!(!collapsed.contains("Restore the missing guidance file"));
         ctrl(&mut a, 't');
         let expanded = buffer_text(&draw(&mut a, 100, 30));
         assert!(
@@ -2038,6 +2110,94 @@ mod tests {
         );
         assert!(expanded.contains("No such file or directory (os error 2)"));
         assert!(expanded.contains("Restore the missing guidance file"));
+    }
+    #[test]
+    fn execution_progress_stays_above_input_while_reading_and_never_enters_history() {
+        use crate::provider::{Call, Event as ProviderEvent};
+        use serde_json::json;
+        let mut a = App::new(vec![]);
+        a.switch(Mode::Chat);
+        a.model = "fixture-model".into();
+        a.append(&"Earlier reply\n\n".repeat(40));
+        a.input.insert("Unsent 中文 draft");
+        a.start_operation();
+        a.provider_event(ProviderEvent::Progress("Waiting for model response".into()));
+        draw(&mut a, 90, 24);
+        a.follow = false;
+        a.transcript_scroll = 0;
+        let call = Call {
+            id: "search-fixture".into(),
+            name: "search_documents".into(),
+            arguments: json!({"query":"付款"}).to_string(),
+        };
+        a.provider_event(ProviderEvent::Tool {
+            call: call.clone(),
+            state: "Running".into(),
+            result: None,
+        });
+        let buffer = draw(&mut a, 90, 24);
+        let progress_y = a.regions.composer.y - 1;
+        let row = buffer_row(&buffer, progress_y);
+        assert!(
+            row.contains("Search documents by keyword “付款”"),
+            "{row:?}"
+        );
+        assert!(row.contains("Esc cancel"));
+        assert_eq!(a.transcript_scroll, 0);
+        assert!(!a.follow);
+        assert_eq!(a.input.text, "Unsent 中文 draft");
+        assert!(!a.output.contains("Waiting for model response"));
+        assert!(
+            !a.messages
+                .render(90)
+                .0
+                .lines
+                .iter()
+                .any(|l| l.to_string().contains("Waiting for model response"))
+        );
+
+        a.provider_event(ProviderEvent::Tool {call,state:"Result recorded".into(),result:Some(json!([{"title":"付款流程","path":"付款.md"},{"title":"Refund rules","path":"refund.md"},{"title":"Gateway integration","path":"gateway.md"},{"title":"Receipts","path":"receipts.md"}]).to_string())});
+        a.follow = true;
+        let collapsed = draw(&mut a, 90, 24);
+        let visible = buffer_text(&collapsed);
+        assert!(visible.contains("4 documents found"));
+        assert!(visible.contains("付款流程"));
+        assert!(visible.contains("Unsent 中文 draft"));
+        a.messages.toggle_all();
+        let expanded = draw(&mut a, 90, 32);
+        assert!(buffer_text(&expanded).contains("Receipts"));
+        assert!(!buffer_text(&expanded).contains("\"path\""));
+
+        // Optional actual terminal-buffer capture, using synthetic data only.
+        if let Some(path) = std::env::var_os("PM_TEST_CHAT_CAPTURE") {
+            let capture = |buffer: &ratatui::buffer::Buffer| {
+                (0..buffer.area.height)
+                    .map(|y| buffer_row(buffer, y).trim_end().to_owned())
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            };
+            std::fs::write(
+                path,
+                format!(
+                    "SYNTHETIC CHAT — COLLAPSED\n{}\n\nSYNTHETIC CHAT — EXPANDED\n{}\n",
+                    capture(&collapsed),
+                    capture(&expanded)
+                ),
+            )
+            .unwrap();
+        }
+        a.progress.cancel();
+        a.provider_event(ProviderEvent::Text("Late response text".into()));
+        assert!(buffer_text(&draw(&mut a, 90, 24)).contains("Stopping"));
+        a.progress.session(&crate::runtime::Status::WaitingApproval);
+        a.busy = false;
+        assert!(buffer_text(&draw(&mut a, 90, 24)).contains("Waiting for approval"));
+        assert!(!a.progress.tick(std::time::Instant::now()));
+        for (width, height) in [(1, 1), (2, 2), (15, 6), (30, 8)] {
+            draw(&mut a, width, height);
+        }
+        a.reset_chat();
+        assert!(!a.progress.visible());
     }
     fn paste_image(app: &mut App) -> String {
         let image = crate::chat_images::Image::from_rgba(2, 1, &[255; 8]).unwrap();
@@ -2262,12 +2422,15 @@ mod tests {
         let mut a = App::new(vec![]);
         a.switch(Mode::Chat);
         a.user_message("Question");
-        a.provider_event(crate::provider::Event::Reasoning("SERVICE_DETAIL".into()));
+        a.provider_event(crate::provider::Event::Reasoning(
+            "EARLY_DETAIL\n\nMiddle\n\nRecent\n\nLatest".into(),
+        ));
         a.append("**Readable answer**");
         a.notice("Tool status\nACTIVITY_DETAIL");
         let visible = buffer_text(&draw(&mut a, 90, 30));
         assert!(visible.contains("Readable answer"));
-        assert!(!visible.contains("SERVICE_DETAIL"));
+        assert!(!visible.contains("EARLY_DETAIL"));
+        assert!(visible.contains("Latest"));
         let (row, _) = a.chat_headers[0];
         let target = Rect::new(
             a.regions.transcript.x,
@@ -2276,13 +2439,13 @@ mod tests {
             1,
         );
         a.event(mouse(MouseEventKind::Down(MouseButton::Left), target));
-        assert!(buffer_text(&draw(&mut a, 90, 30)).contains("SERVICE_DETAIL"));
+        assert!(buffer_text(&draw(&mut a, 90, 30)).contains("EARLY_DETAIL"));
         a.busy = true;
         ctrl(&mut a, 't');
         assert!(buffer_text(&draw(&mut a, 90, 30)).contains("ACTIVITY_DETAIL"));
         ctrl(&mut a, 't');
         let visible = buffer_text(&draw(&mut a, 90, 30));
-        assert!(!visible.contains("SERVICE_DETAIL"));
+        assert!(!visible.contains("EARLY_DETAIL"));
         assert!(visible.contains("Readable answer"));
         assert!(a.busy);
         assert_eq!(a.focus, Focus::Composer);

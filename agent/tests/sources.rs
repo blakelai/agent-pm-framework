@@ -376,6 +376,12 @@ async fn portable_bundles_preserve_attachments_and_use_distinct_core_validation(
     assert!(body.contains("../../AGENTS.md"));
     let map: Value =
         serde_json::from_slice(&fs::read(output.join("export-map.json")).unwrap()).unwrap();
+    assert_eq!(map["paths"]["agent/AGENTS.md"], "agent/AGENTS.md.txt");
+    assert_eq!(
+        fs::read(output.join("agent/AGENTS.md.txt")).unwrap(),
+        fs::read(w.root.join("agent/AGENTS.md")).unwrap()
+    );
+    assert!(!output.join("agent/AGENTS.md").exists());
     let oracle = dir.path().join("legacy-bundle");
     let legacy_map: Value =
         serde_json::from_slice(&fs::read(oracle.join("export-map.json")).unwrap()).unwrap();

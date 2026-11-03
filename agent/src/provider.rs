@@ -9,6 +9,8 @@ use tokio_util::sync::CancellationToken;
 
 #[derive(Debug, Clone)]
 pub enum Event {
+    /// Public runtime phase, never private model reasoning or an inferred intent.
+    Progress(String),
     InputAccepted(Vec<String>),
     Text(String),
     Reasoning(String),

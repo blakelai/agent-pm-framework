@@ -35,6 +35,9 @@ def authored_notes(root):
     for path in distribution_files(root):
         if path.suffix != '.md': continue
         rel = path.relative_to(root)
+        # Application contributor instructions retain their native format.
+        if rel.as_posix() == 'agent/AGENTS.md':
+            continue
         if is_raw(rel) or any(p in {'.agents','.git','.obsidian','__pycache__','exports','target','.pm-agent'} for p in rel.parts):
             continue
         yield path

@@ -431,7 +431,10 @@ async fn main() -> Result<()> {
                         Event::Tool { call, state, .. } => {
                             eprintln!("\nTool: {} — {state}", call.name)
                         }
-                        Event::InputAccepted(_) | Event::Reasoning(_) | Event::Usage(_) => {}
+                        Event::Progress(_)
+                        | Event::InputAccepted(_)
+                        | Event::Reasoning(_)
+                        | Event::Usage(_) => {}
                     }
                 }
             });

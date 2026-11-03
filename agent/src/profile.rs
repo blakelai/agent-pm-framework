@@ -104,6 +104,9 @@ pub(crate) fn inspect_paths(workspace: &Workspace, paths: &[String]) -> Result<P
 }
 pub(crate) fn authored(path: &str) -> bool {
     path.ends_with(".md")
+        // Application contributor instructions retain their native format.
+        // Vault AGENTS.md and the application knowledge guides still follow OKF.
+        && path != "agent/AGENTS.md"
         && !RAW.iter().any(|r| path.starts_with(r))
         && !Path::new(path)
             .components()

@@ -507,6 +507,9 @@ impl Runtime {
                 result: Some(result.into()),
             });
         };
+        let _ = events.send(Event::Progress(
+            "Preparing conversation and active Skills".into(),
+        ));
         let system = self.system(s).with_context(|| format!(
             "Cannot prepare Chat instructions\nStage: {}\nVault: {}\nRequired guidance must be present and readable before contacting the model.",
             s.stage, self.workspace.root.display()
@@ -625,6 +628,10 @@ impl Runtime {
                 }
                 let mut grounding_receipt = None;
                 if call.name == "write_draft" {
+                    let _ = events.send(Event::Progress(format!(
+                        "Checking source evidence for {}",
+                        tools::string(&args, "path")?
+                    )));
                     let packet = match grounding::Packet::prepare(&self.workspace, &args) {
                         Ok(packet) => packet,
                         Err(error) => {
@@ -772,6 +779,7 @@ impl Runtime {
                 })
                 .begin();
             self.save(s)?;
+            let _ = events.send(Event::Progress("Waiting for model response".into()));
             let result = self
                 .provider
                 .complete(&system, &wire_history, &specs, events, cancel)
@@ -851,6 +859,10 @@ impl Runtime {
             return Ok(None);
         }
         let _ = events.send(Event::Notice(format!(
+            "Checking source support before writing {}",
+            packet.path
+        )));
+        let _ = events.send(Event::Progress(format!(
             "Checking source support before writing {}",
             packet.path
         )));

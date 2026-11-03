@@ -38,7 +38,8 @@ class StarterTests(unittest.TestCase):
             self.assertTrue(p.relative_to(self.root).as_posix().isascii(), str(p))
             if p.suffix in {'.md','.canvas'}:
                 self.assertIsNone(re.search(r'[\u3400-\u9fff]',p.read_text()),str(p))
-            if p.suffix=='.md' and p.name not in {'SKILL.md','index.md','log.md'}:
+            if (p.suffix=='.md' and p.name not in {'SKILL.md','index.md','log.md'}
+                    and p.relative_to(self.root).as_posix() != 'agent/AGENTS.md'):
                 self.assertEqual(read_note(p)[0].get('language'),'en',str(p))
         self.assertEqual(settings.load(self.root)['document_language'],'en')
 

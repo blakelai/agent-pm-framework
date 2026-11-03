@@ -6,14 +6,16 @@ mod inspection;
 mod markdown;
 mod materials;
 mod planner;
+mod progress;
 mod questions;
 mod recovery;
 mod refresh;
+mod tool_display;
 mod transcript;
 mod view;
 use crate::{
     config::Config,
-    provider::Event,
+    provider::{Call, Event},
     runtime::{Runtime, STAGES, Session, Status},
     skills::Catalog,
     store::Store,
@@ -38,7 +40,7 @@ use view::{Command, HELP};
 
 enum Outcome {
     Session(Box<Session>),
-    Pm(String),
+    Pm { call: Call, result: String },
     Probe(crate::probe::Observation),
     Error(String),
     RejectedInput { text: String, error: String },
@@ -142,6 +144,7 @@ pub async fn run(workspace: Workspace, config_path: PathBuf, lock: WorkspaceLock
                 dirty = true;
             },
             _ = repaint.tick() => {
+                if app.mode == view::Mode::Chat { dirty |= app.progress.tick(std::time::Instant::now()); }
                 if dirty { terminal.draw(|f| app.draw(f))?; dirty = false; }
             },
             Some(event)=rx.recv()=>{ dirty = true; app.provider_event(event); },
@@ -150,22 +153,35 @@ pub async fn run(workspace: Workspace, config_path: PathBuf, lock: WorkspaceLock
                 dirty = true;
                 monitor.invalidate();
                 app.busy=false;
+                app.progress.finish("Operation finished");
                 let failed = matches!(outcome, Outcome::Error(_) | Outcome::RejectedInput { .. });
                 match outcome {
                     Outcome::Session(s)=>{
+                        app.progress.session(&s.status);
                         app.messages.sync_tools(&s);
                         app.messages.boundary();
                         app.status=format!("{:?} — session {}",s.status,s.id);
                         app.usage=s.usage.clone();
                         app.session=Some(*s);
                     },
-                    Outcome::Pm(text)=>app.notice(&format!("PM operation finished; inspect exit_code and reports\n\n{text}")),
+                    Outcome::Pm {call, result}=>{
+                        let value = serde_json::from_str(&result).unwrap_or_default();
+                        let label = if tool_display::failed(&value) {"Project operation reported errors · expand for details"} else {"Project operation finished · review the result"};
+                        app.status = label.into();
+                        app.progress.finish(label);
+                        app.messages.tool(&call, "Result recorded", Some(&result));
+                    },
                     Outcome::Probe(observation)=>{
                         app.notice(&observation.markdown());
                         app.status=if observation.report.cancelled() {"Probe cancelled; partial observations saved"} else {"Probe finished; review individual observations"}.into();
+                        app.progress.finish(app.status.clone());
                     },
-                    Outcome::Error(text)=>app.notice(&format!("Error: {text}")),
+                    Outcome::Error(text)=>{
+                        app.progress.finish("Failed · expand the error for details");
+                        app.notice(&format!("Error: {text}"));
+                    },
                     Outcome::RejectedInput{text,error}=>{
+                        app.progress.finish("Input was not accepted · review the error");
                         if app.input.text.is_empty() { app.input.insert(&text); }
                         app.notice(&format!("Input was not accepted; attachments retained: {error}\n\n{text}"));
                     },
@@ -197,10 +213,10 @@ pub async fn run(workspace: Workspace, config_path: PathBuf, lock: WorkspaceLock
                     },
                     Command::None=>{},
                     Command::Quit=>{
-                        if app.busy { cancellation.cancel(); exit_when_idle = true; app.status="Stopping before exit; waiting for the recorded outcome".into(); }
+                        if app.busy { cancellation.cancel(); app.progress.cancel(); exit_when_idle = true; app.status="Stopping before exit; waiting for the recorded outcome".into(); }
                         else { break; }
                     },
-                    Command::Cancel=>{cancellation.cancel();app.status="Cancelling — waiting for the operation outcome".into();},
+                    Command::Cancel=>{cancellation.cancel();app.progress.cancel();app.status="Cancelling — waiting for the operation outcome".into();},
                     Command::Refresh=>refresh(&workspace,&mut app,&mut store),
                     Command::Open(target)=>{
                         let result=if target.starts_with("https://") || target.starts_with("http://") {open_document(PathBuf::from(target))} else {workspace.path(&target).and_then(open_document)};
@@ -338,7 +354,7 @@ pub async fn run(workspace: Workspace, config_path: PathBuf, lock: WorkspaceLock
                         app.user_message(&input);
                         let result=dispatch(&workspace,&config_path,&mut app,&store,input.clone(),&tx,&done_tx);
                         match result {
-                            Ok(Some(token))=>{cancellation=token;app.busy=true;app.messages.boundary();},
+                            Ok(Some(token))=>{cancellation=token;app.start_operation();app.messages.boundary();},
                             Ok(None)=>{},
                             Err(e)=>{app.input.insert(&input);app.notice(&format!("Error: {}", crate::diagnostics::format_error(&e)));},
                         }
@@ -546,6 +562,16 @@ fn dispatch(
         let signal = cancel.clone();
         let tx = tx.clone();
         tokio::spawn(async move {
+            let call = Call {
+                id: format!("local-pm-{}", uuid::Uuid::new_v4()),
+                name: "pm".into(),
+                arguments: serde_json::json!({"command": command, "args": args}).to_string(),
+            };
+            let _ = tx.send(Event::Tool {
+                call: call.clone(),
+                state: "Running".into(),
+                result: None,
+            });
             let operation = tools::run_pm(&workspace, &command, &args);
             tokio::pin!(operation);
             let result = tokio::select! {
@@ -556,8 +582,19 @@ fn dispatch(
                 }
             };
             let _ = done.send(match result {
-                Ok(v) => Outcome::Pm(serde_json::to_string_pretty(&v).unwrap_or_default()),
-                Err(e) => Outcome::Error(crate::diagnostics::format_error(&e)),
+                Ok(v) => Outcome::Pm {
+                    call,
+                    result: v.to_string(),
+                },
+                Err(e) => {
+                    let error = crate::diagnostics::format_error(&e);
+                    let _ = tx.send(Event::Tool {
+                        call,
+                        state: "Failed".into(),
+                        result: Some(serde_json::json!({"error": error}).to_string()),
+                    });
+                    Outcome::Error(error)
+                }
             });
         });
         return Ok(Some(cancel));

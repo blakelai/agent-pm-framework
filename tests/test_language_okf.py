@@ -148,6 +148,12 @@ class LanguageAndOKFTests(unittest.TestCase):
         raw='01_Sources/Assets/test-repository/openwiki/quickstart.md'
         self.assertEqual((self.root/raw).read_bytes(),(target/(raw+'.txt')).read_bytes())
         self.assertTrue(okf.check_bundle(target)['conformant'])
+        instructions = self.root/'agent/AGENTS.md'
+        self.assertNotIn(instructions, list(okf.authored_notes(self.root)))
+        self.assertIn(self.root/'AGENTS.md', list(okf.authored_notes(self.root)))
+        self.assertIn(self.root/'agent/README.md', list(okf.authored_notes(self.root)))
+        self.assertEqual(instructions.read_bytes(), (target/'agent/AGENTS.md.txt').read_bytes())
+        self.assertFalse((target/'agent/AGENTS.md').exists())
 
     def test_export_refuses_existing_or_nested_destination(self):
         with self.assertRaises(ValueError):okf.export(self.root,self.root/'exports/new')

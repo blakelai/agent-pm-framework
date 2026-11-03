@@ -230,6 +230,7 @@ fn authoring_profile_includes_guides_but_excludes_raw_private_and_skill_adapters
     assert!(before.errors.is_empty(), "{before:?}");
     for path in [
         "agent/new-guide.md",
+        "agent/AGENTS.md",
         "01_Sources/Assets/raw.md",
         ".pm-agent/secret.md",
         ".agents/new/SKILL.md",
@@ -247,5 +248,47 @@ fn authoring_profile_includes_guides_but_excludes_raw_private_and_skill_adapters
         findings
             .iter()
             .any(|f| f.code == "OKF_PROFILE" && f.message.starts_with("agent/new-guide.md:"))
+    );
+}
+
+#[test]
+fn application_instruction_exception_is_exact_and_does_not_weaken_bundle_validation() {
+    let dir = tempfile::tempdir().unwrap();
+    let workspace = Workspace {
+        root: dir.path().to_owned(),
+    };
+    fs::create_dir_all(dir.path().join("agent/nested")).unwrap();
+    for path in [
+        "AGENTS.md",
+        "agent/AGENTS.md",
+        "agent/nested/AGENTS.md",
+        "agent/README.md",
+    ] {
+        fs::write(dir.path().join(path), "# No concept metadata\n").unwrap();
+    }
+    let authored = profile::inspect_authored(&workspace).unwrap();
+    assert_eq!(authored.documents_checked, 3);
+    assert_eq!(authored.errors.len(), 3);
+    for path in ["AGENTS.md", "agent/nested/AGENTS.md", "agent/README.md"] {
+        assert!(
+            authored
+                .errors
+                .iter()
+                .any(|e| e.starts_with(&format!("{path}:")))
+        );
+    }
+    assert!(
+        !authored
+            .errors
+            .iter()
+            .any(|e| e.starts_with("agent/AGENTS.md:"))
+    );
+    let bundle = profile::check_bundle(dir.path()).unwrap();
+    assert_eq!(bundle.documents_checked, 4);
+    assert!(
+        bundle
+            .errors
+            .iter()
+            .any(|e| e.starts_with("agent/AGENTS.md:"))
     );
 }
