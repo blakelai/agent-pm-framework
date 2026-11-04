@@ -1,0 +1,74 @@
+# Copy outside Git or to the ignored .pm-agent/config.toml. Select an explicit model.
+# Chat Completions profiles request service usage by default. Add request_usage = false
+# inside a provider profile only when its gateway rejects stream_options.include_usage.
+# Missing usage stays unavailable; no token or context estimation is performed.
+# Explicit `probe` sends up to three synthetic requests; `probe --last` reads the
+# latest local result without requests. Probes do not modify these settings.
+provider = "ollama"
+
+# Default conversational reply language (language tag). Omit to follow user preference.
+# Applies to new TUI and CLI Chat sessions, not project documents or English Agent records.
+# Existing sessions retain their saved language. TUI: /language TAG before starting a session.
+# response_language = "zh-TW"
+
+# Interactive execution has no request-count cap. Esc in the TUI composer stops work.
+# Optional reported-token guard. Omitted means disabled; 0 pauses immediately.
+# Totals use only service-reported total_tokens, never input + output estimates.
+# A request already sent can exceed the threshold; this is not a hard cost cap.
+# [session_limits]
+# max_total_tokens = 50000
+
+[providers.openai]
+protocol = "responses"
+base_url = "https://api.openai.com/v1"
+model = ""
+api_key_env = "OPENAI_API_KEY"
+tools = true
+
+[providers.ollama]
+protocol = "chat_completions"
+base_url = "http://127.0.0.1:11434/v1"
+model = ""
+tools = true
+
+[providers.vllm]
+protocol = "chat_completions"
+base_url = "http://127.0.0.1:8000/v1"
+model = ""
+tools = true
+
+[providers.cliproxyapi]
+protocol = "chat_completions"
+base_url = "http://127.0.0.1:8317/v1"
+model = ""
+api_key_env = "CLIPROXY_API_KEY"
+tools = true
+
+[providers.openrouter]
+protocol = "chat_completions"
+base_url = "https://openrouter.ai/api/v1"
+model = ""
+api_key_env = "OPENROUTER_API_KEY"
+tools = true
+
+# MCP servers are started only from this operator-selected config.
+# MCP calls need a tool approval choice unless covered by an explicit reusable grant.
+# The picker offers once, this conversation, always (global settings), or deny and stop.
+# Global grants are separate from this provider file: $XDG_CONFIG_HOME/pm-agent/config.toml
+# or ~/.config/pm-agent/config.toml. PM_AGENT_GLOBAL_CONFIG overrides that absolute path.
+# Remove entries from that user file to revoke global permissions; no grants are inferred.
+# Omit allowed_tools to expose every discovered tool to the model.
+# Set allowed_tools = [] to expose none (discovery remains available).
+# A nonempty list exposes only exact original tool names; no wildcard matching.
+# Older versions treated omission as an empty list; use [] to retain that behavior.
+# [mcp.knowledge]
+# transport = "stdio"
+# command = "/absolute/path/to/server"
+# args = []
+# env_names = ["KNOWLEDGE_TOKEN"]
+# allowed_tools = ["search", "read"] # Optional restriction; omit for all tools.
+# [mcp.remote]
+# transport = "http"
+# url = "https://your-server.example/mcp"
+# bearer_token_env = "MCP_TOKEN"
+# allowed_tools = ["search"] # Optional restriction; omit for all tools.

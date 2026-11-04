@@ -35,7 +35,7 @@ Editing Settings changes the default for subsequent work. It does not bulk-trans
 
 ## Deterministic tools
 
-`pm.py settings` displays the effective policy; `settings --document-language TAG` updates only the project setting. Built-in project renderers are en and zh-TW; English regional variants share en. For any other tag, translate `tools/locales/en.json` into `tools/locales/TAG.json`, preserving every key and formatting placeholder. Read the result for natural language and glossary accuracy, then run validate and the affected generator. Missing or incomplete catalogs fail before project output is overwritten; there is no silent English fallback.
+`pm-agent --vault . pm settings` displays the effective policy; `settings --document-language TAG` updates only the project setting. Built-in project renderers are en and zh-TW; English regional variants share en. For any other tag, translate `tools/locales/en.json` into `tools/locales/TAG.json`, preserving every key and formatting placeholder. Read the result for natural language and glossary accuracy, then run validate and the affected generator. Missing or incomplete catalogs fail before project output is overwritten; there is no silent English fallback.
 
 Project-generated wrappers and the delivery plan follow the catalog. Existing source excerpts, user-entered claims, goals and names retain their content; the agent must review or migrate authored prose explicitly. Diagnostics, command help, snapshots' technical metadata wrappers and all Agent operational reports remain English. A project renderer failure leaves any prior report historical; it is not a fresh forecast.
 

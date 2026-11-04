@@ -33,7 +33,7 @@ def prepare(root, stage, focus):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--vault', type=Path, default=Path(__file__).resolve().parents[1])
+    parser.add_argument('--vault', type=Path, default=Path(__file__).resolve().parents[2])
     commands = parser.add_subparsers(dest='command', required=True)
     ing = commands.add_parser('ingest', help='Preserve material and extract available text')
     ing.add_argument('file', type=Path)

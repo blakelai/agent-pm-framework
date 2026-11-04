@@ -1,6 +1,7 @@
 ---
 id: "PBI-NEW"
 type: "pbi"
+doc_status: "draft"
 owner: "TBD"
 contexts: []
 evidence: []

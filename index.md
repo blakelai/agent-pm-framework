@@ -4,6 +4,16 @@ okf_version: "0.2"
 
 # Framework knowledge
 
+- [PM Agent application](agent/README.md) - Reference
+- [PM Agent implementation milestones](agent/Implementation.md) - Reference
+- [Delivery workflows](agent/Delivery-Workflows.md) - Reference
+- [Automatic file refresh](agent/Automatic-Refresh.md) - Reference
+- [Impact and document comparison](agent/Inspection.md) - Reference
+- [Project backup and restore](agent/Backup-and-Restore.md) - Reference
+- [Runtime storage versions and migration](agent/Storage-Migrations.md) - Reference
+- [Native package installation](agent/Installation.md) - Reference
+- [Synthetic Agent evaluations](agent/Evaluation.md) - Reference
+
 - [Baselines and change](00_Governance/Baselines-and-Changes.md) - Reference
 - [Discovery and prioritization](00_Governance/Discovery-and-Prioritization.md) - Reference
 - [Project document language](00_Governance/Language-Settings.md) - Reference
@@ -25,6 +35,8 @@ okf_version: "0.2"
 - [Business requirements](80_Templates/BRD.md) - brd
 - [Baseline approval record](80_Templates/Baseline-Decision.md) - decision
 - [Change proposal](80_Templates/Change.md) - change
+- [User acceptance review](80_Templates/UAT.md) - uat
+- [Outcome measurement](80_Templates/Benefit.md) - benefit
 - [Bounded context](80_Templates/Context.md) - glossary
 - [Integration contract](80_Templates/Contract.md) - contract
 - [Decision record](80_Templates/Decision.md) - decision
@@ -58,3 +70,7 @@ okf_version: "0.2"
 - [Design references](References.md) - Reference
 - [Local tools](tools/README.md) - Reference
 - [Evidence and clarification policy](90_Agent/Evidence-and-Clarification-Policy.md) - Reference
+
+## Development verification
+
+- [Development tests and legacy oracle](tests/README.md) - Native runtime verification and test-only comparison setup
