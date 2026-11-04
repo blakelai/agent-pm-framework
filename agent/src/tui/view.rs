@@ -11,7 +11,7 @@ use crossterm::event::{
     Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEventKind,
 };
 use ratatui::{
-    layout::{Constraint, Direction, Layout, Position, Rect},
+    layout::{Alignment, Constraint, Direction, Layout, Position, Rect},
     style::{Color, Modifier, Style},
     text::Line,
     widgets::{
@@ -37,7 +37,7 @@ pub const TABS: &[(&str, &str)] = &[
 ];
 pub const HELP: &str = "# PM Agent\n\nF2 switches Browse / Chat. F1 opens help. Ctrl+Q exits when idle.\n\n## Browse\nAlt+1…9 selects a category; Alt+0 lists all categories. Alt+Left/Right cycles categories.\nEnter opens the selected document; Esc returns to the list. F3 collapses the list; F4 maximizes the document. F6 toggles emoji.\nTab switches focus. PgUp/PgDn scroll. Mouse wheel scrolls the pointed pane; drag the right scrollbar. Right-click opens actions. L shows document links. P shows properties. O opens the original in the desktop application. R refreshes immediately. Local knowledge files also refresh automatically every two seconds; drafts are retained and changed inputs require a new preview. E edits supported project fields; N creates a PBI, risk or decision. F5 or Planning opens the local planning view: 1 Schedule, 2 Capacity, 3 Signals; M proposes an iteration move; P/I/A edit allocations, iterations and forecast date; R refreshes; Esc returns. F7 or Delivery opens Changes, UAT, Releases and Benefits: 1-4/Alt+1-4 select tabs, N creates a draft, E edits, O opens the document, R refreshes, Enter focuses details, Esc returns.\n\nF8 or the document context menu opens Impact and Compare: 1 references, 2 baseline diff, 3 source diff; Enter explicitly compares a baseline; O opens a candidate; R revalidates; F4 maximizes; Esc returns. Changed project inputs clear results. Source comparisons use captured snapshots only.
 
-F11 opens Recovery: Alt+1/2/3 or mouse selects Backup/Check/Restore. Enter absolute paths; Tab selects fields and session inclusion. Ctrl+S reviews, then Ctrl+S executes writes. Esc/right-click backs out or requests cancellation. Unsent Chat input is preserved.\n\nF10 opens Materials: Enter/R checks the selected original and extracted text; 1/2/3/4 switch Overview/Text/Evidence/Reviews; V starts a review, E edits a draft; O opens a rechecked original, N opens the current note, [/] cycle claims, F4 maximizes.\n\nF9 opens Questions: scope, affected files, recorded answers and resolution checks. Enter focuses details; Esc returns; O opens the note; R refreshes.\n\n## Editing\nEnter/Tab edits fields; lists use one value per line. Use left/right to select enum values. Ctrl+S reviews changes, then Ctrl+S saves the reviewed result. Esc reverts the active field or returns from preview. Ctrl+D discards with confirmation.\n\n## Chat\nType immediately. Enter sends; Alt+Enter, Shift+Enter or Ctrl+J inserts a newline. Multiline paste never submits.\nClick or scroll the conversation without leaving the input. Esc returns to the latest message and resumes following. A separate Esc in the input cancels an active operation. Ctrl+W deletes the word before the cursor. Ctrl+V pastes a clipboard image or text; Enter sends pending images. Ctrl+X removes the last image; clicking its chip removes it. Ctrl+C clears text and attachments. /exit or Ctrl+D with no input, attachment or clipboard read exits, stopping active work first.\nType / for commands or a leading $ for Skills; arrows select, Tab/Enter or click inserts, Esc closes. Up/Down at the first/last input line recalls history and restores the draft.\nTools, public thinking summaries and notices preview up to three terminal rows when collapsed. Click their headings or Ctrl+T for readable details. A progress row above the input shows the current action and elapsed time; Esc cancels from the input after closing popups or returning to the latest message.\n\n## Commands\n/help, /status, /budget, /probe [PROFILE], /probe last [PROFILE], /skills, /skills clear, /search TEXT, /stage prd, /language [TAG|auto], /pm plan, /sessions, /resume ID, /continue, /continue-independent, /answer QUESTION-ID TEXT, /approve, /deny, /reconcile ACTUAL_OUTCOME, /new, /exit, /quit.\n/budget shows configured session limits and saved request usage without a model request.\n/probe explicitly sends up to three synthetic requests (service charges may apply); /probe last reads local observations. Use a leading $skill-name to explicitly enable a project Skill. Skills remain selected in the session until cleared. Context values come only from the service; missing values remain unavailable.";
+F11 opens Recovery: Alt+1/2/3 or mouse selects Backup/Check/Restore. Enter absolute paths; Tab selects fields and session inclusion. Ctrl+S reviews, then Ctrl+S executes writes. Esc/right-click backs out or requests cancellation. Unsent Chat input is preserved.\n\nF10 opens Materials: Enter/R checks the selected original and extracted text; 1/2/3/4 switch Overview/Text/Evidence/Reviews; V starts a review, E edits a draft; O opens a rechecked original, N opens the current note, [/] cycle claims, F4 maximizes.\n\nF9 opens Questions: scope, affected files, recorded answers and resolution checks. Enter focuses details; Esc returns; O opens the note; R refreshes.\n\n## Editing\nEnter/Tab edits fields; lists use one value per line. Use left/right to select enum values. Ctrl+S reviews changes, then Ctrl+S saves the reviewed result. Esc reverts the active field or returns from preview. Ctrl+D discards with confirmation.\n\n## Chat\nType immediately. Enter sends; Alt+Enter, Shift+Enter or Ctrl+J inserts a newline. Multiline paste never submits.\nThe conversation follows the latest output by default. Page Up or the mouse wheel scrolls back and pauses following; Back to bottom appears below the conversation. Esc, clicking the hint or scrolling to the bottom resumes following without cancelling the Agent. Click the conversation without leaving the input or pausing following. A separate Esc in the input while following cancels an active operation. Ctrl+W deletes the word before the cursor. Ctrl+V pastes a clipboard image or text; Enter sends pending images. Ctrl+X removes the last image; clicking its chip removes it. Ctrl+C clears text and attachments. /exit or Ctrl+D with no input, attachment or clipboard read exits, stopping active work first.\nType / for commands or a leading $ for Skills; arrows select, Tab/Enter or click inserts, Esc closes. Up/Down at the first/last input line recalls history and restores the draft.\nTools, public thinking summaries and notices preview up to three terminal rows when collapsed. Click their headings or Ctrl+T for readable details. A progress row above the input shows the current action and elapsed time; Esc cancels from the input after closing popups or returning to the latest message.\n\n## Commands\n/help, /status, /budget, /probe [PROFILE], /probe last [PROFILE], /skills, /skills clear, /search TEXT, /stage prd, /language [TAG|auto], /pm plan, /sessions, /resume ID, /continue, /continue-independent, /answer QUESTION-ID TEXT, /approve, /deny, /reconcile ACTUAL_OUTCOME, /new, /exit, /quit.\n/budget shows configured session limits and saved request usage without a model request.\n/probe explicitly sends up to three synthetic requests (service charges may apply); /probe last reads local observations. Use a leading $skill-name to explicitly enable a project Skill. Skills remain selected in the session until cleared. Context values come only from the service; missing values remain unavailable.";
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Mode {
@@ -141,6 +141,7 @@ struct Regions {
     composer: Rect,
     image_buttons: Vec<(Rect, usize)>,
     transcript: Rect,
+    back_to_bottom: Rect,
     status: Rect,
     collapse: Rect,
     maximize: Rect,
@@ -637,6 +638,21 @@ impl App {
         self.follow = true;
         self.focus = Focus::Composer;
     }
+    fn transcript_max_scroll(&self) -> usize {
+        self.transcript
+            .lines
+            .len()
+            .saturating_sub(self.regions.transcript.height as usize)
+    }
+    fn scroll_chat_to(&mut self, position: usize) {
+        let max = self.transcript_max_scroll();
+        self.transcript_scroll = position.min(max);
+        if self.transcript_scroll == max {
+            self.latest();
+        } else {
+            self.follow = false;
+        }
+    }
     fn popup(&mut self, title: &str, rows: Vec<(String, Choice)>) {
         self.menu = Some(Menu {
             title: title.into(),
@@ -885,30 +901,30 @@ impl App {
         }
     }
     fn scroll_by(&mut self, down: bool, n: usize) {
-        let (pos, max) = if self.mode == Mode::Chat {
+        if self.mode == Mode::Chat {
             self.dismiss_completion();
-            self.follow = false;
-            (
-                &mut self.transcript_scroll,
-                self.transcript
-                    .lines
-                    .len()
-                    .saturating_sub(self.regions.transcript.height as usize),
-            )
+            let position = if self.follow {
+                self.transcript_max_scroll()
+            } else {
+                self.transcript_scroll
+            };
+            self.scroll_chat_to(if down {
+                position.saturating_add(n)
+            } else {
+                position.saturating_sub(n)
+            });
         } else {
-            (
-                &mut self.scroll,
-                self.document
-                    .lines
-                    .len()
-                    .saturating_sub(self.regions.content.height as usize),
-            )
-        };
-        *pos = if down {
-            pos.saturating_add(n).min(max)
-        } else {
-            pos.saturating_sub(n)
-        };
+            let max = self
+                .document
+                .lines
+                .len()
+                .saturating_sub(self.regions.content.height as usize);
+            self.scroll = if down {
+                self.scroll.saturating_add(n).min(max)
+            } else {
+                self.scroll.saturating_sub(n)
+            };
+        }
     }
     fn bar_position(&mut self, y: u16) {
         let area = self.regions.bar;
@@ -926,8 +942,7 @@ impl App {
         let offset = max.saturating_mul(y.saturating_sub(area.y) as usize)
             / area.height.saturating_sub(1).max(1) as usize;
         if self.mode == Mode::Chat {
-            self.transcript_scroll = offset.min(max);
-            self.follow = false;
+            self.scroll_chat_to(offset);
         } else {
             self.scroll = offset.min(max);
             self.focus = Focus::Content;
@@ -1035,11 +1050,18 @@ impl App {
                     }
                 }
                 if self.mode == Mode::Chat
-                    && (self.regions.transcript.contains(p) || self.regions.bar.contains(p))
+                    && (self.regions.transcript.contains(p)
+                        || self.regions.bar.contains(p)
+                        || self.regions.back_to_bottom.contains(p))
                 {
                     self.focus = Focus::Composer;
                 }
                 match mouse.kind {
+                    MouseEventKind::Down(MouseButton::Left)
+                        if self.regions.back_to_bottom.contains(p) =>
+                    {
+                        self.latest()
+                    }
                     MouseEventKind::Down(MouseButton::Left)
                         if self
                             .regions
@@ -1126,7 +1148,6 @@ impl App {
                             self.focus = Focus::Content;
                         } else if self.regions.transcript.contains(p) {
                             self.focus = Focus::Composer;
-                            self.follow = false;
                             if button == MouseButton::Left {
                                 let row = self.transcript_scroll
                                     + mouse.row.saturating_sub(self.regions.transcript.y) as usize;
@@ -1149,7 +1170,8 @@ impl App {
                         if button == MouseButton::Right
                             && !(self.mode == Mode::Chat
                                 && (self.regions.transcript.contains(p)
-                                    || self.regions.bar.contains(p)))
+                                    || self.regions.bar.contains(p)
+                                    || self.regions.back_to_bottom.contains(p)))
                         {
                             self.context_menu();
                         }
@@ -1164,6 +1186,7 @@ impl App {
                                 self.selected.saturating_sub(3)
                             });
                         } else if self.regions.transcript.contains(p)
+                            || self.regions.back_to_bottom.contains(p)
                             || self.regions.content.contains(p)
                             || self.regions.bar.contains(p)
                         {
@@ -1229,6 +1252,11 @@ impl App {
             return Command::None;
         }
         if self.mode == Mode::Chat {
+            if key.code == KeyCode::Esc && !self.follow {
+                self.dismiss_completion();
+                self.latest();
+                return Command::None;
+            }
             if self.focus == Focus::Composer && key.modifiers.contains(KeyModifiers::CONTROL) {
                 if key.code == KeyCode::Char('v') {
                     if !self.clipboard_pending {
@@ -1407,8 +1435,7 @@ impl App {
                     self.focus = Focus::Transcript;
                 }
                 KeyCode::Home if self.focus == Focus::Transcript => {
-                    self.follow = false;
-                    self.transcript_scroll = 0;
+                    self.scroll_chat_to(0);
                 }
                 KeyCode::End if self.focus == Focus::Transcript => self.latest(),
                 KeyCode::Up if self.focus == Focus::Transcript => self.scroll_by(false, 1),
@@ -1921,10 +1948,35 @@ impl App {
             .min(area.height);
         let progress_height =
             u16::from(self.busy || self.progress.visible()).min(area.height.saturating_sub(height));
+        let transcript_height = area
+            .height
+            .saturating_sub(height)
+            .saturating_sub(progress_height);
+        let key = (
+            self.messages.revision,
+            area.width.saturating_sub(1) as usize,
+        );
+        if self.chat_cache != key {
+            (self.transcript, self.chat_headers) = self.messages.render(key.1);
+            self.chat_cache = key;
+        }
+        // Reserve the hint only while reading history, keeping at least one content row.
+        // Resolve following before layout so reaching the bottom removes the hint in one frame.
+        let mut hint_height = u16::from(!self.follow && transcript_height > 1);
+        let max = self
+            .transcript
+            .lines
+            .len()
+            .saturating_sub((transcript_height - hint_height) as usize);
+        if !self.follow && transcript_height > 0 && self.transcript_scroll >= max {
+            self.latest();
+            hint_height = 0;
+        }
         let rows = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
                 Constraint::Min(0),
+                Constraint::Length(hint_height),
                 Constraint::Length(progress_height),
                 Constraint::Length(height),
             ])
@@ -1935,25 +1987,32 @@ impl App {
             rows[0].width.saturating_sub(1),
             rows[0].height,
         );
-        self.regions.composer = rows[2];
+        self.regions.back_to_bottom = Rect::new(
+            rows[1].x,
+            rows[1].y,
+            rows[1].width.saturating_sub(1),
+            rows[1].height,
+        );
+        self.regions.composer = rows[3];
         f.render_widget(
-            Paragraph::new(self.progress.line(rows[1].width as usize))
+            Paragraph::new(transcript::ellipsize(
+                "Back to bottom · Esc",
+                self.regions.back_to_bottom.width as usize,
+            ))
+            .alignment(Alignment::Center)
+            .style(Style::default().fg(Color::Cyan)),
+            self.regions.back_to_bottom,
+        );
+        let cancel_hint = self.follow
+            && self.focus == Focus::Composer
+            && self.completion.is_none()
+            && self.menu.is_none();
+        f.render_widget(
+            Paragraph::new(self.progress.line(rows[2].width as usize, cancel_hint))
                 .style(Style::default().fg(Color::Gray)),
-            rows[1],
+            rows[2],
         );
-        let key = (
-            self.messages.revision,
-            self.regions.transcript.width as usize,
-        );
-        if self.chat_cache != key {
-            (self.transcript, self.chat_headers) = self.messages.render(key.1);
-            self.chat_cache = key;
-        }
-        let max = self
-            .transcript
-            .lines
-            .len()
-            .saturating_sub(rows[0].height as usize);
+        let max = self.transcript_max_scroll();
         self.transcript_scroll = if self.follow {
             max
         } else {
@@ -1978,12 +2037,12 @@ impl App {
             self.transcript_scroll,
         );
         let bg = Style::default().bg(Color::DarkGray).fg(Color::White);
-        f.render_widget(Block::default().style(bg), rows[2]);
-        let mut x = rows[2].x;
+        f.render_widget(Block::default().style(bg), rows[3]);
+        let mut x = rows[3].x;
         for (index, image) in self.attachments.iter().enumerate() {
             let label = format!(" [Image {} · {} ×] ", index + 1, image.label());
-            let width = (label.width() as u16).min(rows[2].right().saturating_sub(x));
-            let chip = Rect::new(x, rows[2].y, width, rows[2].height.min(1));
+            let width = (label.width() as u16).min(rows[3].right().saturating_sub(x));
+            let chip = Rect::new(x, rows[3].y, width, rows[3].height.min(1));
             if width > 0 {
                 f.render_widget(Paragraph::new(label).style(bg.fg(Color::Cyan)), chip);
                 self.regions.image_buttons.push((chip, index));
@@ -1995,17 +2054,17 @@ impl App {
                 Paragraph::new(" Reading clipboard… ").style(bg.fg(Color::Yellow)),
                 Rect::new(
                     x,
-                    rows[2].y,
-                    rows[2].right().saturating_sub(x),
-                    rows[2].height.min(1),
+                    rows[3].y,
+                    rows[3].right().saturating_sub(x),
+                    rows[3].height.min(1),
                 ),
             );
         }
         let inner = Rect::new(
-            rows[2].x.saturating_add(1),
-            rows[2].y.saturating_add(1),
-            rows[2].width.saturating_sub(2),
-            rows[2].height.saturating_sub(2),
+            rows[3].x.saturating_add(1),
+            rows[3].y.saturating_add(1),
+            rows[3].width.saturating_sub(2),
+            rows[3].height.saturating_sub(2),
         );
         if caret.0 < self.editor_offset {
             self.editor_offset = caret.0;
@@ -2142,7 +2201,7 @@ mod tests {
             row.contains("Search documents by keyword “付款”"),
             "{row:?}"
         );
-        assert!(row.contains("Esc cancel"));
+        assert!(!row.contains("Esc cancel"));
         assert_eq!(a.transcript_scroll, 0);
         assert!(!a.follow);
         assert_eq!(a.input.text, "Unsent 中文 draft");
@@ -2378,6 +2437,7 @@ mod tests {
         assert!(a.busy);
         a.input.clear();
         a.event(Event::Paste("/sta".into()));
+        a.append(&"History\n\n".repeat(40));
         draw(&mut a, 80, 24);
         a.scroll_by(false, 1);
         assert_eq!(key(&mut a, KeyCode::Esc), Command::None);
@@ -2449,7 +2509,8 @@ mod tests {
         assert!(visible.contains("Readable answer"));
         assert!(a.busy);
         assert_eq!(a.focus, Focus::Composer);
-        assert_eq!(key(&mut a, KeyCode::Esc), Command::None);
+        assert!(a.follow);
+        assert_eq!(key(&mut a, KeyCode::Esc), Command::Cancel);
         assert_eq!(a.focus, Focus::Composer);
     }
     #[test]
@@ -2515,6 +2576,7 @@ mod tests {
         assert_eq!((a.selected, a.scroll), (2, 12));
         a.switch(Mode::Chat);
         a.input.insert("Draft 中文");
+        a.append(&"History\n\n".repeat(40));
         draw(&mut a, 80, 24);
         a.scroll_by(false, 5);
         let reading = a.transcript_scroll;
@@ -2809,9 +2871,169 @@ mod tests {
             a.transcript.lines.len() - a.regions.transcript.height as usize
         );
         assert_eq!(a.focus, Focus::Composer);
+        assert!(a.follow);
         key(&mut a, KeyCode::Esc);
         draw(&mut a, 70, 20);
         assert!(a.follow);
+    }
+    fn running_chat_with_history() -> App {
+        let mut app = App::new(vec![]);
+        app.switch(Mode::Chat);
+        app.append(&"Earlier reply\n\n".repeat(60));
+        app.input.insert("Unsent 中文 draft");
+        app.input.cursor = 6;
+        app.start_operation();
+        draw(&mut app, 90, 24);
+        app
+    }
+    #[test]
+    fn chat_follows_new_output_until_the_user_actually_scrolls_back() {
+        let mut app = App::new(vec![]);
+        app.switch(Mode::Chat);
+        for content in ["", "Short reply"] {
+            app.append(content);
+            draw(&mut app, 90, 24);
+            key(&mut app, KeyCode::PageUp);
+            app.event(mouse(MouseEventKind::ScrollUp, app.regions.transcript));
+            assert!(app.follow);
+            assert_eq!(app.transcript_scroll, 0);
+        }
+        let mut app = running_chat_with_history();
+        assert_eq!(app.transcript_scroll, app.transcript_max_scroll());
+        for button in [MouseButton::Left, MouseButton::Right] {
+            app.event(mouse(MouseEventKind::Down(button), app.regions.transcript));
+            assert!(app.follow);
+            assert!(app.menu.is_none());
+        }
+        key(&mut app, KeyCode::PageDown);
+        app.event(mouse(MouseEventKind::ScrollDown, app.regions.transcript));
+        assert!(app.follow);
+        app.append("\n\nLatest streamed reply");
+        let buffer = draw(&mut app, 90, 24);
+        assert!(buffer_text(&buffer).contains("Latest streamed reply"));
+        assert_eq!(app.transcript_scroll, app.transcript_max_scroll());
+        assert_eq!(app.regions.back_to_bottom.height, 0);
+    }
+    #[test]
+    fn page_up_and_mouse_wheel_show_a_centered_hint_and_escape_only_resumes_following() {
+        for page_up in [true, false] {
+            let mut app = running_chat_with_history();
+            if page_up {
+                assert_eq!(key(&mut app, KeyCode::PageUp), Command::None);
+            } else {
+                app.event(mouse(MouseEventKind::ScrollUp, app.regions.transcript));
+            }
+            assert!(!app.follow);
+            let position = app.transcript_scroll;
+            app.provider_event(crate::provider::Event::Text(
+                "\n\nOutput while reading".into(),
+            ));
+            let buffer = draw(&mut app, 90, 24);
+            assert_eq!(app.transcript_scroll, position);
+            let hint = app.regions.back_to_bottom;
+            assert_eq!(hint.height, 1);
+            assert_eq!(hint.y, app.regions.transcript.bottom());
+            assert_eq!(hint.bottom(), app.regions.composer.y - 1);
+            let row = buffer_row(&buffer, hint.y);
+            let caption = "Back to bottom · Esc";
+            let left = row.find(caption).unwrap();
+            let right = hint.width as usize - left - caption.width();
+            assert!(left.abs_diff(right) <= 1, "{row:?}");
+            assert!(!buffer_text(&buffer).contains("Esc cancel"));
+            let scrolled = buffer.clone();
+            assert_eq!(key(&mut app, KeyCode::Esc), Command::None);
+            assert!(app.follow);
+            assert!(app.busy);
+            assert_eq!(app.focus, Focus::Composer);
+            assert_eq!(app.input.text, "Unsent 中文 draft");
+            assert_eq!(app.input.cursor, 6);
+            let buffer = draw(&mut app, 90, 24);
+            assert_eq!(app.transcript_scroll, app.transcript_max_scroll());
+            assert!(!buffer_text(&buffer).contains("Back to bottom"));
+            assert!(buffer_text(&buffer).contains("Output while reading"));
+            assert!(buffer_text(&buffer).contains("Esc cancel"));
+            if page_up && let Some(path) = std::env::var_os("PM_TEST_SCROLL_CAPTURE") {
+                let capture = |buffer: &ratatui::buffer::Buffer| {
+                    (0..buffer.area.height)
+                        .map(|y| buffer_row(buffer, y).trim_end().to_owned())
+                        .collect::<Vec<_>>()
+                        .join("\n")
+                };
+                std::fs::write(path, format!("SYNTHETIC CHAT — SCROLL MODE\n{}\n\nSYNTHETIC CHAT — FOLLOWING AFTER ESC\n{}\n", capture(&scrolled), capture(&buffer))).unwrap();
+            }
+            // The same physical key's repeat event must not cancel the active request.
+            let repeat =
+                KeyEvent::new_with_kind(KeyCode::Esc, KeyModifiers::NONE, KeyEventKind::Repeat);
+            assert_eq!(app.event(Event::Key(repeat)), Command::None);
+        }
+    }
+    #[test]
+    fn scrolling_down_or_clicking_the_hint_resumes_following_without_escape() {
+        for action in ["page", "wheel", "hint"] {
+            let mut app = running_chat_with_history();
+            key(&mut app, KeyCode::PageUp);
+            draw(&mut app, 90, 24);
+            for _ in 0..30 {
+                if app.follow {
+                    break;
+                }
+                match action {
+                    "page" => {
+                        key(&mut app, KeyCode::PageDown);
+                    }
+                    "wheel" => {
+                        app.event(mouse(MouseEventKind::ScrollDown, app.regions.transcript));
+                    }
+                    _ => {
+                        let hint = app.regions.back_to_bottom;
+                        app.event(mouse(
+                            MouseEventKind::Down(MouseButton::Left),
+                            Rect::new(hint.x + hint.width / 2, hint.y, 1, 1),
+                        ));
+                    }
+                }
+                draw(&mut app, 90, 24);
+            }
+            assert!(app.follow, "{action} did not resume following");
+            assert!(app.busy);
+            assert_eq!(app.focus, Focus::Composer);
+            app.append("\n\nContinued after reaching bottom");
+            let buffer = draw(&mut app, 90, 24);
+            assert!(buffer_text(&buffer).contains("Continued after reaching bottom"));
+            assert!(!buffer_text(&buffer).contains("Back to bottom"));
+            assert_eq!(app.transcript_scroll, app.transcript_max_scroll());
+        }
+    }
+    #[test]
+    fn escape_in_scroll_mode_closes_suggestions_and_returns_to_bottom_without_cancel() {
+        let mut app = running_chat_with_history();
+        key(&mut app, KeyCode::PageUp);
+        draw(&mut app, 90, 24);
+        app.input.clear();
+        app.event(Event::Paste("/sta".into()));
+        assert!(app.completion.is_some());
+        assert_eq!(key(&mut app, KeyCode::Esc), Command::None);
+        assert!(app.follow);
+        assert!(app.busy);
+        assert!(app.completion.is_none());
+        assert_eq!(app.input.text, "/sta");
+        assert_eq!(key(&mut app, KeyCode::Esc), Command::Cancel);
+    }
+    #[test]
+    fn scroll_hint_handles_small_windows_and_disappears_when_history_fits() {
+        let mut app = running_chat_with_history();
+        key(&mut app, KeyCode::PageUp);
+        let position = app.transcript_scroll;
+        for (width, height) in [(90, 24), (30, 8), (1, 1), (2, 2), (15, 6), (90, 24)] {
+            draw(&mut app, width, height);
+            assert!(!app.follow);
+            assert!(app.regions.back_to_bottom.height <= 1);
+            assert_eq!(app.transcript_scroll, position);
+        }
+        draw(&mut app, 140, 300);
+        assert!(app.follow);
+        assert_eq!(app.transcript_scroll, 0);
+        assert_eq!(app.regions.back_to_bottom.height, 0);
     }
     #[test]
     fn chat_is_borderless_and_input_has_gray_background() {

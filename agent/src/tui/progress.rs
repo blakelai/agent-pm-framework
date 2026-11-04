@@ -75,7 +75,7 @@ impl Progress {
         self.frame = (self.frame + 1) % 10;
         true
     }
-    pub fn line(&self, width: usize) -> String {
+    pub fn line(&self, width: usize, show_cancel_hint: bool) -> String {
         let frames = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
         let marker = if self.active {
             frames[self.frame]
@@ -88,7 +88,7 @@ impl Progress {
         } else {
             &self.label
         };
-        let suffix = if width >= 45 && self.active && !self.stopping {
+        let suffix = if width >= 45 && self.active && !self.stopping && show_cancel_hint {
             format!(" · {elapsed}s · Esc cancel")
         } else if width >= 30 && self.started.is_some() {
             format!(" · {elapsed}s")
@@ -115,9 +115,9 @@ mod tests {
         p.start();
         p.update("Reading 付款.md");
         let now = Instant::now();
-        let before = p.line(80);
+        let before = p.line(80, true);
         assert!(p.tick(now));
-        assert_ne!(before, p.line(80));
+        assert_ne!(before, p.line(80, true));
         assert!(!p.tick(now + Duration::from_millis(20)));
         for status in [
             Status::WaitingClarification,
@@ -130,7 +130,7 @@ mod tests {
         ] {
             p.session(&status);
             assert!(!p.tick(now + Duration::from_secs(5)));
-            assert!(!p.line(80).contains("Esc cancel"));
+            assert!(!p.line(80, true).contains("Esc cancel"));
         }
     }
     #[test]
@@ -140,17 +140,22 @@ mod tests {
         p.cancel();
         p.update("Writing response");
         p.pause("Late approval event");
-        assert!(p.line(80).contains("waiting for the operation outcome"));
+        assert!(
+            p.line(80, true)
+                .contains("waiting for the operation outcome")
+        );
         assert!(p.tick(Instant::now()));
         p.session(&Status::NeedsReconciliation);
-        assert!(p.line(80).contains("Outcome unconfirmed"));
+        assert!(p.line(80, true).contains("Outcome unconfirmed"));
         p.start();
         p.update("New task");
-        assert!(p.line(80).contains("New task"));
-        assert!(p.line(80).contains("Esc cancel"));
+        assert!(p.line(80, true).contains("New task"));
+        assert!(p.line(80, true).contains("Esc cancel"));
+        assert!(!p.line(80, false).contains("Esc cancel"));
+        assert!(p.line(80, false).contains("New task"));
         use unicode_width::UnicodeWidthStr;
         for width in [0, 1, 2, 10, 35, 60] {
-            assert!(p.line(width).width() <= width);
+            assert!(p.line(width, true).width() <= width);
         }
     }
 }

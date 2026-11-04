@@ -30,7 +30,7 @@ F5 or the Planning button in Browse opens [interactive scheduling](Planning-View
 
 The browser and transcript share a terminal Markdown renderer: headings, emphasis, lists, task markers, quotes, fenced/inline code, tables and links. Obsidian links navigate to an unambiguous local document. Links in code remain literal. Images and diagrams are not visually rendered; linked originals can be opened using the desktop application. Metadata is shown through Properties instead of raw frontmatter.
 
-The right scrollbar uses rendered rows after wrapping. Wheel events operate on the pointed pane; scrollbar clicks and drags change its position. Clicking or scrolling the conversation keeps the composer focused and preserves its cursor. This includes right-clicks and scrollbar dragging; they do not open a blocking menu. Reading older output pauses automatic following independently of keyboard focus. New streamed text does not pull the reader to the bottom, and typing remains available immediately. Shift+Tab explicitly selects keyboard transcript navigation; Tab or Esc returns to the composer.
+The right scrollbar uses rendered rows after wrapping. Wheel events operate on the pointed pane; scrollbar clicks and drags change its position. Clicking or scrolling the conversation keeps the composer focused and preserves its cursor. This includes right-clicks and scrollbar dragging; they do not open a blocking menu. Chat follows the latest output by default. Page Up, wheel-up or moving the scrollbar back enters scroll mode and pauses following independently of keyboard focus. Ordinary clicks preserve the current following state; an upward scroll with no earlier content keeps following enabled. New streamed text preserves the reading position, and typing remains available immediately. A centered `Back to bottom · Esc` hint appears below the conversation while in scroll mode, above the execution progress row. Esc, clicking the hint or reaching the bottom via Page Down, wheel-down or the scrollbar resumes following. These actions retain the active Agent request and input draft. Shift+Tab explicitly selects keyboard transcript navigation; Tab or Esc returns to the composer.
 
 ## Recovery
 
@@ -46,10 +46,11 @@ While an operation runs, the next draft remains editable but cannot be submitted
 
 Esc is handled by exactly one layer:
 
-1. An open command/Skill suggestion or action menu handles Esc by closing itself.
-2. Paused following or explicit transcript focus handles Esc by jumping to the latest output, resuming following and returning focus to the composer. This also applies after mouse scrolling while the composer stayed focused.
-3. Composer focus handles a separate Esc by requesting cancellation of an active operation.
-4. An idle composer leaves its draft and mode unchanged.
+1. An open action menu handles Esc by closing itself.
+2. Scroll mode handles Esc by jumping to the latest output, resuming following and returning focus to the composer. Any open command/Skill suggestions are dismissed by the same action; the Agent request continues.
+3. While following, an open command/Skill suggestion handles Esc by closing itself. Explicit transcript focus handles Esc by returning to the latest output and composer.
+4. Composer focus while following handles a separate Esc by requesting cancellation of an active operation.
+5. An idle composer leaves its draft and mode unchanged.
 
 Reported repeat key events do not trigger another action. Keyboard enhancement reporting is enabled where supported. Legacy terminals that do not distinguish key repeats cannot establish physical key release; verify that behavior in the terminal used for deployment.
 
@@ -89,7 +90,7 @@ Tool headings distinguish requested/running/pending calls and recorded result st
 
 An error or blocked result does not become a success just because a call returned. Attention states lead the heading so long paths cannot hide them. Approval requests, clarification prompts and errors retain a visible heading while their details are collapsed. Scrolling pauses following while keeping input available; Esc resumes following at the latest output.
 
-A progress row is pinned above the composer independently of transcript scrolling. It uses public runtime phases and tool actions to show preparation, service waiting, source-support checking, tool execution or response writing. The activity marker advances at 10 Hz even without incoming events; elapsed seconds and the Esc hint appear when space permits. Clarification, approval and terminal outcomes stop the animation. Cancellation shows that the operation outcome is still pending; late events cannot replace that status, and uncertain outcomes remain explicit until reconciled. Progress is ephemeral, makes no additional model requests, and neither infers model intent nor estimates completion percentages. Fixed labels follow the existing English UI, independently of the model's response language.
+A progress row is pinned above the composer independently of transcript scrolling. It uses public runtime phases and tool actions to show preparation, service waiting, source-support checking, tool execution or response writing. The activity marker advances at 10 Hz even without incoming events; elapsed seconds and the Esc cancellation hint appear when space permits and Esc can cancel directly. Scroll mode shows its own return-to-bottom hint and hides the cancellation hint. Clarification, approval and terminal outcomes stop the animation. Cancellation shows that the operation outcome is still pending; late events cannot replace that status, and uncertain outcomes remain explicit until reconciled. Progress is ephemeral, makes no additional model requests, and neither infers model intent nor estimates completion percentages. Fixed labels follow the existing English UI, independently of the model's response language.
 
 Thinking is displayed only when the service supplies it: Responses public `response.reasoning_summary_text.delta` events (or completed output summaries), and compatible Chat Completions `delta.reasoning_content` / `delta.reasoning` string fields. No thinking is inferred from ordinary answer text, tool calls or elapsed time. Opaque encrypted continuation items are retained for Responses history but never rendered. The internal grounding reviewer remains isolated from the conversation.
 
