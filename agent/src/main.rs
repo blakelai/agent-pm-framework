@@ -1,4 +1,4 @@
-use anyhow::{Result, ensure};
+use anyhow::{Context, Result, ensure};
 use clap::{Parser, Subcommand};
 use pm_agent::{
     config::Config,
@@ -371,6 +371,22 @@ async fn main() -> Result<()> {
             independent,
             answer,
         } => {
+            if deny {
+                let id = session.as_deref().context("Use --session with --deny")?;
+                let store = Store::open(&workspace.path(".pm-agent/runtime.sqlite3")?)?;
+                let mut saved: Session = store.load(id)?;
+                let call = saved
+                    .pending
+                    .first()
+                    .context("No call awaiting approval")?
+                    .clone();
+                pm_agent::approval::deny(&workspace, &store, &mut saved, &call)?;
+                eprintln!(
+                    "Session: {}\nState: Cancelled\nTool use denied; Agent response stopped.",
+                    saved.id
+                );
+                return Ok(());
+            }
             let config = Config::load(&config_path)?;
             let runtime = Runtime::open(workspace, config).await?;
             let mut s = match session {
@@ -438,7 +454,11 @@ async fn main() -> Result<()> {
                     }
                 }
             });
-            runtime.run(&mut s, approved, &tx, &cancel).await?;
+            if !(approve && s.status == Status::WaitingApproval) {
+                runtime.run(&mut s, approved, &tx, &cancel).await?;
+            } else if let Some(error) = &s.error {
+                eprintln!("{error}");
+            }
             drop(tx);
             printer.await?;
             eprintln!(

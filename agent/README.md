@@ -142,7 +142,7 @@ The [delivery views](Delivery-Workflows.md) show current workflow checks and mis
 | `/continue-independent` | Resume supported independent work; pending questions stay open |
 | `/sessions`, `/resume ID` | List or load durable conversations |
 | `/continue` | Explicitly continue a failed, cancelled, completed or limit-paused turn; current limits are checked again |
-| `/approve`, `/deny` | Decide the exact pending external/import operation |
+| `/approve`, `/deny` | Legacy aliases for allowing once / denying and stopping the pending response |
 | `/reconcile actual outcome` | Record what happened to an interrupted operation without repeating it |
 | `/new` | Start a separate session, retaining the previous one |
 | `/exit`, `/quit` | Exit Chat, waiting for active work to stop and record its outcome |
@@ -184,9 +184,24 @@ agent/target/debug/pm-agent --vault . pm ingest /absolute/material.pdf
 
 Supported operations: settings, ingestion, repository registration/snapshot, evidence capture, work packets, validation, coverage, planning, status, impact, fingerprint, immutable baseline candidates and OKF export/check. See [the tool manual](../tools/README.md) for their contracts. PDF and Office text extraction are compiled into the binary. Images and incomplete PDF/slide extraction retain the original and require reviewed descriptions; this version does not claim full visual understanding or OCR.
 
-The Agent can create reversible reports, work packets, evidence and baseline candidates, refresh registered repositories, and ingest existing workspace assets without another authorization prompt. Adding external material/repository scopes, changing the document language, exporting outside the workspace and invoking MCP tools requires an exact-call decision. A baseline candidate is never an approval.
+The Agent can create reversible reports, work packets, evidence and baseline candidates, refresh registered repositories, and ingest existing workspace assets without another authorization prompt. Adding external material/repository scopes, changing the document language, exporting outside the workspace and invoking MCP tools requires a user tool-permission decision unless an explicit reusable permission already matches. A baseline candidate is never an approval.
 
 O/M/P effort, availability and dates must be supplied. Unknown capacity is not zero. Imported Wiki descriptions, static code observations, actual test results and requested future behavior remain distinct evidence. A source hash check establishes version identity, not semantic correctness.
+
+## Tool approval choices
+
+When a tool needs permission, Chat replaces the text composer with an approval picker showing the action, reason, arguments preview and reusable scope. The unsent text, cursor and image attachments are retained. Use Up/Down or 1–4 to select, then Enter to confirm; clicking an option also confirms it. Page Up/Down and Ctrl+T remain available for reading the full request in the transcript, and F2 can temporarily return to Browse.
+
+1. **Allow once** authorizes only the current call.
+2. **Allow for this conversation** authorizes later calls to this tool, including different arguments, in the same saved conversation. The permission survives resuming that conversation; `/new` starts without those conversation permissions.
+3. **Always allow (global settings)** saves the same tool scope for future conversations and Vaults.
+4. **Deny and stop** records the denial, cancels the remaining pending calls in that response and stops without another model request. Esc selects this action immediately, including while reading older output.
+
+Reusable PM permissions are specific to the subcommand, such as `pm settings`; they do not authorize every PM operation. MCP permissions are specific to the configured server, original tool and parameter schema. A changed server configuration or schema requires a new decision. Changes made while a decision is pending reopen the picker for review before a permission can be saved. Normal tool-schema checks, clarification gates, source review, draft restrictions and interrupted-call reconciliation still apply. Tool execution permission is separate from project approval.
+
+Global permissions are stored in `$XDG_CONFIG_HOME/pm-agent/config.toml`, or `~/.config/pm-agent/config.toml` when XDG_CONFIG_HOME is unset. `PM_AGENT_GLOBAL_CONFIG` can select a different absolute file path. This user file is separate from the Vault's provider configuration and stores tool identities and binding hashes, without credentials or tool arguments. Remove a saved entry, or set `tool_approvals = []`, to revoke global permission. Global permission changes take effect on subsequent calls; isolated evaluations do not use or save global permissions. A failed settings write leaves the call pending so another choice can be made.
+
+Legacy `/approve` and CLI `chat --approve` allow once. `/deny` and CLI `chat --session ID --deny` stop the response; denial works using saved local state even if provider configuration is unavailable. Restoring a waiting session reopens the picker.
 
 ## MCP tools
 
@@ -204,7 +219,7 @@ Names are case-sensitive; `*` is not a wildcard. The model sees names such as `m
 
 Upgrade note: earlier versions treated an omitted `allowed_tools` as an empty list. Set `allowed_tools = []` explicitly to retain that behavior. Existing explicit lists keep their meaning. Restart PM Agent after changing the configuration.
 
-Every model-requested MCP invocation still displays its exact tool and arguments for approval, including when the list is omitted. Discovery does not authorize execution. Schemas are checked locally; external schema references are rejected. Tool descriptions/results remain untrusted data. Remote credentials use an environment variable. OAuth discovery, interactive OAuth login, server-requested sampling and elicitation are not implemented in this milestone.
+Every model-requested MCP invocation is checked against user tool permissions, including when the discovery allowlist is omitted. Without a matching permission, execution pauses with the exact pending tool and arguments available in the transcript. Discovery does not authorize execution. Schemas are checked locally; external schema references are rejected. Tool descriptions/results remain untrusted data. Remote credentials use an environment variable. OAuth discovery, interactive OAuth login, server-requested sampling and elicitation are not implemented in this milestone.
 
 ## Clarification, recovery and persistence
 

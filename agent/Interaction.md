@@ -44,7 +44,7 @@ Up at the first logical input line recalls a previous submitted input; Down at t
 
 While an operation runs, the next draft remains editable but cannot be submitted automatically. Drafts survive mode changes. Ctrl+C clears the draft and pending image attachments without cancelling an operation or exiting.
 
-Esc is handled by exactly one layer:
+When a tool approval picker is visible, Esc immediately selects Deny and stop, even while reading older output. Otherwise Esc is handled by exactly one layer:
 
 1. An open action menu handles Esc by closing itself.
 2. Scroll mode handles Esc by jumping to the latest output, resuming following and returning focus to the composer. Any open command/Skill suggestions are dismissed by the same action; the Agent request continues.
@@ -73,6 +73,14 @@ Pasting is not visual review, OCR, source approval or clarification resolution. 
 The selected service and model must accept image inputs. Responses uses `input_image` and Chat Completions uses `image_url`, with PNG data URLs, following the official [image input formats](https://developers.openai.com/api/docs/guides/images-vision?api-mode=chat), checked on 2026-11-01. Protocol fixture tests do not establish a particular model's visual interpretation accuracy.
 
 Native clipboard access uses [arboard](https://docs.rs/arboard/latest/arboard/): macOS requires access to the local desktop clipboard; Linux uses X11 or a Wayland compositor supporting the data-control protocol. Headless/SSH environments and unsupported clipboard formats may be unavailable; failures appear in the status line and preserve the draft. A terminal that intercepts Ctrl+V must be configured to forward the key. Text remains available through ordinary terminal paste. Desktop clipboard APIs decode images before the application checks pixel limits.
+
+## Tool approval composer
+
+A durable WaitingApproval session replaces the text/image composer with a decision picker. It summarizes the actual pending action, why permission is needed, its arguments and the scope of reusable choices. The choices are Allow once, Allow for this conversation, Always allow (global settings), and Deny and stop. Up/Down or 1–4 selects a row; Enter or a mouse click confirms. Esc immediately denies and stops the response. Paste and text-editing keys do not alter the preserved draft while the picker is open. Page Up/Down and Ctrl+T can inspect the conversation; F2 preserves the pending request while browsing.
+
+A selection binds the saved conversation and exact pending call. A changed pending call requires review again. A server configuration or schema change while waiting also requires another review before permission is saved. Successful permission decisions resume the Agent automatically; denials use only local saved state, cancel all remaining calls from that response and send no model request. The normal composer returns with its text, cursor and attachments intact. Errors in saving global settings restore the pending picker. Loading a waiting session restores the picker as well.
+
+Conversation permissions are persisted with that session. Global permissions live in the separate user settings file described in [application setup](README.md#tool-approval-choices). Both apply to the current tool with different future arguments; PM permissions distinguish subcommands and MCP permissions bind server configuration and parameter schema. All existing execution and clarification checks still apply.
 
 ## Command and Skill suggestions
 

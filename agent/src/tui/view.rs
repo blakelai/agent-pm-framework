@@ -37,7 +37,7 @@ pub const TABS: &[(&str, &str)] = &[
 ];
 pub const HELP: &str = "# PM Agent\n\nF2 switches Browse / Chat. F1 opens help. Ctrl+Q exits when idle.\n\n## Browse\nAlt+1…9 selects a category; Alt+0 lists all categories. Alt+Left/Right cycles categories.\nEnter opens the selected document; Esc returns to the list. F3 collapses the list; F4 maximizes the document. F6 toggles emoji.\nTab switches focus. PgUp/PgDn scroll. Mouse wheel scrolls the pointed pane; drag the right scrollbar. Right-click opens actions. L shows document links. P shows properties. O opens the original in the desktop application. R refreshes immediately. Local knowledge files also refresh automatically every two seconds; drafts are retained and changed inputs require a new preview. E edits supported project fields; N creates a PBI, risk or decision. F5 or Planning opens the local planning view: 1 Schedule, 2 Capacity, 3 Signals; M proposes an iteration move; P/I/A edit allocations, iterations and forecast date; R refreshes; Esc returns. F7 or Delivery opens Changes, UAT, Releases and Benefits: 1-4/Alt+1-4 select tabs, N creates a draft, E edits, O opens the document, R refreshes, Enter focuses details, Esc returns.\n\nF8 or the document context menu opens Impact and Compare: 1 references, 2 baseline diff, 3 source diff; Enter explicitly compares a baseline; O opens a candidate; R revalidates; F4 maximizes; Esc returns. Changed project inputs clear results. Source comparisons use captured snapshots only.
 
-F11 opens Recovery: Alt+1/2/3 or mouse selects Backup/Check/Restore. Enter absolute paths; Tab selects fields and session inclusion. Ctrl+S reviews, then Ctrl+S executes writes. Esc/right-click backs out or requests cancellation. Unsent Chat input is preserved.\n\nF10 opens Materials: Enter/R checks the selected original and extracted text; 1/2/3/4 switch Overview/Text/Evidence/Reviews; V starts a review, E edits a draft; O opens a rechecked original, N opens the current note, [/] cycle claims, F4 maximizes.\n\nF9 opens Questions: scope, affected files, recorded answers and resolution checks. Enter focuses details; Esc returns; O opens the note; R refreshes.\n\n## Editing\nEnter/Tab edits fields; lists use one value per line. Use left/right to select enum values. Ctrl+S reviews changes, then Ctrl+S saves the reviewed result. Esc reverts the active field or returns from preview. Ctrl+D discards with confirmation.\n\n## Chat\nType immediately. Enter sends; Alt+Enter, Shift+Enter or Ctrl+J inserts a newline. Multiline paste never submits.\nThe conversation follows the latest output by default. Page Up or the mouse wheel scrolls back and pauses following; Back to bottom appears below the conversation. Esc, clicking the hint or scrolling to the bottom resumes following without cancelling the Agent. Click the conversation without leaving the input or pausing following. A separate Esc in the input while following cancels an active operation. Ctrl+W deletes the word before the cursor. Ctrl+V pastes a clipboard image or text; Enter sends pending images. Ctrl+X removes the last image; clicking its chip removes it. Ctrl+C clears text and attachments. /exit or Ctrl+D with no input, attachment or clipboard read exits, stopping active work first.\nType / for commands or a leading $ for Skills; arrows select, Tab/Enter or click inserts, Esc closes. Up/Down at the first/last input line recalls history and restores the draft.\nTools, public thinking summaries and notices preview up to three terminal rows when collapsed. Click their headings or Ctrl+T for readable details. A progress row above the input shows the current action and elapsed time; Esc cancels from the input after closing popups or returning to the latest message.\n\n## Commands\n/help, /status, /budget, /probe [PROFILE], /probe last [PROFILE], /skills, /skills clear, /search TEXT, /stage prd, /language [TAG|auto], /pm plan, /sessions, /resume ID, /continue, /continue-independent, /answer QUESTION-ID TEXT, /approve, /deny, /reconcile ACTUAL_OUTCOME, /new, /exit, /quit.\n/budget shows configured session limits and saved request usage without a model request.\n/probe explicitly sends up to three synthetic requests (service charges may apply); /probe last reads local observations. Use a leading $skill-name to explicitly enable a project Skill. Skills remain selected in the session until cleared. Context values come only from the service; missing values remain unavailable.";
+F11 opens Recovery: Alt+1/2/3 or mouse selects Backup/Check/Restore. Enter absolute paths; Tab selects fields and session inclusion. Ctrl+S reviews, then Ctrl+S executes writes. Esc/right-click backs out or requests cancellation. Unsent Chat input is preserved.\n\nF10 opens Materials: Enter/R checks the selected original and extracted text; 1/2/3/4 switch Overview/Text/Evidence/Reviews; V starts a review, E edits a draft; O opens a rechecked original, N opens the current note, [/] cycle claims, F4 maximizes.\n\nF9 opens Questions: scope, affected files, recorded answers and resolution checks. Enter focuses details; Esc returns; O opens the note; R refreshes.\n\n## Editing\nEnter/Tab edits fields; lists use one value per line. Use left/right to select enum values. Ctrl+S reviews changes, then Ctrl+S saves the reviewed result. Esc reverts the active field or returns from preview. Ctrl+D discards with confirmation.\n\n## Chat\nType immediately. Enter sends; Alt+Enter, Shift+Enter or Ctrl+J inserts a newline. Multiline paste never submits.\nThe conversation follows the latest output by default. Page Up or the mouse wheel scrolls back and pauses following; Back to bottom appears below the conversation. Esc, clicking the hint or scrolling to the bottom resumes following without cancelling the Agent. Click the conversation without leaving the input or pausing following. A separate Esc in the input while following cancels an active operation. When tool approval is needed, a picker replaces the input: 1 Allow once, 2 Allow for this conversation, 3 Always allow (global settings), 4 Deny and stop. Use arrows or 1–4 then Enter, or click an option. Esc in the picker denies and stops immediately; the text/image draft is retained. Ctrl+W deletes the word before the cursor. Ctrl+V pastes a clipboard image or text; Enter sends pending images. Ctrl+X removes the last image; clicking its chip removes it. Ctrl+C clears text and attachments. /exit or Ctrl+D with no input, attachment or clipboard read exits, stopping active work first.\nType / for commands or a leading $ for Skills; arrows select, Tab/Enter or click inserts, Esc closes. Up/Down at the first/last input line recalls history and restores the draft.\nTools, public thinking summaries and notices preview up to three terminal rows when collapsed. Click their headings or Ctrl+T for readable details. A progress row above the input shows the current action and elapsed time; Esc cancels from the input after closing popups or returning to the latest message.\n\n## Commands\n/help, /status, /budget, /probe [PROFILE], /probe last [PROFILE], /skills, /skills clear, /search TEXT, /stage prd, /language [TAG|auto], /pm plan, /sessions, /resume ID, /continue, /continue-independent, /answer QUESTION-ID TEXT, /approve, /deny, /reconcile ACTUAL_OUTCOME, /new, /exit, /quit.\n/budget shows configured session limits and saved request usage without a model request.\n/probe explicitly sends up to three synthetic requests (service charges may apply); /probe last reads local observations. Use a leading $skill-name to explicitly enable a project Skill. Skills remain selected in the session until cleared. Context values come only from the service; missing values remain unavailable.";
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Mode {
@@ -58,6 +58,7 @@ pub enum Command {
     RecoveryJob(super::recovery::Job),
     None,
     Submit(String),
+    Approve(super::approval_prompt::Selection),
     Cancel,
     Quit,
     Refresh,
@@ -166,6 +167,7 @@ pub struct App {
     clipboard_generation: u64,
     pub output: String,
     pub(super) messages: Transcript,
+    pub(super) approval: Option<super::approval_prompt::Prompt>,
     pub(super) history: History,
     completions: Vec<completion::Item>,
     completion: Option<Popup>,
@@ -223,6 +225,7 @@ impl App {
             clipboard_generation: 0,
             output: String::new(),
             messages: Transcript::default(),
+            approval: None,
             history: History::default(),
             completions: vec![],
             completion: None,
@@ -435,7 +438,7 @@ impl App {
             } => {
                 if state == "Approval required" {
                     self.progress
-                        .pause("Waiting for approval · /approve or /deny");
+                        .pause("Waiting for approval · choose an option below");
                 } else if let Some(result) = &result {
                     let value =
                         serde_json::from_str::<serde_json::Value>(result).unwrap_or_default();
@@ -465,6 +468,38 @@ impl App {
     pub(super) fn start_operation(&mut self) {
         self.busy = true;
         self.progress.start();
+    }
+    pub(super) fn update_approval(&mut self, session: &Session) {
+        self.approval = if session.status == crate::runtime::Status::WaitingApproval {
+            session
+                .pending
+                .first()
+                .map(|call| super::approval_prompt::Prompt::new(session.id.clone(), call.clone()))
+        } else {
+            None
+        };
+        if self.approval.is_some() {
+            self.dismiss_completion();
+            self.menu = None;
+        }
+    }
+    pub(super) fn finish_session(&mut self, session: Session) {
+        self.progress.session(&session.status);
+        self.messages.sync_tools(&session);
+        self.messages.boundary();
+        self.status = format!("{:?} — session {}", session.status, session.id);
+        self.usage = session.usage.clone();
+        self.update_approval(&session);
+        self.session = Some(session);
+    }
+    fn approval_command(&mut self, decision: crate::approval::Decision) -> Command {
+        let prompt = self.approval.take().unwrap();
+        self.menu = None;
+        Command::Approve(super::approval_prompt::Selection {
+            session_id: prompt.session_id,
+            call: prompt.call,
+            decision,
+        })
     }
     pub(super) fn start_clipboard(&mut self) -> u64 {
         self.clipboard_pending = true;
@@ -511,6 +546,7 @@ impl App {
         self.discard_paste();
         self.output.clear();
         self.messages = Transcript::default();
+        self.approval = None;
         self.progress = Progress::default();
         self.chat_cache = (usize::MAX, 0);
         self.follow = true;
@@ -520,6 +556,7 @@ impl App {
         self.reset_chat();
         self.messages = Transcript::from_session(session);
         self.progress.session(&session.status);
+        self.update_approval(session);
         for item in &session.history {
             if item["role"] == "user" {
                 self.history.remember(&transcript::message_text(item));
@@ -964,6 +1001,44 @@ impl App {
         command
     }
     fn handle_event(&mut self, event: Event) -> Command {
+        if self.mode == Mode::Chat
+            && let Some(prompt) = &mut self.approval
+        {
+            match &event {
+                Event::Paste(_) => return Command::None,
+                Event::Key(key) if key.kind == KeyEventKind::Press => {
+                    let passthrough = matches!(
+                        key.code,
+                        KeyCode::PageUp | KeyCode::PageDown | KeyCode::F(2)
+                    ) || key.code == KeyCode::Char('t')
+                        && key.modifiers.contains(KeyModifiers::CONTROL);
+                    if !passthrough {
+                        let decision = prompt.key(*key);
+                        return decision
+                            .map(|d| self.approval_command(d))
+                            .unwrap_or(Command::None);
+                    }
+                }
+                Event::Mouse(mouse) if prompt.area.contains((mouse.column, mouse.row).into()) => {
+                    let decision = prompt.mouse(*mouse);
+                    return decision
+                        .map(|d| self.approval_command(d))
+                        .unwrap_or(Command::None);
+                }
+                Event::Mouse(mouse) => {
+                    let p = (mouse.column, mouse.row).into();
+                    if !(self.regions.transcript.contains(p)
+                        || self.regions.bar.contains(p)
+                        || self.regions.back_to_bottom.contains(p)
+                        || self.regions.browse.contains(p)
+                        || self.regions.chat.contains(p))
+                    {
+                        return Command::None;
+                    }
+                }
+                _ => {}
+            }
+        }
         if let Some(panel) = &mut self.recovery {
             return panel.event(event);
         }
@@ -1946,6 +2021,11 @@ impl App {
         let height = ((input.len() + 2) as u16)
             .clamp(3, area.height.div_ceil(3).max(3))
             .min(area.height);
+        let height = if let Some(prompt) = &self.approval {
+            area.height.min(prompt.height(area.width))
+        } else {
+            height
+        };
         let progress_height =
             u16::from(self.busy || self.progress.visible()).min(area.height.saturating_sub(height));
         let transcript_height = area
@@ -2007,6 +2087,7 @@ impl App {
             && self.focus == Focus::Composer
             && self.completion.is_none()
             && self.menu.is_none();
+        let cancel_hint = cancel_hint && self.approval.is_none();
         f.render_widget(
             Paragraph::new(self.progress.line(rows[2].width as usize, cancel_hint))
                 .style(Style::default().fg(Color::Gray)),
@@ -2036,6 +2117,11 @@ impl App {
             self.transcript.lines.len(),
             self.transcript_scroll,
         );
+        if let Some(prompt) = &mut self.approval {
+            self.regions.composer = Rect::default();
+            prompt.draw(f, rows[3]);
+            return;
+        }
         let bg = Style::default().bg(Color::DarkGray).fg(Color::White);
         f.render_widget(Block::default().style(bg), rows[3]);
         let mut x = rows[3].x;
@@ -2885,6 +2971,122 @@ mod tests {
         app.start_operation();
         draw(&mut app, 90, 24);
         app
+    }
+    fn approval_chat() -> App {
+        let mut app = running_chat_with_history();
+        app.busy = false;
+        let session: Session=serde_json::from_value(serde_json::json!({"id":"approval-fixture","status":"waiting_approval","provider_fingerprint":"fixture","history":[],"pending":[{"id":"permission","name":"pm","arguments":"{\"command\":\"settings\",\"args\":[\"--document-language\",\"zh-TW\"]}"}],"questions":[],"last_output":"","error":null,"stage":"workflow"})).unwrap();
+        app.finish_session(session);
+        app
+    }
+    #[test]
+    fn approval_composer_preserves_drafts_and_exposes_all_four_explicit_decisions() {
+        use crate::approval::Decision;
+        for (number, decision) in [
+            ('1', Decision::Once),
+            ('2', Decision::Conversation),
+            ('3', Decision::Always),
+            ('4', Decision::Deny),
+        ] {
+            let mut app = approval_chat();
+            let image = paste_image(&mut app);
+            let buffer = draw(&mut app, 100, 30);
+            let text = buffer_text(&buffer);
+            for expected in [
+                "Tool approval",
+                "Why:",
+                "zh-TW",
+                "Allow once",
+                "Allow for this conversation",
+                "Always allow (global settings)",
+                "Deny and stop",
+                "Enter confirm",
+                "Esc deny",
+            ] {
+                assert!(text.contains(expected), "Missing {expected}: {text}");
+            }
+            assert_eq!(app.regions.composer.height, 0);
+            assert_eq!(
+                app.event(mouse(
+                    MouseEventKind::Down(MouseButton::Left),
+                    app.regions.status
+                )),
+                Command::None
+            );
+            assert!(app.menu.is_none());
+            assert!(!text.contains("Unsent 中文 draft"));
+            app.event(Event::Paste("Must not enter the preserved draft".into()));
+            assert_eq!(ctrl(&mut app, 'c'), Command::None);
+            assert_eq!(ctrl(&mut app, 'v'), Command::None);
+            assert_eq!(key(&mut app, KeyCode::Char(number)), Command::None);
+            let Command::Approve(selection) = key(&mut app, KeyCode::Enter) else {
+                panic!("Expected an approval selection")
+            };
+            assert_eq!(selection.decision, decision);
+            assert_eq!(selection.session_id, "approval-fixture");
+            assert_eq!(selection.call.id, "permission");
+            assert_eq!(app.input.text, "Unsent 中文 draft");
+            assert_eq!(app.input.cursor, 6);
+            assert_eq!(app.attachments[0].id, image);
+        }
+    }
+    #[test]
+    fn approval_escape_overrides_scroll_mode_and_mouse_choices_use_the_pending_snapshot() {
+        use crate::approval::Decision;
+        let mut app = approval_chat();
+        key(&mut app, KeyCode::PageUp);
+        draw(&mut app, 100, 30);
+        assert!(!app.follow);
+        let Command::Approve(selection) = key(&mut app, KeyCode::Esc) else {
+            panic!("Esc must deny the pending call")
+        };
+        assert_eq!(selection.decision, Decision::Deny);
+        assert_eq!(app.input.text, "Unsent 中文 draft");
+        let mut app = approval_chat();
+        key(&mut app, KeyCode::F(2));
+        assert_eq!(app.mode, Mode::Browse);
+        key(&mut app, KeyCode::F(2));
+        assert_eq!(app.mode, Mode::Chat);
+        key(&mut app, KeyCode::Down);
+        key(&mut app, KeyCode::Down);
+        let buffer = draw(&mut app, 100, 30);
+        if let Some(path) = std::env::var_os("PM_TEST_APPROVAL_CAPTURE") {
+            let capture = (0..buffer.area.height)
+                .map(|y| buffer_row(&buffer, y).trim_end().to_owned())
+                .collect::<Vec<_>>()
+                .join("\n");
+            std::fs::write(path, format!("SYNTHETIC TOOL APPROVAL\n{capture}\n")).unwrap();
+        }
+        let row = (0..buffer.area.height)
+            .find(|y| buffer_row(&buffer, *y).contains("4. Deny and stop"))
+            .unwrap();
+        let area = app.approval.as_ref().unwrap().area;
+        let command = app.event(mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            Rect::new(area.x + 4, row, 1, 1),
+        ));
+        let Command::Approve(selection) = command else {
+            panic!("Mouse choice must produce a decision")
+        };
+        assert_eq!(selection.decision, Decision::Deny);
+        assert_eq!(selection.call.id, "permission");
+    }
+    #[test]
+    fn approval_resume_and_small_terminals_keep_selection_available_without_editing_text() {
+        let mut app = approval_chat();
+        let saved = app.session.as_ref().unwrap().clone();
+        app.reset_chat();
+        app.resume_chat(&saved);
+        assert!(app.approval.is_some());
+        for (width, height) in [(1, 1), (2, 2), (15, 6), (30, 10), (90, 24)] {
+            draw(&mut app, width, height);
+            key(&mut app, KeyCode::Char('4'));
+        }
+        let Command::Approve(selection) = key(&mut app, KeyCode::Enter) else {
+            panic!("Selection must remain usable")
+        };
+        assert_eq!(selection.decision, crate::approval::Decision::Deny);
+        assert_eq!(app.input.text, "Unsent 中文 draft");
     }
     #[test]
     fn chat_follows_new_output_until_the_user_actually_scrolls_back() {

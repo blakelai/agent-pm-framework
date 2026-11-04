@@ -53,7 +53,7 @@ pub struct ToolSpec {
     pub description: String,
     pub parameters: Value,
 }
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Call {
     pub id: String,
     pub name: String,

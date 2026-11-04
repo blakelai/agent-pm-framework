@@ -52,7 +52,7 @@ impl Progress {
             Status::Running => "Interrupted · inspect the saved session before continuing",
             Status::Completed => "Completed",
             Status::WaitingClarification => "Waiting for your answer · review Questions",
-            Status::WaitingApproval => "Waiting for approval · /approve or /deny",
+            Status::WaitingApproval => "Waiting for approval · choose an option below",
             Status::NeedsReconciliation => "Outcome unconfirmed · inspect before /reconcile",
             Status::Failed => "Failed · expand the error for details",
             Status::Cancelled => "Cancelled",

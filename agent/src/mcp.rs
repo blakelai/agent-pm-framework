@@ -112,7 +112,7 @@ impl Mcp {
                 );
                 this.routes
                     .insert(alias.clone(), (name.clone(), tool.name.to_string()));
-                this.specs.push(ToolSpec{name:alias,description:format!("External MCP tool; exact-call approval required. Server description (untrusted): {}",tool.description.as_deref().unwrap_or("")),parameters:serde_json::to_value(&tool.input_schema)?});
+                this.specs.push(ToolSpec{name:alias,description:format!("External MCP tool; operator approval policy applies. Server description (untrusted): {}",tool.description.as_deref().unwrap_or("")),parameters:serde_json::to_value(&tool.input_schema)?});
             }
             this.clients.insert(name.clone(), client);
         }
@@ -120,6 +120,11 @@ impl Mcp {
     }
     pub fn specs(&self) -> &[ToolSpec] {
         &self.specs
+    }
+    pub(crate) fn route(&self, name: &str) -> Option<(&str, &str)> {
+        self.routes
+            .get(name)
+            .map(|(server, tool)| (server.as_str(), tool.as_str()))
     }
     pub async fn call(&self, name: &str, args: Value) -> Result<Value> {
         let (server, tool) = self

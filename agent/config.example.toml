@@ -52,7 +52,11 @@ api_key_env = "OPENROUTER_API_KEY"
 tools = true
 
 # MCP servers are started only from this operator-selected config.
-# Every MCP call requires confirmation of the exact tool and arguments in the TUI.
+# MCP calls need a tool approval choice unless covered by an explicit reusable grant.
+# The picker offers once, this conversation, always (global settings), or deny and stop.
+# Global grants are separate from this provider file: $XDG_CONFIG_HOME/pm-agent/config.toml
+# or ~/.config/pm-agent/config.toml. PM_AGENT_GLOBAL_CONFIG overrides that absolute path.
+# Remove entries from that user file to revoke global permissions; no grants are inferred.
 # Omit allowed_tools to expose every discovered tool to the model.
 # Set allowed_tools = [] to expose none (discovery remains available).
 # A nonempty list exposes only exact original tool names; no wildcard matching.

@@ -25,7 +25,7 @@ pub const COMMANDS: &[(&str, &str)] = &[
     ),
     ("/answer", "Answer a recorded question: ID TEXT"),
     ("/approve", "Approve the exact pending external call"),
-    ("/deny", "Reject the pending external call"),
+    ("/deny", "Deny the pending call and stop the response"),
     (
         "/reconcile",
         "Record the actual outcome of an interrupted call",

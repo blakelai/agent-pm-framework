@@ -1,3 +1,4 @@
+mod approval_prompt;
 mod completion;
 mod delivery;
 mod editor;
@@ -47,7 +48,6 @@ enum Outcome {
 }
 enum Action {
     Message(String),
-    Decision(bool),
     Continue,
     Independent,
     Answer(String, String),
@@ -157,12 +157,7 @@ pub async fn run(workspace: Workspace, config_path: PathBuf, lock: WorkspaceLock
                 let failed = matches!(outcome, Outcome::Error(_) | Outcome::RejectedInput { .. });
                 match outcome {
                     Outcome::Session(s)=>{
-                        app.progress.session(&s.status);
-                        app.messages.sync_tools(&s);
-                        app.messages.boundary();
-                        app.status=format!("{:?} — session {}",s.status,s.id);
-                        app.usage=s.usage.clone();
-                        app.session=Some(*s);
+                        finish_chat_outcome(&workspace,&store,&mut app,*s,cancellation.is_cancelled());
                     },
                     Outcome::Pm {call, result}=>{
                         let value = serde_json::from_str(&result).unwrap_or_default();
@@ -178,6 +173,8 @@ pub async fn run(workspace: Workspace, config_path: PathBuf, lock: WorkspaceLock
                     },
                     Outcome::Error(text)=>{
                         app.progress.finish("Failed · expand the error for details");
+                        if let Some(id)=app.session.as_ref().map(|s|s.id.clone())
+                            && let Ok(saved)=store.load::<Session>(&id) {finish_chat_outcome(&workspace,&store,&mut app,saved,cancellation.is_cancelled());}
                         app.notice(&format!("Error: {text}"));
                     },
                     Outcome::RejectedInput{text,error}=>{
@@ -350,6 +347,16 @@ pub async fn run(workspace: Workspace, config_path: PathBuf, lock: WorkspaceLock
                         }
                     },
                     Command::CloseEdit=>app.form=None,
+                    Command::Approve(selection)=>{
+                        match decide_tool(&workspace,&config_path,&mut app,&store,&selection,&tx,&done_tx) {
+                            Ok(Some(token))=>{cancellation=token;app.start_operation();},
+                            Ok(None)=>{},
+                            Err(error)=>{
+                                if let Ok(saved)=store.load::<Session>(&selection.session_id) {app.finish_session(saved);}
+                                app.notice(&format!("Error: {}",crate::diagnostics::format_error(&error)));
+                            },
+                        }
+                    },
                     Command::Submit(input)=>{
                         app.user_message(&input);
                         let result=dispatch(&workspace,&config_path,&mut app,&store,input.clone(),&tx,&done_tx);
@@ -384,6 +391,93 @@ fn open_document(path: PathBuf) -> Result<()> {
         .wait()?;
     Ok(())
 }
+fn finish_chat_outcome(
+    workspace: &Workspace,
+    store: &Store,
+    app: &mut App,
+    mut session: Session,
+    stop_requested: bool,
+) {
+    // Esc may arrive after the worker saved WaitingApproval but before the UI receives it.
+    let error = if stop_requested && session.status == Status::WaitingApproval {
+        session
+            .pending
+            .first()
+            .cloned()
+            .and_then(|call| crate::approval::deny(workspace, store, &mut session, &call).err())
+    } else {
+        None
+    };
+    app.finish_session(session);
+    if let Some(error) = error {
+        app.notice(&format!(
+            "Error: {}",
+            crate::diagnostics::format_error(&error)
+        ));
+    }
+}
+fn decide_tool(
+    workspace: &Workspace,
+    config_path: &std::path::Path,
+    app: &mut App,
+    store: &Store,
+    selection: &approval_prompt::Selection,
+    tx: &mpsc::UnboundedSender<Event>,
+    done: &mpsc::UnboundedSender<Outcome>,
+) -> Result<Option<CancellationToken>> {
+    anyhow::ensure!(!app.busy, "Wait for the current operation to finish");
+    anyhow::ensure!(
+        app.session
+            .as_ref()
+            .is_some_and(|s| s.id == selection.session_id),
+        "Approval belongs to a different conversation"
+    );
+    let mut session: Session = store.load(&selection.session_id)?;
+    anyhow::ensure!(
+        session.status == Status::WaitingApproval
+            && session.pending.first() == Some(&selection.call),
+        "Pending tool changed; review the current approval request"
+    );
+    if selection.decision == crate::approval::Decision::Deny {
+        let result = crate::approval::deny(workspace, store, &mut session, &selection.call);
+        app.finish_session(session);
+        result?;
+        app.notice("Tool use denied; Agent response stopped.");
+        return Ok(None);
+    }
+    let config = Config::load(config_path)?;
+    let workspace = workspace.clone();
+    let expected = selection.call.clone();
+    let decision = selection.decision;
+    let tx = tx.clone();
+    let done = done.clone();
+    let cancel = CancellationToken::new();
+    let signal = cancel.clone();
+    tokio::spawn(async move {
+        let result = async {
+            let runtime = Runtime::open(workspace, config).await?;
+            anyhow::ensure!(
+                !signal.is_cancelled(),
+                "Cancelled before recording the tool approval"
+            );
+            let approved = runtime.decide_approval(&mut session, &expected, decision)?;
+            if session.status == Status::WaitingApproval {
+                if let Some(error) = &session.error {
+                    let _ = tx.send(Event::Notice(error.clone()));
+                }
+                return Ok(());
+            }
+            runtime.run(&mut session, approved, &tx, &signal).await
+        }
+        .await;
+        let _ = done.send(match result {
+            Ok(()) => Outcome::Session(Box::new(session)),
+            Err(error) => Outcome::Error(crate::diagnostics::format_error(&error)),
+        });
+    });
+    Ok(Some(cancel))
+}
+
 fn dispatch(
     workspace: &Workspace,
     config_path: &std::path::Path,
@@ -398,6 +492,29 @@ fn dispatch(
     } else {
         input
     };
+    if matches!(input.as_str(), "/approve" | "/deny") {
+        let session = app
+            .session
+            .as_ref()
+            .context("No session awaiting approval")?;
+        let id = session.id.clone();
+        let call = session
+            .pending
+            .first()
+            .context("No call awaiting approval")?
+            .clone();
+        let decision = if input == "/approve" {
+            crate::approval::Decision::Once
+        } else {
+            crate::approval::Decision::Deny
+        };
+        let selection = approval_prompt::Selection {
+            session_id: id,
+            call,
+            decision,
+        };
+        return decide_tool(workspace, config_path, app, store, &selection, tx, done);
+    }
     if input == "/skills" {
         app.skills_menu(Catalog::discover(workspace)?);
         return Ok(None);
@@ -606,8 +723,6 @@ fn dispatch(
     app.model = config.active()?.model.clone();
     let submitted_text = input.clone();
     let action = match input.as_str() {
-        "/approve" => Action::Decision(true),
-        "/deny" => Action::Decision(false),
         "/continue" => Action::Continue,
         "/continue-independent" => Action::Independent,
         _ => {
@@ -653,7 +768,6 @@ fn dispatch(
         let mut input_accepted = false;
         let result = async {
             let runtime = Runtime::open(workspace, config).await?;
-            let mut approved = None;
             match action {
                 Action::Message(input) => {
                     runtime.input_with_images(&mut session, &input, &images)?
@@ -661,12 +775,6 @@ fn dispatch(
                 Action::Independent => runtime.continue_independent(&mut session)?,
                 Action::Answer(id, text) => {
                     runtime.answer_with_images(&mut session, &id, &text, &images)?
-                }
-                Action::Decision(yes) => {
-                    if yes {
-                        approved = session.pending.first().map(|c| c.id.clone());
-                    }
-                    runtime.decision(&mut session, yes)?;
                 }
                 Action::Continue => {
                     if matches!(
@@ -687,7 +795,7 @@ fn dispatch(
                     images.iter().map(|image| image.id.clone()).collect(),
                 ));
             }
-            runtime.run(&mut session, approved, &tx, &signal).await
+            runtime.run(&mut session, None, &tx, &signal).await
         }
         .await;
         let _ = done.send(match result {
@@ -706,6 +814,69 @@ fn dispatch(
 mod tests {
     use super::*;
     use crate::workspace::Document;
+    #[test]
+    fn approval_snapshot_rejects_changed_calls_and_denial_needs_no_configuration() {
+        let dir = tempfile::tempdir().unwrap();
+        let w = Workspace {
+            root: dir.path().to_owned(),
+        };
+        let store = Store::open(&w.path(".pm-agent/runtime.sqlite3").unwrap()).unwrap();
+        let mut session:Session=serde_json::from_value(serde_json::json!({"id":"fixture","status":"waiting_approval","provider_fingerprint":"fixture","history":[],"pending":[{"id":"tool","name":"mcp_missing_tool","arguments":"{}"}],"questions":[],"last_output":"","error":null,"stage":"workflow"})).unwrap();
+        let mut app = App::new(vec![]);
+        app.input.insert("Preserved draft");
+        let selection = approval_prompt::Selection {
+            session_id: session.id.clone(),
+            call: session.pending[0].clone(),
+            decision: crate::approval::Decision::Deny,
+        };
+        session.pending[0].arguments = "{\"changed\":true}".into();
+        store.save(&session.id, &session).unwrap();
+        app.finish_session(session.clone());
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let (done, mut outcomes) = mpsc::unbounded_channel();
+        assert!(
+            decide_tool(
+                &w,
+                &dir.path().join("missing.toml"),
+                &mut app,
+                &store,
+                &selection,
+                &tx,
+                &done
+            )
+            .unwrap_err()
+            .to_string()
+            .contains("Pending tool changed")
+        );
+        let current = approval_prompt::Selection {
+            call: session.pending[0].clone(),
+            ..selection
+        };
+        assert!(
+            decide_tool(
+                &w,
+                &dir.path().join("missing.toml"),
+                &mut app,
+                &store,
+                &current,
+                &tx,
+                &done
+            )
+            .unwrap()
+            .is_none()
+        );
+        assert_eq!(app.session.as_ref().unwrap().status, Status::Cancelled);
+        assert!(app.approval.is_none());
+        assert_eq!(app.input.text, "Preserved draft");
+        assert!(rx.try_recv().is_err() && outcomes.try_recv().is_err());
+        session.id = "cancellation-race".into();
+        store.save(&session.id, &session).unwrap();
+        finish_chat_outcome(&w, &store, &mut app, session.clone(), true);
+        assert_eq!(app.session.as_ref().unwrap().status, Status::Cancelled);
+        let saved: Session = store.load(&session.id).unwrap();
+        assert!(saved.pending.is_empty());
+        assert!(app.approval.is_none());
+    }
     #[tokio::test]
     async fn worker_startup_failure_retains_mcp_program_and_underlying_cause_without_arguments() {
         let dir = tempfile::tempdir().unwrap();

@@ -1258,7 +1258,7 @@ async fn interrupted_operation_is_not_replayed_on_resume() {
 #[tokio::test]
 async fn approval_denial_does_not_execute_the_tool() {
     let (_dir, w) = fixture();
-    let (url, q, _, server) = server(vec![chat(
+    let (url, _, requests, server) = server(vec![chat(
         "",
         vec![call(
             0,
@@ -1278,13 +1278,9 @@ async fn approval_denial_does_not_execute_the_tool() {
         .unwrap();
     assert_eq!(s.status, Status::WaitingApproval);
     runtime.decision(&mut s, false).unwrap();
-    q.lock()
-        .unwrap()
-        .push_back(chat("The requested change was denied.", vec![]));
-    runtime
-        .run(&mut s, None, &events().0, &CancellationToken::new())
-        .await
-        .unwrap();
+    assert_eq!(s.status, Status::Cancelled);
+    assert!(s.pending.is_empty());
+    assert_eq!(requests.lock().unwrap().len(), 1);
     assert_eq!(w.language().unwrap(), "en");
     server.abort();
 }
@@ -1522,15 +1518,26 @@ async fn mcp_without_allowlist_still_requires_an_exact_call_decision() {
             .collect();
         assert_eq!(exposed, ["mcp_fixture_echo", "mcp_fixture_hidden"]);
         rt.decision(&mut s, approve).unwrap();
-        rt.run(
-            &mut s,
-            approve.then(|| "mcp-decision".into()),
-            &events().0,
-            &CancellationToken::new(),
-        )
-        .await
-        .unwrap();
-        assert_eq!(s.status, Status::Completed, "{:?}", s.error);
+        if approve {
+            rt.run(
+                &mut s,
+                Some("mcp-decision".into()),
+                &events().0,
+                &CancellationToken::new(),
+            )
+            .await
+            .unwrap();
+        }
+        assert_eq!(
+            s.status,
+            if approve {
+                Status::Completed
+            } else {
+                Status::Cancelled
+            },
+            "{:?}",
+            s.error
+        );
         if approve {
             let calls = calls.lock().unwrap();
             assert_eq!(calls.len(), 1);
@@ -1538,6 +1545,8 @@ async fn mcp_without_allowlist_still_requires_an_exact_call_decision() {
             assert_eq!(calls[0]["arguments"], args);
         } else {
             assert!(calls.lock().unwrap().is_empty());
+            assert!(s.pending.is_empty());
+            assert_eq!(requests.lock().unwrap().len(), 1);
         }
         model_server.abort();
         mcp_server.abort();
@@ -2207,4 +2216,435 @@ async fn response_language_is_in_both_system_prompts_and_pinned_on_resume() {
         }
         server.abort();
     }
+}
+
+#[tokio::test]
+async fn approval_once_and_conversation_grants_survive_resume_without_crossing_operations_or_sessions()
+ {
+    use pm_agent::approval::Decision;
+    let (dir, w) = fixture();
+    let settings =
+        |language: &str| json!({"command":"settings","args":["--document-language",language]});
+    let (url, _, requests, server) = server(vec![
+        chat(
+            "",
+            vec![
+                call(0, "once", "pm", settings("en")),
+                call(1, "conversation", "pm", settings("en")),
+            ],
+        ),
+        chat(
+            "",
+            vec![
+                call(0, "later", "pm", settings("zh-TW")),
+                call(
+                    1,
+                    "different-operation",
+                    "pm",
+                    json!({"command":"ingest","args":["/unapproved/material.txt"]}),
+                ),
+            ],
+        ),
+        chat("", vec![call(0, "fresh-session", "pm", settings("en"))]),
+    ])
+    .await;
+    let cfg = config(url, Protocol::ChatCompletions);
+    let mut rt = Runtime::open(w.clone(), cfg.clone()).await.unwrap();
+    rt.set_global_approval_path(dir.path().join("isolated-global.toml"));
+    let mut s = Session::new(&cfg, "workflow").unwrap();
+    rt.input(&mut s, "Synthetic permission scope fixture")
+        .unwrap();
+    rt.run(&mut s, None, &events().0, &CancellationToken::new())
+        .await
+        .unwrap();
+    assert_eq!(s.status, Status::WaitingApproval);
+    let expected = s.pending[0].clone();
+    let approved = rt
+        .decide_approval(&mut s, &expected, Decision::Once)
+        .unwrap();
+    rt.run(&mut s, approved, &events().0, &CancellationToken::new())
+        .await
+        .unwrap();
+    assert_eq!(s.status, Status::WaitingApproval);
+    assert_eq!(s.pending[0].id, "conversation");
+    assert!(s.tool_approvals.is_empty());
+    assert_eq!(requests.lock().unwrap().len(), 1);
+    let expected = s.pending[0].clone();
+    let approved = rt
+        .decide_approval(&mut s, &expected, Decision::Conversation)
+        .unwrap();
+    let mut resumed: Session = rt.store.load(&s.id).unwrap();
+    assert_eq!(resumed.tool_approvals.len(), 1);
+    let mut rt2 = Runtime::open(w.clone(), cfg.clone()).await.unwrap();
+    rt2.set_global_approval_path(dir.path().join("isolated-global.toml"));
+    rt2.run(
+        &mut resumed,
+        approved,
+        &events().0,
+        &CancellationToken::new(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        resumed.status,
+        Status::WaitingApproval,
+        "{:?}",
+        resumed.error
+    );
+    assert_eq!(resumed.pending[0].id, "different-operation");
+    assert_eq!(w.language().unwrap(), "zh-TW");
+    assert_eq!(requests.lock().unwrap().len(), 2);
+    let expected = resumed.pending[0].clone();
+    rt2.decide_approval(&mut resumed, &expected, Decision::Deny)
+        .unwrap();
+    assert_eq!(resumed.status, Status::Cancelled);
+    assert_eq!(requests.lock().unwrap().len(), 2);
+    let mut fresh = Session::new(&cfg, "workflow").unwrap();
+    rt2.input(&mut fresh, "Synthetic fresh conversation")
+        .unwrap();
+    rt2.run(&mut fresh, None, &events().0, &CancellationToken::new())
+        .await
+        .unwrap();
+    assert_eq!(fresh.status, Status::WaitingApproval);
+    assert!(fresh.tool_approvals.is_empty());
+    assert!(!dir.path().join("isolated-global.toml").exists());
+    server.abort();
+}
+
+#[tokio::test]
+async fn global_tool_approval_applies_to_new_conversations_and_vaults() {
+    use pm_agent::approval::Decision;
+    let (dir, w) = fixture();
+    let (_other, w2) = fixture();
+    let settings = |id: &str, language: &str| {
+        chat(
+            "",
+            vec![call(
+                0,
+                id,
+                "pm",
+                json!({"command":"settings","args":["--document-language",language]}),
+            )],
+        )
+    };
+    let (url, _, requests, server) = server(vec![
+        settings("first", "en"),
+        chat("Done", vec![]),
+        settings("future", "zh-TW"),
+        chat("Done", vec![]),
+    ])
+    .await;
+    let cfg = config(url, Protocol::ChatCompletions);
+    let path = dir.path().join("user-config/config.toml");
+    let mut rt = Runtime::open(w, cfg.clone()).await.unwrap();
+    rt.set_global_approval_path(path.clone());
+    let mut s = Session::new(&cfg, "workflow").unwrap();
+    rt.input(&mut s, "Synthetic persistent permission fixture")
+        .unwrap();
+    rt.run(&mut s, None, &events().0, &CancellationToken::new())
+        .await
+        .unwrap();
+    let expected = s.pending[0].clone();
+    let approved = rt
+        .decide_approval(&mut s, &expected, Decision::Always)
+        .unwrap();
+    rt.run(&mut s, approved, &events().0, &CancellationToken::new())
+        .await
+        .unwrap();
+    assert_eq!(s.status, Status::Completed);
+    assert!(path.is_file());
+    assert!(s.tool_approvals.is_empty());
+    let mut other = Runtime::open(w2.clone(), cfg.clone()).await.unwrap();
+    other.set_global_approval_path(path);
+    let mut future = Session::new(&cfg, "workflow").unwrap();
+    other
+        .input(&mut future, "Synthetic new Vault conversation")
+        .unwrap();
+    other
+        .run(&mut future, None, &events().0, &CancellationToken::new())
+        .await
+        .unwrap();
+    assert_eq!(future.status, Status::Completed, "{:?}", future.error);
+    assert_eq!(w2.language().unwrap(), "zh-TW");
+    assert_eq!(requests.lock().unwrap().len(), 4);
+    server.abort();
+}
+
+#[tokio::test]
+async fn reusable_mcp_permissions_are_bound_to_the_configured_server() {
+    use pm_agent::approval::Decision;
+    let (dir, w) = fixture();
+    let (first_url, first_calls, first_server) = mcp_http_server().await;
+    let (second_url, second_calls, second_server) = mcp_http_server().await;
+    let (url, _, _, model_server) = server(vec![
+        chat(
+            "",
+            vec![
+                call(0, "first", "mcp_fixture_hidden", json!({"text":"one"})),
+                call(
+                    1,
+                    "later",
+                    "mcp_fixture_hidden",
+                    json!({"text":"different arguments"}),
+                ),
+            ],
+        ),
+        chat("Done", vec![]),
+        chat(
+            "",
+            vec![call(
+                0,
+                "changed-server",
+                "mcp_fixture_hidden",
+                json!({"text":"requires a new decision"}),
+            )],
+        ),
+    ])
+    .await;
+    let mut cfg = config(url, Protocol::ChatCompletions);
+    cfg.mcp.insert(
+        "fixture".into(),
+        McpConfig::Http {
+            url: first_url,
+            bearer_token_env: None,
+            allowed_tools: None,
+        },
+    );
+    let path = dir.path().join("global.toml");
+    let mut rt = Runtime::open(w.clone(), cfg.clone()).await.unwrap();
+    rt.set_global_approval_path(path.clone());
+    let mut s = Session::new(&cfg, "workflow").unwrap();
+    rt.input(&mut s, "Synthetic MCP permission fixture")
+        .unwrap();
+    rt.run(&mut s, None, &events().0, &CancellationToken::new())
+        .await
+        .unwrap();
+    let expected = s.pending[0].clone();
+    let approved = rt
+        .decide_approval(&mut s, &expected, Decision::Conversation)
+        .unwrap();
+    rt.run(&mut s, approved, &events().0, &CancellationToken::new())
+        .await
+        .unwrap();
+    assert_eq!(s.status, Status::Completed, "{:?}", s.error);
+    assert_eq!(first_calls.lock().unwrap().len(), 2);
+    cfg.mcp.insert(
+        "fixture".into(),
+        McpConfig::Http {
+            url: second_url,
+            bearer_token_env: None,
+            allowed_tools: None,
+        },
+    );
+    let mut changed = Runtime::open(w, cfg).await.unwrap();
+    changed.set_global_approval_path(path);
+    changed
+        .input(&mut s, "Synthetic changed endpoint fixture")
+        .unwrap();
+    changed
+        .run(&mut s, None, &events().0, &CancellationToken::new())
+        .await
+        .unwrap();
+    assert_eq!(s.status, Status::WaitingApproval, "{:?}", s.error);
+    assert!(second_calls.lock().unwrap().is_empty());
+    first_server.abort();
+    second_server.abort();
+    model_server.abort();
+}
+
+#[test]
+fn denial_and_cli_escape_equivalent_need_no_provider_configuration_or_external_connection() {
+    use pm_agent::{approval, provider::Call, store::Store};
+    for protocol in [Protocol::ChatCompletions, Protocol::Responses] {
+        let (_dir, w) = fixture();
+        let cfg = config("http://127.0.0.1:9/v1".into(), protocol.clone());
+        let mut s = Session::new(&cfg, "workflow").unwrap();
+        s.status = Status::WaitingApproval;
+        s.pending = vec![
+            Call {
+                id: "denied".into(),
+                name: "mcp_missing_tool".into(),
+                arguments: "{}".into(),
+            },
+            Call {
+                id: "later".into(),
+                name: "pm".into(),
+                arguments: json!({"command":"settings","args":["--document-language","zh-TW"]})
+                    .to_string(),
+            },
+        ];
+        s.history=match protocol {
+            Protocol::Responses=>s.pending.iter().map(|c|json!({"type":"function_call","call_id":c.id,"name":c.name,"arguments":c.arguments})).collect(),
+            Protocol::ChatCompletions=>vec![json!({"role":"assistant","content":"", "tool_calls":s.pending.iter().map(|c|json!({"id":c.id,"type":"function","function":{"name":c.name,"arguments":c.arguments}})).collect::<Vec<_>>()})],
+        };
+        let store = Store::open(&w.path(".pm-agent/runtime.sqlite3").unwrap()).unwrap();
+        store.save(&s.id, &s).unwrap();
+        let expected = s.pending[0].clone();
+        let mut stale = expected.clone();
+        stale.arguments = "{\"changed\":true}".into();
+        assert!(approval::deny(&w, &store, &mut s, &stale).is_err());
+        assert_eq!(s.status, Status::WaitingApproval);
+        let cli = std::process::Command::new(env!("CARGO_BIN_EXE_pm-agent"))
+            .args([
+                "--vault",
+                w.root.to_str().unwrap(),
+                "--config",
+                "/nonexistent/config.toml",
+                "chat",
+                "--session",
+                &s.id,
+                "--deny",
+            ])
+            .output()
+            .unwrap();
+        assert!(
+            cli.status.success(),
+            "{}",
+            String::from_utf8_lossy(&cli.stderr)
+        );
+        let saved: Session = store.load(&s.id).unwrap();
+        assert_eq!(saved.status, Status::Cancelled);
+        assert!(saved.pending.is_empty());
+        assert_eq!(saved.approval_decisions.len(), 1);
+        let outputs = saved
+            .history
+            .iter()
+            .filter(|v| v["role"] == "tool" || v["type"] == "function_call_output")
+            .collect::<Vec<_>>();
+        assert_eq!(outputs.len(), 2);
+        assert!(outputs[0].to_string().contains("denied_by_user"));
+        assert!(outputs[1].to_string().contains("cancelled_by_user"));
+        assert_eq!(w.language().unwrap(), "en");
+        assert!(saved.request_ledger.unwrap().requests.is_empty());
+    }
+}
+
+#[tokio::test]
+async fn failed_global_permission_save_keeps_the_call_pending_and_can_fall_back_to_once() {
+    use pm_agent::approval::Decision;
+    let (dir, w) = fixture();
+    let (url, _, requests, server) = server(vec![
+        chat(
+            "",
+            vec![call(
+                0,
+                "permission",
+                "pm",
+                json!({"command":"settings","args":["--document-language","en"]}),
+            )],
+        ),
+        chat("Done", vec![]),
+    ])
+    .await;
+    let cfg = config(url, Protocol::ChatCompletions);
+    let mut rt = Runtime::open(w, cfg.clone()).await.unwrap();
+    let path = dir.path().join("blocked-config.toml");
+    rt.set_global_approval_path(path.clone());
+    let mut s = Session::new(&cfg, "workflow").unwrap();
+    rt.input(&mut s, "Synthetic failed permission save")
+        .unwrap();
+    rt.run(&mut s, None, &events().0, &CancellationToken::new())
+        .await
+        .unwrap();
+    assert_eq!(s.status, Status::WaitingApproval);
+    std::fs::create_dir(&path).unwrap();
+    let expected = s.pending[0].clone();
+    assert!(
+        rt.decide_approval(&mut s, &expected, Decision::Always)
+            .is_err()
+    );
+    assert_eq!(s.status, Status::WaitingApproval);
+    assert_eq!(s.pending.as_slice(), std::slice::from_ref(&expected));
+    assert!(s.approval_decisions.is_empty());
+    assert_eq!(requests.lock().unwrap().len(), 1);
+    let approved = rt
+        .decide_approval(&mut s, &expected, Decision::Once)
+        .unwrap();
+    rt.run(&mut s, approved, &events().0, &CancellationToken::new())
+        .await
+        .unwrap();
+    assert_eq!(s.status, Status::Completed, "{:?}", s.error);
+    assert_eq!(requests.lock().unwrap().len(), 2);
+    server.abort();
+}
+
+#[tokio::test]
+async fn a_changed_pending_mcp_configuration_requires_review_before_saving_permission() {
+    use pm_agent::approval::Decision;
+    let (dir, w) = fixture();
+    let (old_url, old_calls, old_server) = mcp_http_server().await;
+    let (new_url, new_calls, new_server) = mcp_http_server().await;
+    let (url, _, requests, model) = server(vec![
+        chat(
+            "",
+            vec![call(
+                0,
+                "pending",
+                "mcp_fixture_hidden",
+                json!({"text":"Synthetic changed pending configuration"}),
+            )],
+        ),
+        chat("Done", vec![]),
+    ])
+    .await;
+    let mut cfg = config(url, Protocol::ChatCompletions);
+    cfg.mcp.insert(
+        "fixture".into(),
+        McpConfig::Http {
+            url: old_url,
+            bearer_token_env: None,
+            allowed_tools: None,
+        },
+    );
+    let path = dir.path().join("global.toml");
+    let mut original = Runtime::open(w.clone(), cfg.clone()).await.unwrap();
+    original.set_global_approval_path(path.clone());
+    let mut s = Session::new(&cfg, "workflow").unwrap();
+    original
+        .input(&mut s, "Synthetic pending configuration fixture")
+        .unwrap();
+    original
+        .run(&mut s, None, &events().0, &CancellationToken::new())
+        .await
+        .unwrap();
+    let expected = s.pending[0].clone();
+    cfg.mcp.insert(
+        "fixture".into(),
+        McpConfig::Http {
+            url: new_url,
+            bearer_token_env: None,
+            allowed_tools: None,
+        },
+    );
+    let mut changed = Runtime::open(w, cfg).await.unwrap();
+    changed.set_global_approval_path(path.clone());
+    assert!(
+        changed
+            .decide_approval(&mut s, &expected, Decision::Always)
+            .unwrap()
+            .is_none()
+    );
+    assert_eq!(s.status, Status::WaitingApproval);
+    assert!(
+        s.error
+            .as_deref()
+            .unwrap()
+            .contains("configuration or schema changed")
+    );
+    assert!(s.approval_decisions.is_empty());
+    assert!(!path.exists());
+    assert!(old_calls.lock().unwrap().is_empty() && new_calls.lock().unwrap().is_empty());
+    assert_eq!(requests.lock().unwrap().len(), 1);
+    let approved = changed
+        .decide_approval(&mut s, &expected, Decision::Once)
+        .unwrap();
+    changed
+        .run(&mut s, approved, &events().0, &CancellationToken::new())
+        .await
+        .unwrap();
+    assert_eq!(s.status, Status::Completed, "{:?}", s.error);
+    assert_eq!(new_calls.lock().unwrap().len(), 1);
+    old_server.abort();
+    new_server.abort();
+    model.abort();
 }

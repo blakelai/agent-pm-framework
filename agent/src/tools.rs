@@ -52,7 +52,7 @@ pub fn specs() -> Vec<ToolSpec> {
         ),
         spec(
             "pm",
-            "Execute a deterministic built-in project-management operation. Read tools/README.md for arguments. Local reports, work packets, registered snapshots, evidence and baseline candidates run directly. New external sources, language changes and exports require exact-call confirmation. Unknown scheduling inputs remain unknown.",
+            "Execute a deterministic built-in project-management operation. Read tools/README.md for arguments. Local reports, work packets, registered snapshots, evidence and baseline candidates run directly. New external sources, language changes and exports require operator authorization unless covered by an explicit saved tool permission. Unknown scheduling inputs remain unknown.",
             json!({"command":{"type":"string","enum":["validate","coverage","plan","status","delivery","questions","materials","inspect","impact","fingerprint","settings","ingest","repo-add","sync","evidence","prepare","baseline","okf-export","okf-check"]},"args":{"type":"array","items":{"type":"string"}}}),
             &["command", "args"],
         ),
