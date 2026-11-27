@@ -70,7 +70,13 @@ pub struct WorkspaceLock {
     root: PathBuf,
     _file: std::sync::Arc<WriterLease>,
 }
-struct WriterLease(fs::File);
+pub(crate) struct WriterLease(fs::File);
+impl WriterLease {
+    pub(crate) fn acquire(file: fs::File) -> Result<Self, fs::TryLockError> {
+        file.try_lock()?;
+        Ok(Self(file))
+    }
+}
 impl Drop for WriterLease {
     fn drop(&mut self) {
         // Release when the last guard finishes, even if a concurrently starting
@@ -92,11 +98,11 @@ impl WorkspaceLock {
             .truncate(false)
             .write(true)
             .open(workspace.path(".pm-agent/workspace.lock")?)?;
-        file.try_lock()
+        let lease = WriterLease::acquire(file)
             .context("Close other PM Agent processes before opening another writer")?;
         Ok(Self {
             root: workspace.root.clone(),
-            _file: std::sync::Arc::new(WriterLease(file)),
+            _file: std::sync::Arc::new(lease),
         })
     }
     pub(crate) fn verify(&self, workspace: &Workspace) -> Result<()> {

@@ -2,7 +2,7 @@
 use crate::{
     config::McpConfig,
     provider::{Call, ToolSpec},
-    workspace::{MAX_FILE, atomic_write, hash},
+    workspace::{MAX_FILE, WriterLease, atomic_write, hash},
 };
 use anyhow::{Context, Result, ensure};
 use serde::{Deserialize, Serialize};
@@ -223,7 +223,7 @@ impl GlobalApprovals {
             .truncate(false)
             .write(true)
             .open(path.with_extension("toml.lock"))?;
-        lock.try_lock()
+        let _lease = WriterLease::acquire(lock)
             .context("Global settings are being updated; retry the approval")?;
         let mut settings = Self::read(&path)?;
         if !settings.tool_approvals.contains(grant) {
@@ -299,11 +299,39 @@ mod tests {
         changed.binding_sha256 = "0".repeat(64);
         assert!(!fresh.allows(&changed).unwrap());
         fs::write(&path, "secret = 'SYNTHETIC_SECRET'\n").unwrap();
-        assert!(!format!("{:#}", fresh.allow(&first).unwrap_err()).contains("SYNTHETIC_SECRET"));
+        let error = format!("{:#}", fresh.allow(&first).unwrap_err());
+        assert!(error.contains("Invalid global approval settings"));
+        assert!(!error.contains("SYNTHETIC_SECRET"));
         assert_eq!(
-            fs::read_to_string(path).unwrap(),
+            fs::read_to_string(&path).unwrap(),
             "secret = 'SYNTHETIC_SECRET'\n"
         );
+        fs::remove_file(&path).unwrap();
+        fresh.allow(&first).unwrap();
+        assert!(fresh.allows(&first).unwrap());
+    }
+    #[test]
+    fn global_grants_cannot_be_saved_while_another_writer_holds_the_lock() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        let file = GlobalApprovals::at(path.clone());
+        let spec = crate::tools::specs()
+            .into_iter()
+            .find(|s| s.name == "pm")
+            .unwrap();
+        let grant = Grant::pm("settings", &spec).unwrap();
+
+        let lock = fs::File::create(path.with_extension("toml.lock")).unwrap();
+        lock.try_lock().unwrap();
+        assert_eq!(
+            file.allow(&grant).unwrap_err().to_string(),
+            "Global settings are being updated; retry the approval"
+        );
+        assert!(!path.exists());
+
+        lock.unlock().unwrap();
+        file.allow(&grant).unwrap();
+        assert!(file.allows(&grant).unwrap());
     }
     #[test]
     fn mcp_grants_change_with_server_or_schema_and_cannot_be_wildcards() {
