@@ -38,6 +38,11 @@ enum Line<'a> {
     StateChanged { status: Status },
     #[serde(rename = "turn.progress")]
     Progress { phase: Phase, message: &'a str },
+    #[serde(rename = "context.compacted")]
+    ContextCompacted {
+        #[serde(flatten)]
+        report: &'a pm_agent::compaction::Report,
+    },
     #[serde(rename = "assistant.text.delta")]
     Text { text: &'a str },
     #[serde(rename = "usage.updated")]
@@ -211,6 +216,7 @@ impl Stream {
 
     pub(super) fn event(&mut self, w: &Workspace, event: &Event) -> Result<()> {
         match event {
+            Event::ContextCompacted(report) => self.emit(Line::ContextCompacted { report }),
             Event::Steering(feedback) => self.emit(Line::Steering { feedback }),
             Event::Execution(status) => self.emit(Line::StateChanged { status: *status }),
             Event::Progress { phase, message } => self.emit(Line::Progress {

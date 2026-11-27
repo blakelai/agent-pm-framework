@@ -223,6 +223,7 @@ pm-agent --vault /path/to/vault chat --json --session SESSION_ID
 | `turn.state_changed` | `status` when the runtime starts or records its outcome |
 | `turn.progress` | `phase` and a human-readable `message` |
 | `turn.steering` | `state` and a saved correction receipt, a deferred correction ID, or a rejection reason |
+| `context.compacted` | `archived_items`, `retained_items`, `archive_sha256`, `reference_count`, `previous_bytes`, and `compacted_bytes` when the local checkpoint is created or extended |
 | `assistant.text.delta` | `text`, in stream order |
 | `usage.updated` | `usage` with service-reported token counts, or null when unavailable |
 | `tool.updated` | `call_id`, `tool`, `state`, native PM `exit_code` when available, and `artifacts`. A `stopped` tool includes the execution `status`. A `superseded` tool was withdrawn before dispatch. |
@@ -243,6 +244,12 @@ In the TUI, send `/steer TEXT` while Chat is working. In a CLI integration, star
 Corrections accept up to 16 KiB of text and one outstanding submission at a time. A stale turn ID or malformed frame produces `turn.steering` with state `rejected`. State `applied` identifies the saved correction source and any superseded calls or preview. Disregard earlier streamed text if it was superseded by the correction. Deferred corrections keep their original turn ID in the receipt even when applied during a later invocation.
 
 The runtime stops obsolete model work, withdraws undispatched calls and superseded previews, and retains recorded tool results. A tool whose outcome is unknown pauses for reconciliation. The `deferred` event and the saved pause's `pending.deferred_correction_id` identify the saved correction. Continue with `--reconcile` or `/reconcile` using the observed outcome. Existing clarification, approval, draft review and session limits still apply. [Terminal controls](Interaction.md#correct-a-running-turn)
+
+## Continue a long Chat session
+
+When serialized conversation replay reaches 700,000 bytes, Chat automatically creates or extends a local context checkpoint. It sends selected verbatim excerpts, exact recorded version references, current unresolved questions and recent complete tool exchanges. It keeps the original conversation, including older provider items, in the session database. The same session and checkpoint can be resumed after restart.
+
+Checkpoint references include structured snapshot and source locators, baseline manifest hashes, and recorded reconciliation outcomes with their call identities. Pending tools still go through review, approval or reconciliation before a model request. Recent images keep their normal verification and payload rules. Archived images are represented by saved file references and hashes. The checkpoint uses local bytes, requires no extra model request, and stops with a diagnostic if the active input or required reference inventory cannot fit. [Replay and storage details](Session-Limits.md#long-session-replay)
 
 ## Save a task goal
 

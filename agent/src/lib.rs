@@ -5,6 +5,7 @@ pub mod budget;
 pub mod change_review;
 pub mod chat_images;
 pub mod clarification;
+pub mod compaction;
 pub mod config;
 pub mod delivery;
 pub mod diagnostics;

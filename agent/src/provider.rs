@@ -18,6 +18,7 @@ pub enum Event {
         message: String,
     },
     Execution(Status),
+    ContextCompacted(crate::compaction::Report),
     Steering(crate::steering::Feedback),
     InputAccepted(Vec<String>),
     Text(String),

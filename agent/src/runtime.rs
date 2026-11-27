@@ -73,6 +73,8 @@ pub struct Session {
     pub steering: Vec<Receipt>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub deferred_steering: Option<Correction>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context_checkpoint: Option<crate::compaction::Checkpoint>,
 }
 pub const STAGES: &[(&str, &str, &str)] = &[
     ("workflow", "pm-workflow", ""),
@@ -132,6 +134,7 @@ impl Session {
             goal: None,
             steering: vec![],
             deferred_steering: None,
+            context_checkpoint: None,
         })
     }
 }
@@ -1230,15 +1233,18 @@ impl Runtime {
             if steering.is_cancelled() {
                 return Ok(());
             }
-            ensure!(
-                serde_json::to_vec(&s.history)?.len() < 700_000,
-                "Session context limit reached; start a new scoped session. No history was silently dropped."
-            );
-            let wire_history = crate::chat_images::hydrate(
-                &self.workspace,
-                &s.history,
-                &self.config.active()?.protocol,
-            )?;
+            let protocol = &self.config.active()?.protocol;
+            let replay = crate::compaction::prepare(&self.workspace, s, protocol)?;
+            let wire_history =
+                crate::chat_images::hydrate(&self.workspace, &replay.history, protocol)?;
+            if let Some((checkpoint, report)) = replay.update {
+                s.context_checkpoint = Some(checkpoint);
+                self.save(s)?;
+                let _ = events.send(Event::ContextCompacted(report));
+            }
+            if steering.is_cancelled() {
+                return Ok(());
+            }
             s.usage = None;
             // Persist the attempt before dispatch. A crash or missing usage cannot
             // silently restore capacity or fabricate a zero-token request.
@@ -1622,6 +1628,10 @@ impl Runtime {
         if let Some(goal) = &s.goal {
             body.push_str("\n## Persistent task goal\n\n");
             body.push_str(&goal.report(&self.workspace).markdown());
+        }
+        if let Some(checkpoint) = &s.context_checkpoint {
+            body.push('\n');
+            body.push_str(&checkpoint.markdown());
         }
         body.push_str("\n## Skill activations\n\n");
         for path in &s.blocked_questions {

@@ -1203,6 +1203,303 @@ fn config(url: String, protocol: Protocol) -> Config {
         )]),
     }
 }
+
+fn compact_fixture_exchange(
+    history: &mut Vec<Value>,
+    protocol: &Protocol,
+    id: &str,
+    output: Option<Value>,
+) {
+    let arguments =
+        json!({"path":"03_Systems/Snapshots/fixture-snapshot/files/requirements v2.md"})
+            .to_string();
+    match protocol {
+        Protocol::ChatCompletions => {
+            history.push(json!({"role":"assistant","content":"","tool_calls":[
+                {"id":id,"type":"function","function":{"name":"read_document","arguments":arguments}}]}));
+            if let Some(output) = output {
+                history.push(json!({"role":"tool","tool_call_id":id,"content":output.to_string()}));
+            }
+        }
+        Protocol::Responses => {
+            history.push(
+                json!({"type":"reasoning","encrypted_content":format!("opaque-{id}"),"summary":[]}),
+            );
+            history.push(json!({"type":"function_call","call_id":id,"name":"read_document","arguments":arguments}));
+            if let Some(output) = output {
+                history.push(
+                    json!({"type":"function_call_output","call_id":id,"output":output.to_string()}),
+                );
+            }
+        }
+    }
+}
+
+fn context_reply(protocol: &Protocol) -> String {
+    match protocol {
+        Protocol::ChatCompletions => chat("Scoped review continues.", vec![]),
+        Protocol::Responses => format!(
+            "data: {}\n\n",
+            json!({"type":"response.completed","response":{"status":"completed","output":[
+                {"type":"message","role":"assistant","content":[{"type":"output_text","text":"Scoped review continues."}]}]}})
+        ),
+    }
+}
+
+#[tokio::test]
+async fn context_compaction_replays_long_sessions_in_both_protocols_and_preserves_history() {
+    for protocol in [Protocol::ChatCompletions, Protocol::Responses] {
+        let (_dir, w) = fixture();
+        let reply = context_reply(&protocol);
+        let (url, _, requests, server) = server(vec![reply.clone(), reply.clone(), reply]).await;
+        let cfg = config(url, protocol.clone());
+        atomic_write(
+            &w.path(".pm-agent/config.toml").unwrap(),
+            toml::to_string(&cfg).unwrap().as_bytes(),
+        )
+        .unwrap();
+        let store =
+            pm_agent::store::Store::open(&w.path(".pm-agent/runtime.sqlite3").unwrap()).unwrap();
+        let mut session = Session::new(&cfg, "workflow").unwrap();
+        let question = "07_Decisions/QUESTION-COMPACTION.md";
+        let question_text = "Who owns the approval policy?";
+        let text = note(json!({"id":"QUESTION-COMPACTION","type":"question","title":question_text,"blocking_scope":"records",
+            "affected_ids":["REQ-EXPIRY"],"workflow_status":"open","language":"en"}), question_text).unwrap();
+        atomic_write(&w.path(question).unwrap(), text.as_bytes()).unwrap();
+        session.questions.push(pm_agent::runtime::Question {
+            path: question.into(),
+            question: question_text.into(),
+            answer: None,
+            resolved: false,
+        });
+        let snapshot_path = "03_Systems/Snapshots/fixture-snapshot/files/requirements v2.md";
+        let source_sha256 = "a".repeat(64);
+        let baseline_sha256 = "b".repeat(64);
+        let image_sha256 = "c".repeat(64);
+        let baseline_path = "00_Governance/Baselines/BASE-APPROVAL/manifest.json";
+        let old_content = format!(
+            "---\r\ntype: evidence\r\nrepo_id: fixture\r\nsnapshot_id: fixture-snapshot\r\nsource_sha256: {source_sha256}\r\nlocator: L5-L7\r\n---\r\n\r\nSTART {} END",
+            "obsolete transcript data ".repeat(32_000)
+        );
+        session.history.push(json!({"role":"user","content":[{"type":"text","text":"Read the captured approval policy."},
+            {"type":"pm_image","image":{"path":"01_Sources/Assets/older-fixture.png","sha256":image_sha256,"bytes":125}}]}));
+        compact_fixture_exchange(
+            &mut session.history,
+            &protocol,
+            "archived-call",
+            Some(json!({
+                "path":snapshot_path,"sha256":source_sha256,"content":old_content,
+                "baseline":{"baseline_id":"BASE-APPROVAL","manifest":baseline_path,"manifest_sha256":baseline_sha256},
+            })),
+        );
+        let archived = session.history.len();
+        session.history.push(json!({"role":"user","content":"Keep the approval owner open and continue independent review."}));
+        compact_fixture_exchange(
+            &mut session.history,
+            &protocol,
+            "recent-call",
+            Some(json!({"exact_result":"Keep this tool result verbatim"})),
+        );
+        let original = session.history.clone();
+        assert!(serde_json::to_vec(&original).unwrap().len() > 700_000);
+        store.save(&session.id, &session).unwrap();
+
+        let invoke = |independent| {
+            let mut command = json_chat(&w);
+            command.args(["--session", &session.id]);
+            if independent {
+                command.arg("--independent");
+            }
+            command
+        };
+        let first = chat_json_output(
+            invoke(false).output().await.unwrap(),
+            0,
+            "waiting_clarification",
+        );
+        let event = first
+            .iter()
+            .find(|event| event["type"] == "context.compacted")
+            .unwrap();
+        assert_eq!(event["archived_items"], archived);
+        assert!(event["previous_bytes"].as_u64().unwrap() >= 700_000);
+        assert!(event["compacted_bytes"].as_u64().unwrap() < 160_000);
+        assert_eq!(
+            event["archive_sha256"],
+            hash(&serde_json::to_vec(&original[..archived]).unwrap())
+        );
+        let saved: Session = store.load(&session.id).unwrap();
+        assert_eq!(&saved.history[..original.len()], original);
+        assert!(saved.context_checkpoint.is_some());
+        assert!(
+            w.read(&saved.run_path())
+                .unwrap()
+                .contains("Context compaction")
+        );
+
+        let resumed = chat_json_output(
+            invoke(true).output().await.unwrap(),
+            0,
+            "waiting_clarification",
+        );
+        assert!(
+            !resumed
+                .iter()
+                .any(|event| event["type"] == "context.compacted")
+        );
+        let mut saved: Session = store.load(&session.id).unwrap();
+        assert_eq!(&saved.history[..original.len()], original);
+        assert!(saved.questions[0].answer.is_none() && !saved.questions[0].resolved);
+        compact_fixture_exchange(
+            &mut saved.history,
+            &protocol,
+            "long-new-call",
+            Some(json!({
+                "snapshot_id":"fixture-snapshot-2","source_sha256":"d".repeat(64),"content":"later historical data ".repeat(40_000),
+            })),
+        );
+        store.save(&saved.id, &saved).unwrap();
+        let extended = chat_json_output(
+            invoke(true).output().await.unwrap(),
+            0,
+            "waiting_clarification",
+        );
+        assert!(
+            extended
+                .iter()
+                .any(|event| event["type"] == "context.compacted"
+                    && event["archived_items"].as_u64().unwrap() > archived as u64)
+        );
+        let saved: Session = store.load(&session.id).unwrap();
+        assert_eq!(&saved.history[..original.len()], original);
+        assert_eq!(saved.request_ledger.unwrap().requests.len(), 3);
+        let requests = requests.lock().unwrap();
+        assert_eq!(requests.len(), 3);
+        let (field, digest_index) = match protocol {
+            Protocol::ChatCompletions => ("messages", 1),
+            Protocol::Responses => ("input", 0),
+        };
+        for (index, request) in requests.iter().enumerate() {
+            let items = request[field].as_array().unwrap();
+            let content = items[digest_index]["content"].as_str().unwrap();
+            let (_, data) = content.split_once('\n').unwrap();
+            let digest: Value = serde_json::from_str(data).unwrap();
+            let refs = digest["references"].as_array().unwrap();
+            assert!(
+                refs.iter()
+                    .any(|pin| pin["snapshot_id"] == "fixture-snapshot"
+                        && pin["path"] == snapshot_path
+                        && pin["source_sha256"] == source_sha256
+                        && pin["locator"] == "L5-L7")
+            );
+            assert!(refs.iter().any(|pin| pin["baseline_id"] == "BASE-APPROVAL"
+                && pin["manifest"] == baseline_path
+                && pin["manifest_sha256"] == baseline_sha256));
+            assert!(
+                refs.iter()
+                    .any(|pin| pin["path"] == "01_Sources/Assets/older-fixture.png"
+                        && pin["sha256"] == image_sha256)
+            );
+            assert_eq!(
+                digest["continuation"]["unresolved_questions"][0]["question"],
+                question_text
+            );
+            assert_eq!(
+                digest["continuation"]["unresolved_questions"][0]["affected_ids"][0],
+                "REQ-EXPIRY"
+            );
+            assert_eq!(digest["continuation"]["pending_operations"], json!([]));
+            let wire = serde_json::to_string(items).unwrap();
+            assert!(
+                !wire.contains("obsolete transcript data")
+                    && !wire.contains("opaque-archived-call")
+            );
+            if index == 0 {
+                assert!(
+                    wire.contains("Keep this tool result verbatim") && wire.contains("recent-call")
+                );
+                if protocol == Protocol::Responses {
+                    assert!(wire.contains("opaque-recent-call"));
+                }
+            } else if index == 2 {
+                assert!(
+                    refs.iter()
+                        .any(|pin| pin["snapshot_id"] == "fixture-snapshot-2")
+                );
+            }
+        }
+        server.abort();
+    }
+}
+
+#[tokio::test]
+async fn context_compaction_requires_reconciliation_and_retains_the_exact_observed_outcome() {
+    let (_dir, w) = fixture();
+    let protocol = Protocol::ChatCompletions;
+    let (url, _, requests, server) = server(vec![context_reply(&protocol)]).await;
+    let cfg = config(url, protocol.clone());
+    let rt = Runtime::open_chat(w.clone(), cfg.clone()).await.unwrap();
+    let mut s = Session::new(&cfg, "workflow").unwrap();
+    rt.input(&mut s, "Check the pending operation without repeating it.")
+        .unwrap();
+    compact_fixture_exchange(
+        &mut s.history,
+        &protocol,
+        "archived",
+        Some(json!({"content":"past ".repeat(144_000)})),
+    );
+    compact_fixture_exchange(&mut s.history, &protocol, "unknown-operation", None);
+    let call = pm_agent::provider::Call {
+        id: "unknown-operation".into(),
+        name: "read_document".into(),
+        arguments: json!({"path":"03_Systems/Snapshots/fixture-snapshot/files/requirements v2.md"})
+            .to_string(),
+    };
+    s.pending.push(call.clone());
+    rt.store
+        .begin_call(&s.id, &call.id, &call.name, &call.arguments)
+        .unwrap();
+    rt.save(&s).unwrap();
+    let local_history = s.history.clone();
+    rt.run(&mut s, None, &events().0, &CancellationToken::new())
+        .await
+        .unwrap();
+    assert_eq!(s.status, Status::NeedsReconciliation);
+    assert_eq!(s.pending, [call]);
+    assert_eq!(s.history, local_history);
+    assert!(s.context_checkpoint.is_none() && requests.lock().unwrap().is_empty());
+
+    let result = format!(
+        "Operator located the completed operation. {}",
+        "observed ".repeat(18_000)
+    );
+    rt.reconcile(&mut s, &result).unwrap();
+    rt.run(&mut s, None, &events().0, &CancellationToken::new())
+        .await
+        .unwrap();
+    assert_eq!(s.status, Status::Completed, "{:?}", s.error);
+    assert_eq!(&s.history[..local_history.len()], local_history);
+    let calls = rt.store.calls(&s.id).unwrap();
+    assert_eq!(calls.len(), 1);
+    assert_eq!(calls[0].status, "reconciled");
+    let requests = requests.lock().unwrap();
+    assert_eq!(requests.len(), 1);
+    let content = requests[0]["messages"][1]["content"].as_str().unwrap();
+    let digest: Value = serde_json::from_str(content.split_once('\n').unwrap().1).unwrap();
+    assert!(
+        digest["references"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|record| record["call_id"] == "unknown-operation"
+                && record["status"] == "reconciled_by_user"
+                && record["observed_result"] == result
+                && record["operation"]["name"] == "read_document"
+                && record["operation"]["arguments"]
+                    == local_history.last().unwrap()["tool_calls"][0]["function"]["arguments"])
+    );
+    server.abort();
+}
 fn fixture() -> (tempfile::TempDir, Workspace) {
     let dir = tempfile::tempdir().unwrap();
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();

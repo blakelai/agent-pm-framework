@@ -317,6 +317,10 @@ fn print_event(
             let _ = std::io::stdout().flush();
         }
         Event::Notice(text) => eprintln!("\n{text}"),
+        Event::ContextCompacted(report) => eprintln!(
+            "\nCompacted {} older history items for model replay. Full local history is saved.",
+            report.archived_items
+        ),
         Event::Tool { call, state, .. } => eprintln!("\nTool: {} — {state}", call.name),
         _ => {}
     }

@@ -429,6 +429,10 @@ impl App {
         match event {
             crate::provider::Event::Progress { message, .. } => self.progress.update(message),
             crate::provider::Event::Execution(status) => self.progress.observe(status),
+            crate::provider::Event::ContextCompacted(report) => self.notice(&format!(
+                "Model context compacted. {} older items remain in local history.",
+                report.archived_items,
+            )),
             crate::provider::Event::Steering(feedback) => {
                 self.messages.boundary();
                 let turn_id = match &feedback {
@@ -665,7 +669,7 @@ impl App {
         }
     }
     pub fn status_details(&self) -> String {
-        format!(
+        let mut details = format!(
             "# Session\n\nModel: {}\n\nState: {}\n\nSession: {}\n\nResponse language: {}\n\n{}\n\nSelected Skills: {}\n\n{}\n\n{}",
             self.model,
             if self.busy { "running" } else { "idle" },
@@ -690,7 +694,16 @@ impl App {
             self.refresh_error
                 .as_deref()
                 .unwrap_or(&self.refresh_status)
-        )
+        );
+        if let Some(checkpoint) = self
+            .session
+            .as_ref()
+            .and_then(|session| session.context_checkpoint.as_ref())
+        {
+            details.push_str("\n\n");
+            details.push_str(&checkpoint.markdown());
+        }
+        details
     }
     fn switch(&mut self, mode: Mode) {
         if self.mode == mode {
