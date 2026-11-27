@@ -591,6 +591,61 @@ fn dispatch(
         );
         return Ok(None);
     }
+    if input == "/goal" {
+        let goal = app
+            .session
+            .as_ref()
+            .and_then(|session| session.goal.as_ref());
+        app.append(
+            &goal
+                .map(|goal| goal.report(workspace).markdown())
+                .unwrap_or_else(|| "No saved task goal.".into()),
+        );
+        return Ok(None);
+    }
+    if let Some(spec) = input.strip_prefix("/goal set ") {
+        let (target, objective) = spec
+            .split_once('|')
+            .context("Use /goal set PATH [--validate] | OBJECTIVE")?;
+        let target = target.trim();
+        let (target, require_validation) = match target.strip_suffix(" --validate") {
+            Some(path) => (path.trim_end(), true),
+            None => (target, false),
+        };
+        let mut session = if let Some(session) = &app.session {
+            session.clone()
+        } else {
+            let mut config = Config::read(config_path)?;
+            if let Some(language) = &app.response_language {
+                config.response_language = language.clone();
+            }
+            Session::new(&config, &app.stage)?
+        };
+        crate::goals::set(
+            workspace,
+            &mut session,
+            crate::goals::Criteria {
+                objective: objective.trim().into(),
+                drafts: vec![target.into()],
+                require_validation,
+            },
+        )?;
+        store.save(&session.id, &session)?;
+        app.session = Some(session);
+        app.notice("Task goal saved. Use /goal to inspect it or /continue to work on it.");
+        return Ok(None);
+    }
+    if input == "/goal clear" {
+        let mut session = app
+            .session
+            .clone()
+            .context("No saved session to clear a goal from")?;
+        crate::goals::clear(&mut session)?;
+        store.save(&session.id, &session)?;
+        app.session = Some(session);
+        app.notice("Task goal cleared.");
+        return Ok(None);
+    }
     if input == "/help" {
         app.append(&format!("\n{HELP}\n"));
         return Ok(None);
@@ -1020,6 +1075,90 @@ model = "fixture"
         );
         assert!(!w.root.join("01_Sources/Assets").exists());
     }
+    #[test]
+    fn goal_commands_persist_operator_scope_and_work_without_starting_mcp() {
+        let dir = tempfile::tempdir().unwrap();
+        crate::workspace::atomic_write(
+            &dir.path().join("00_Governance/Project.md"),
+            b"---\ntype: project\ntitle: Synthetic\n---\n# Synthetic\n",
+        )
+        .unwrap();
+        let workspace = Workspace::open(dir.path()).unwrap();
+        let config = workspace.path(".pm-agent/config.toml").unwrap();
+        crate::workspace::atomic_write(
+            &config,
+            br#"
+provider = "fixture"
+[providers.fixture]
+protocol = "chat_completions"
+base_url = "http://127.0.0.1:9/v1"
+model = "fixture"
+[mcp.invalid]
+transport = "stdio"
+command = "this-command-must-not-run"
+"#,
+        )
+        .unwrap();
+        let store = Store::open(&workspace.path(".pm-agent/runtime.sqlite3").unwrap()).unwrap();
+        let mut app = App::new(vec![]);
+        app.stage = "prd".into();
+        app.input.insert("Preserved composer text");
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let (done, mut finished) = mpsc::unbounded_channel();
+        assert!(
+            dispatch(
+                &workspace,
+                &config,
+                &mut app,
+                &store,
+                "/goal set 04_Requirements/My Draft.md --validate | Draft the supplied behavior"
+                    .into(),
+                &tx,
+                &done
+            )
+            .unwrap()
+            .is_none()
+        );
+        let id = app.session.as_ref().unwrap().id.clone();
+        let saved: Session = store.load(&id).unwrap();
+        assert_eq!(saved.stage, "prd");
+        let saved_goal = saved.goal.unwrap();
+        let report = saved_goal.report(&workspace);
+        assert_eq!(report.criteria.drafts, ["04_Requirements/My Draft.md"]);
+        assert!(report.criteria.require_validation);
+        std::fs::remove_file(&config).unwrap();
+        assert!(
+            dispatch(
+                &workspace,
+                &config,
+                &mut app,
+                &store,
+                "/goal".into(),
+                &tx,
+                &done
+            )
+            .unwrap()
+            .is_none()
+        );
+        assert!(app.output.contains("Draft the supplied behavior"));
+        assert_eq!(app.input.text, "Preserved composer text");
+        assert!(
+            dispatch(
+                &workspace,
+                &config,
+                &mut app,
+                &store,
+                "/goal clear".into(),
+                &tx,
+                &done
+            )
+            .unwrap()
+            .is_none()
+        );
+        assert!(store.load::<Session>(&id).unwrap().goal.is_none());
+        assert!(rx.try_recv().is_err() && finished.try_recv().is_err());
+    }
+
     #[test]
     fn budget_query_is_local_and_preserves_chat_input_context_and_session() {
         let dir = tempfile::tempdir().unwrap();

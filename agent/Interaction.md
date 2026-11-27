@@ -88,6 +88,10 @@ After source review supports a PRD draft, Chat displays the proposed changes, ci
 
 Before applying, the runtime checks the original document, source packet and applicable baseline versions and decisions again. Applicable baselines are captured manifests containing the PRD ID or referenced by cited project records and baseline files. If any inputs changed, use `/continue` to have the Agent reread them and propose a fresh preview. A successful write records the preview ID, confirmation time and saved document hash in the Run. Confirmation authorizes only this draft write and leaves human semantic review and project approval pending. [Source-to-claim review](Grounding.md)
 
+## Persistent task goals
+
+Use `/goal set 04_Requirements/PRD-APPROVAL.md --validate | Document the supported approval workflow` to save a single-draft goal in Chat. The `--validate` check is optional. `/goal` shows saved progress and receipts. `/continue` resumes the goal when the session is ready, and the normal question and review controls handle pauses. `/goal clear` releases the scope after pending tool decisions are handled. The CLI also supports goals with multiple draft targets. [Goal setup and completion](README.md#save-a-task-goal)
+
 ## Command and Skill suggestions
 
 Type `/` at the start of the composer to open command suggestions; continued typing filters them. `/stage ` offers workflow stages and `/pm ` offers the native command catalog. Type `$` as a leading activation token to filter valid project Skills by name. Multiple leading Skills are supported. A `$` inside ordinary prose does not activate a Skill or open its picker.

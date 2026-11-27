@@ -14,6 +14,7 @@ pub mod editing;
 pub mod evaluation;
 pub mod execution;
 mod extraction;
+pub mod goals;
 pub mod governance;
 pub mod grounding;
 pub mod inspection;

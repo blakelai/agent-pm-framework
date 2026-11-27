@@ -186,7 +186,7 @@ async fn run_chat(
     if let Some(stream) = json {
         stream.finish(&runtime.workspace, &session)?;
     } else {
-        print_session(&session)?;
+        print_session(&runtime.workspace, &session)?;
     }
     Ok(exit_code(session.status))
 }
@@ -246,7 +246,7 @@ fn print_event(
     Ok(())
 }
 
-fn print_session(session: &Session) -> Result<()> {
+fn print_session(workspace: &Workspace, session: &Session) -> Result<()> {
     if session.status == Status::WaitingDraftReview {
         let preview = session
             .draft_preview
@@ -265,6 +265,9 @@ fn print_session(session: &Session) -> Result<()> {
         "\nSession: {}\nState: {:?}\nResume: pm-agent --vault <workspace> --config <config> chat --session {} [reply]",
         session.id, session.status, session.id
     );
+    if let Some(goal) = &session.goal {
+        eprintln!("\n{}", goal.report(workspace).markdown());
+    }
     Ok(())
 }
 

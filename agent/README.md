@@ -224,11 +224,29 @@ pm-agent --vault /path/to/vault chat --json --session SESSION_ID
 | `assistant.text.delta` | `text`, in stream order |
 | `usage.updated` | `usage` with service-reported token counts, or null when unavailable |
 | `tool.updated` | `call_id`, `tool`, `state`, native PM `exit_code` when available, and `artifacts`. A `stopped` tool also includes the execution `status`. |
-| `turn.finished` | `status`, `run`, `pending`, `artifacts`, and `diagnostic` |
+| `turn.finished` | `status`, `run`, `pending`, `artifacts`, `diagnostic`, and the saved `goal` report when present |
 
 Use `turn.finished.status` to branch on `completed`, `failed`, `cancelled`, `limit_reached`, `waiting_clarification`, `waiting_approval`, `waiting_draft_review`, or `needs_reconciliation`. The pending object identifies the question paths, tool call, or exact draft preview for the associated pause. Reopening a saved clarification, approval, draft review, or reconciliation pause with a bare `--session ID` in JSON mode shows the saved state locally. Supply the corresponding `--answer`, `--approve`, `--apply-draft`, or `--reconcile` option to continue.
 
 `run` is the path of the available session Run. Artifact entries carry `kind`, a Vault-relative `path`, and the SHA-256 reported by the tool when available. They include saved drafts, question records, reports, work packets, and baseline manifests. A `result_recorded` tool event can carry a failing command exit code. The CLI exits `1` for invocation errors and `2` for a failed, interrupted, limited, or unreconciled execution. Completed runs and ordinary pauses exit `0`, as does a successful explicit `--deny` with status `cancelled`.
+
+## Save a task goal
+
+Set a goal explicitly with an objective and one or more exact draft paths. Add `--validate` when completion requires a successful native `pm validate` against the saved drafts.
+
+```sh
+pm-agent --vault /path/to/vault goal set --stage prd \
+  --objective "Document the supported approval workflow" \
+  --draft 04_Requirements/PRD-APPROVAL.md --validate
+pm-agent --vault /path/to/vault chat --session SESSION_ID
+pm-agent --vault /path/to/vault goal status --session SESSION_ID --json
+```
+
+Repeat `--draft` to include up to 16 paths. To attach a goal to an existing session, use `goal set --session ID` with the same objective and draft options. Each session holds one goal. `goal clear --session ID` releases its scope when pending tool decisions have been handled. Setting a new goal reads the selected provider profile for session setup. Inspecting or clearing an existing goal uses saved local state.
+
+Each explicit continuation supplies the saved objective, draft scope, and current evidence to the Agent. Draft writes are limited to the active goal's target paths and still go through source review, clarification, and any required confirmation. The runtime records actual draft SHA-256 hashes and tool call IDs. A validation criterion requires exit code zero from Vault-wide `pm validate` after all selected drafts have been saved. Its receipt includes the actual report, report hash, and draft versions checked.
+
+Read `goal.status` separately from the Chat turn status. An `active` goal can survive a completed turn, interruption, or pending decision. A goal becomes `completed` when its receipts are current and required clarification has cleared. If a recorded draft or required report later changes, inspection shows `stale` and retains the original completion timestamp. Goal completion covers the selected drafts and checks. [TUI goal commands](Interaction.md#persistent-task-goals)
 
 ## MCP tools
 

@@ -4,6 +4,7 @@ use anyhow::{Result, ensure};
 use clap::{Parser, Subcommand};
 use pm_agent::{
     config::Config,
+    goals::{self, Criteria},
     provider::Event,
     runtime::Session,
     store::Store,
@@ -65,6 +66,11 @@ enum Command {
     },
     /// Run or resume an Agent task; questions and approvals pause it durably.
     Chat(chat_cli::ChatArgs),
+    /// Set or inspect evidence-backed goals for a saved Chat session.
+    Goal {
+        #[command(subcommand)]
+        action: GoalAction,
+    },
     /// Validate configuration and selected Chat prerequisites without contacting services.
     Doctor {
         #[arg(long, default_value = "workflow")]
@@ -78,6 +84,39 @@ enum Command {
         /// Show the latest local observation without making requests.
         #[arg(long)]
         last: bool,
+    },
+}
+#[derive(Subcommand)]
+enum GoalAction {
+    /// Save a goal and its exact draft scope. Starts a new session when no ID is supplied.
+    Set {
+        #[arg(long)]
+        session: Option<String>,
+        #[arg(long, default_value = "workflow", conflicts_with = "session")]
+        stage: String,
+        #[arg(long)]
+        objective: String,
+        #[arg(long, required = true)]
+        draft: Vec<String>,
+        /// Require a successful native validation after saving the specified drafts.
+        #[arg(long)]
+        validate: bool,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Inspect a saved goal and the freshness of its receipts without loading a provider.
+    Status {
+        #[arg(long)]
+        session: String,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Clear the goal from a session with no pending tool decision.
+    Clear {
+        #[arg(long)]
+        session: String,
+        #[arg(long)]
+        json: bool,
     },
 }
 #[derive(Subcommand)]
@@ -347,6 +386,56 @@ async fn main() -> Result<()> {
         }
         Command::Doctor { .. } => unreachable!("Doctor runs before acquiring a writer"),
         Command::Chat(_) => unreachable!("Chat is dispatched with its own output mode"),
+        Command::Goal { action } => {
+            let store = Store::open(&workspace.path(".pm-agent/runtime.sqlite3")?)?;
+            let (session, json) = match action {
+                GoalAction::Set {
+                    session,
+                    stage,
+                    objective,
+                    draft,
+                    validate,
+                    json,
+                } => {
+                    let mut session = match session {
+                        Some(id) => store.load::<Session>(&id)?,
+                        None => Session::new(&Config::read(&config_path)?, &stage)?,
+                    };
+                    goals::set(
+                        &workspace,
+                        &mut session,
+                        Criteria {
+                            objective,
+                            drafts: draft,
+                            require_validation: validate,
+                        },
+                    )?;
+                    store.save(&session.id, &session)?;
+                    (session, json)
+                }
+                GoalAction::Status { session, json } => (store.load::<Session>(&session)?, json),
+                GoalAction::Clear { session, json } => {
+                    let mut session: Session = store.load(&session)?;
+                    goals::clear(&mut session)?;
+                    store.save(&session.id, &session)?;
+                    (session, json)
+                }
+            };
+            let goal = session.goal.as_ref().map(|goal| goal.report(&workspace));
+            if json {
+                println!(
+                    "{}",
+                    serde_json::json!({"session_id": session.id,"session_status":session.status,"goal":goal})
+                );
+            } else {
+                println!("Session {} · {:?}", session.id, session.status);
+                if let Some(goal) = goal {
+                    print!("\n{}", goal.markdown());
+                } else {
+                    println!("No saved task goal.");
+                }
+            }
+        }
     }
     Ok(())
 }

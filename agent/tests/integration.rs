@@ -1017,6 +1017,347 @@ fn parse_chat_json(stdout: &str, status: &str) -> Vec<Value> {
     lines
 }
 
+fn goal_command(w: &Workspace) -> tokio::process::Command {
+    let mut command = tokio::process::Command::new(env!("CARGO_BIN_EXE_pm-agent"));
+    command.arg("--vault").arg(&w.root).arg("goal");
+    command
+}
+
+async fn goal_output(command: &mut tokio::process::Command) -> Value {
+    let output = command.output().await.unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    serde_json::from_slice(&output.stdout).unwrap()
+}
+
+#[tokio::test]
+async fn persistent_goal_completes_from_current_draft_and_later_native_validation() {
+    let (_dir, w) = fixture();
+    let source = "01_Sources/Assets/goal.txt";
+    let source_text = "The supplied reference describes the fixture review process.";
+    atomic_write(&w.path(source).unwrap(), source_text.as_bytes()).unwrap();
+    let target = "04_Requirements/GOAL-REFERENCE.md";
+    let outside = "04_Requirements/OUTSIDE-GOAL.md";
+    let draft = note(json!({"type":"Reference","id":"GOAL-REFERENCE","title":"Fixture review","language":"en","doc_status":"draft"}), "# Fixture review\n\nThe supplied reference describes the fixture review process.").unwrap();
+    let arguments = |path: &str| json!({"path": path,"content":draft,"expected_hash":null,"citations":[{"path":source,"sha256":hash(source_text.as_bytes())}]});
+    let (url, _, requests, task) = server(vec![
+        chat("I declare the goal complete.", vec![]),
+        chat(
+            "",
+            vec![
+                call(0, "outside", "write_draft", arguments(outside)),
+                call(
+                    1,
+                    "early-check",
+                    "pm",
+                    json!({"command":"validate","args":[]}),
+                ),
+                call(2, "goal-draft", "write_draft", arguments(target)),
+            ],
+        ),
+        supported_review(source, &draft, source_text),
+        chat("Draft written.", vec![]),
+        chat(
+            "",
+            vec![call(
+                0,
+                "failed-check",
+                "pm",
+                json!({"command":"validate","args":[]}),
+            )],
+        ),
+        chat("Validation found a fixture error.", vec![]),
+        chat(
+            "",
+            vec![call(
+                0,
+                "after-draft-check",
+                "pm",
+                json!({"command":"validate","args":[]}),
+            )],
+        ),
+        chat("Validation performed.", vec![]),
+    ])
+    .await;
+    let config_path = w.path(".pm-agent/config.toml").unwrap();
+    let cfg = config(url, Protocol::ChatCompletions);
+    let config_text = toml::to_string(&cfg).unwrap();
+    atomic_write(&config_path, config_text.as_bytes()).unwrap();
+    let set = goal_output(goal_command(&w).args([
+        "set",
+        "--stage",
+        "review",
+        "--objective",
+        "Record the fixture review and validate it.",
+        "--draft",
+        target,
+        "--validate",
+        "--json",
+    ]))
+    .await;
+    let id = set["session_id"].as_str().unwrap();
+    assert_eq!(set["goal"]["status"], "active");
+    assert!(requests.lock().unwrap().is_empty());
+
+    let first = chat_json_output(
+        json_chat(&w)
+            .args(["--session", id])
+            .output()
+            .await
+            .unwrap(),
+        0,
+        "completed",
+    );
+    assert_eq!(first.last().unwrap()["goal"]["status"], "active");
+    assert!(!w.path(target).unwrap().exists());
+    let second = chat_json_output(
+        json_chat(&w)
+            .args(["--session", id])
+            .output()
+            .await
+            .unwrap(),
+        0,
+        "completed",
+    );
+    let progress = &second.last().unwrap()["goal"];
+    assert_eq!(progress["status"], "active");
+    assert_eq!(progress["drafts"][0]["receipt"]["call_id"], "goal-draft");
+    assert_eq!(progress["drafts"][0]["current"], true);
+    assert_eq!(progress["validation"], Value::Null);
+    assert!(!w.path(outside).unwrap().exists());
+
+    std::fs::remove_file(&config_path).unwrap();
+    let offline = goal_output(goal_command(&w).args(["status", "--session", id, "--json"])).await;
+    assert_eq!(&offline["goal"], progress);
+    atomic_write(&config_path, config_text.as_bytes()).unwrap();
+    let bad = w.path("04_Requirements/INVALID-GOAL-FIXTURE.md").unwrap();
+    atomic_write(&bad, note(json!({"type":"prd","id":"INVALID-GOAL-FIXTURE","title":"An incomplete fixture","language":"en","version":1,"doc_status":"draft"}), "# An incomplete fixture").unwrap().as_bytes()).unwrap();
+    let failure = chat_json_output(
+        json_chat(&w)
+            .args(["--session", id])
+            .output()
+            .await
+            .unwrap(),
+        0,
+        "completed",
+    );
+    let failed_check = &failure.last().unwrap()["goal"];
+    assert_eq!(failed_check["status"], "active");
+    assert_eq!(
+        failed_check["validation"]["report"]["call_id"],
+        "failed-check"
+    );
+    assert_eq!(failed_check["validation"]["exit_code"], 1);
+    std::fs::remove_file(bad).unwrap();
+    let third = chat_json_output(
+        json_chat(&w)
+            .args(["--session", id])
+            .output()
+            .await
+            .unwrap(),
+        0,
+        "completed",
+    );
+    let complete = &third.last().unwrap()["goal"];
+    assert_eq!(complete["status"], "completed", "{complete}");
+    assert_eq!(
+        complete["validation"]["report"]["call_id"],
+        "after-draft-check"
+    );
+    assert_eq!(complete["validation"]["exit_code"], 0);
+    assert_eq!(
+        complete["validation"]["drafts"][0]["sha256"],
+        hash(w.read(target).unwrap().as_bytes())
+    );
+    let report = w
+        .read(third.last().unwrap()["run"].as_str().unwrap())
+        .unwrap();
+    assert!(
+        report.contains("Persistent task goal")
+            && report.contains("after-draft-check")
+            && report.contains("goal-draft")
+    );
+    {
+        let req = requests.lock().unwrap();
+        assert!(
+            req[0]["messages"][0]["content"]
+                .as_str()
+                .unwrap()
+                .contains("Record the fixture review and validate it.")
+        );
+        assert!(
+            req[3]["messages"]
+                .to_string()
+                .contains("blocked_by_goal_scope")
+        );
+        assert!(
+            req[4]["messages"][0]["content"]
+                .as_str()
+                .unwrap()
+                .contains("goal-draft")
+        );
+    }
+
+    let changed = format!("{}\nExternal edit.\n", w.read(target).unwrap());
+    atomic_write(&w.path(target).unwrap(), changed.as_bytes()).unwrap();
+    let stale = goal_output(goal_command(&w).args(["status", "--session", id, "--json"])).await;
+    assert_eq!(stale["goal"]["status"], "stale");
+    assert_eq!(stale["goal"]["completed_at"], complete["completed_at"]);
+    assert_eq!(stale["goal"]["validation_current"], false);
+    let cleared = goal_output(goal_command(&w).args(["clear", "--session", id, "--json"])).await;
+    assert_eq!(cleared["goal"], Value::Null);
+    let replacement = goal_output(goal_command(&w).args([
+        "set",
+        "--session",
+        id,
+        "--objective",
+        "Recheck the revised fixture.",
+        "--draft",
+        target,
+        "--json",
+    ]))
+    .await;
+    assert_ne!(replacement["goal"]["id"], complete["id"]);
+    assert_eq!(replacement["goal"]["drafts"][0]["receipt"], Value::Null);
+    task.abort();
+}
+
+#[tokio::test]
+async fn persistent_prd_goal_respects_tool_approval_clarification_and_draft_confirmation() {
+    let (_dir, w) = fixture();
+    let args = grounding_args(&w, "Integer durations from 1 through 7 are valid.");
+    let target = args["path"].as_str().unwrap().to_owned();
+    let source = args["citations"][0]["path"].as_str().unwrap();
+    let review = supported_review(
+        source,
+        args["content"].as_str().unwrap(),
+        &w.read(source).unwrap(),
+    );
+    let (url, queue, requests, task) = server(vec![
+        chat("",vec![call(0,"permission","pm",json!({"command":"settings","args":["--document-language","zh-TW"]}))]),
+        chat("",vec![call(0,"question","ask_clarification",json!({"question":"Which documented duration range applies?","body":"Confirm the applicable range before drafting.","blocking_scope":"records","affected_paths":[target]}))]),
+        chat("",vec![call(0,"blocked-draft","write_draft",args.clone())]),
+        chat("The draft depends on the open question.",vec![]),
+    ]).await;
+    let cfg = config(url, Protocol::ChatCompletions);
+    atomic_write(
+        &w.path(".pm-agent/config.toml").unwrap(),
+        toml::to_string(&cfg).unwrap().as_bytes(),
+    )
+    .unwrap();
+    let set = goal_output(goal_command(&w).args([
+        "set",
+        "--stage",
+        "prd",
+        "--objective",
+        "Draft the confirmed duration behavior.",
+        "--draft",
+        &target,
+        "--json",
+    ]))
+    .await;
+    let id = set["session_id"].as_str().unwrap();
+    let pause = chat_json_output(
+        json_chat(&w)
+            .args(["--session", id])
+            .output()
+            .await
+            .unwrap(),
+        0,
+        "waiting_approval",
+    );
+    assert_eq!(pause.last().unwrap()["goal"]["status"], "active");
+    let refused = goal_command(&w)
+        .args(["clear", "--session", id])
+        .output()
+        .await
+        .unwrap();
+    assert!(!refused.status.success());
+    let denied = chat_json_output(
+        json_chat(&w)
+            .args(["--session", id, "--deny"])
+            .output()
+            .await
+            .unwrap(),
+        0,
+        "cancelled",
+    );
+    assert_eq!(denied.last().unwrap()["goal"]["status"], "active");
+    assert_eq!(w.language().unwrap(), "en");
+
+    let blocked = chat_json_output(
+        json_chat(&w)
+            .args(["--session", id])
+            .output()
+            .await
+            .unwrap(),
+        0,
+        "waiting_clarification",
+    );
+    let question = blocked.last().unwrap()["pending"]["questions"][0]
+        .as_str()
+        .unwrap();
+    let independent = chat_json_output(
+        json_chat(&w)
+            .args(["--session", id, "--independent"])
+            .output()
+            .await
+            .unwrap(),
+        0,
+        "waiting_clarification",
+    );
+    assert_eq!(
+        independent.last().unwrap()["goal"]["drafts"][0]["receipt"],
+        Value::Null
+    );
+    assert!(!w.path(&target).unwrap().exists());
+
+    queue.lock().unwrap().extend([
+        chat("",vec![call(0,"resolve","resolve_clarification",json!({"path":question,"resolution":"The user's answer confirms the integer range from 1 through 7."})),call(1,"confirmed-draft","write_draft",args)]),
+        review,
+        chat("Draft applied.",vec![]),
+    ]);
+    let preview = chat_json_output(
+        json_chat(&w)
+            .args([
+                "--session",
+                id,
+                "--answer",
+                question,
+                "The documented range is 1 through 7.",
+            ])
+            .output()
+            .await
+            .unwrap(),
+        0,
+        "waiting_draft_review",
+    );
+    let before = preview.last().unwrap();
+    assert_eq!(before["goal"]["status"], "active");
+    assert_eq!(before["goal"]["drafts"][0]["receipt"], Value::Null);
+    assert!(!w.path(&target).unwrap().exists());
+    let preview_id = before["pending"]["preview_id"].as_str().unwrap();
+    let after = chat_json_output(
+        json_chat(&w)
+            .args(["--session", id, "--apply-draft", preview_id])
+            .output()
+            .await
+            .unwrap(),
+        0,
+        "completed",
+    );
+    assert_eq!(after.last().unwrap()["goal"]["status"], "completed");
+    assert_eq!(
+        after.last().unwrap()["goal"]["drafts"][0]["receipt"]["call_id"],
+        "confirmed-draft"
+    );
+    assert_eq!(requests.lock().unwrap().len(), 7);
+    task.abort();
+}
+
 #[tokio::test]
 async fn chat_json_correlates_tool_progress_provider_usage_and_written_reports() {
     let (_dir, w) = fixture();

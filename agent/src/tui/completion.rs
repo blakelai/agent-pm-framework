@@ -8,6 +8,10 @@ pub const COMMANDS: &[(&str, &str)] = &[
     ("/help", "Show controls and commands"),
     ("/status", "Inspect this session and reported usage"),
     ("/budget", "Inspect reported session usage and token guard"),
+    (
+        "/goal",
+        "Inspect the saved task goal or set it with /goal set",
+    ),
     ("/skills", "Choose a project Skill"),
     ("/skills clear", "Clear additional Skills for this session"),
     ("/language", "Choose the response language for new sessions"),

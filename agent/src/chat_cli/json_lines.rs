@@ -2,6 +2,7 @@ use anyhow::Result;
 use pm_agent::{
     diagnostics,
     execution::{Phase, Status, ToolState},
+    goals,
     provider::{Call, Event, Usage},
     runtime::Session,
     workspace::Workspace,
@@ -52,6 +53,7 @@ enum Line<'a> {
         pending: Option<Pending<'a>>,
         artifacts: &'a [Artifact],
         diagnostic: Option<&'a str>,
+        goal: Option<goals::Report<'a>>,
     },
 }
 
@@ -258,6 +260,7 @@ impl Stream {
             pending,
             artifacts: &artifacts,
             diagnostic: session.error.as_deref(),
+            goal: session.goal.as_ref().map(|goal| goal.report(w)),
         })
     }
 
@@ -272,6 +275,7 @@ impl Stream {
             pending: None,
             artifacts: &artifacts,
             diagnostic: Some(&diagnostics::format_error(error)),
+            goal: None,
         })
     }
 }

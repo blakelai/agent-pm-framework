@@ -4,6 +4,9 @@ use rusqlite::{Connection, params};
 use serde::{Serialize, de::DeserializeOwned};
 use std::path::Path;
 
+const SAVE_SESSION: &str = "INSERT INTO sessions VALUES (?1,?2,?3) ON CONFLICT(id) DO UPDATE SET updated=excluded.updated,payload=excluded.payload";
+const FINISH_CALL: &str = "UPDATE ledger SET status=?1,result=?2 WHERE session=?3 AND call_id=?4";
+
 pub struct Store {
     conn: std::sync::Mutex<Connection>,
 }
@@ -23,7 +26,14 @@ impl Store {
         })
     }
     pub fn save<T: Serialize>(&self, id: &str, state: &T) -> Result<()> {
-        self.conn.lock().unwrap().execute("INSERT INTO sessions VALUES (?1,?2,?3) ON CONFLICT(id) DO UPDATE SET updated=excluded.updated,payload=excluded.payload", params![id,chrono::Utc::now().to_rfc3339(),serde_json::to_string(state)?])?;
+        self.conn.lock().unwrap().execute(
+            SAVE_SESSION,
+            params![
+                id,
+                chrono::Utc::now().to_rfc3339(),
+                serde_json::to_string(state)?
+            ],
+        )?;
         Ok(())
     }
     pub fn load<T: DeserializeOwned>(&self, id: &str) -> Result<T> {
@@ -69,10 +79,35 @@ impl Store {
         Ok(())
     }
     pub fn finish_call(&self, session: &str, id: &str, status: &str, result: &str) -> Result<()> {
-        self.conn.lock().unwrap().execute(
-            "UPDATE ledger SET status=?1,result=?2 WHERE session=?3 AND call_id=?4",
-            params![status, result, session, id],
+        self.conn
+            .lock()
+            .unwrap()
+            .execute(FINISH_CALL, params![status, result, session, id])?;
+        Ok(())
+    }
+    /// Commit a native tool result and its associated goal evidence together.
+    pub(crate) fn finish_call_with_session<T: Serialize>(
+        &self,
+        session: &str,
+        id: &str,
+        result: &str,
+        state: &T,
+    ) -> Result<()> {
+        let mut connection = self.conn.lock().unwrap();
+        let tx = connection.transaction()?;
+        anyhow::ensure!(
+            tx.execute("UPDATE ledger SET status='completed',result=?1 WHERE session=?2 AND call_id=?3 AND status='started'", params![result, session, id])? == 1,
+            "Missing started tool receipt"
+        );
+        tx.execute(
+            SAVE_SESSION,
+            params![
+                session,
+                chrono::Utc::now().to_rfc3339(),
+                serde_json::to_string(state)?
+            ],
         )?;
+        tx.commit()?;
         Ok(())
     }
     pub fn call_result(&self, session: &str, id: &str) -> Result<Option<(String, Option<String>)>> {

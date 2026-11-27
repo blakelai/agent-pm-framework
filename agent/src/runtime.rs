@@ -3,6 +3,7 @@ use crate::{
     clarification,
     config::Config,
     execution::{Phase, ToolState},
+    goals::Goal,
     grounding,
     mcp::Mcp,
     provider::{Call, Event, Provider, ToolSpec},
@@ -65,6 +66,8 @@ pub struct Session {
     pub pending_approval: Option<Grant>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub draft_preview: Option<DraftPreview>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub goal: Option<Goal>,
 }
 pub const STAGES: &[(&str, &str, &str)] = &[
     ("workflow", "pm-workflow", ""),
@@ -121,6 +124,7 @@ impl Session {
             approval_decisions: vec![],
             pending_approval: None,
             draft_preview: None,
+            goal: None,
         })
     }
 }
@@ -501,6 +505,11 @@ impl Runtime {
         if self.preview_prd_drafts {
             prompt.push_str("Chat pauses a supported PRD write_draft call for user review. Use one PRD candidate per call. Only the application records confirmation after showing the exact proposal. If a preview goes stale, reread the current project inputs before proposing the draft again.\n");
         }
+        if let Some(goal) = s.goal.as_ref().filter(|goal| goal.is_active()) {
+            prompt.push_str("\nThe operator explicitly set a persistent task goal. Resume from its saved progress. Only propose draft writes at its exact target paths. Keep normal clarification and permission gates. The application uses actual tool receipts to determine completion. If validation is required, run pm validate after writing all requested drafts.\n");
+            prompt.push_str(&serde_json::to_string(&goal.report(&self.workspace))?);
+            prompt.push('\n');
+        }
         if let Some(language) = &s.response_language {
             crate::config::validate_response_language(language)?;
             prompt.push_str(&format!(
@@ -602,6 +611,31 @@ impl Runtime {
             }
             let _ = events.send(Event::Notice(format!("{:?}: {}", s.status, diagnostic)));
         }
+        let mut goal_completed = false;
+        if s.status == Status::Completed
+            && let Some(goal) = &mut s.goal
+            && goal.evidence_complete(&self.workspace)
+        {
+            match goal.blocked_questions(&self.workspace) {
+                Ok(questions) if questions.is_empty() => {
+                    goal.record_completion();
+                    goal_completed = true;
+                }
+                Ok(questions) => {
+                    s.blocked_questions = questions.into_iter().collect();
+                    s.status = Status::WaitingClarification;
+                    let _ = events.send(Event::Notice("Open questions still affect this task goal. Review Questions before continuing.".into()));
+                }
+                Err(error) => {
+                    s.status = Status::Failed;
+                    let message = crate::diagnostics::format_error(
+                        &error.context("Could not check clarification for the task goal"),
+                    );
+                    s.error = Some(message.clone());
+                    let _ = events.send(Event::Notice(message));
+                }
+            }
+        }
         self.save(s)?;
         self.write_run(s).with_context(|| {
             format!(
@@ -610,6 +644,11 @@ impl Runtime {
                 self.workspace.root.display()
             )
         })?;
+        if goal_completed {
+            let _ = events.send(Event::Notice(
+                "Task goal completed with saved evidence. Use /goal to inspect it.".into(),
+            ));
+        }
         let _ = events.send(Event::Execution(s.status));
         Ok(())
     }
@@ -707,9 +746,16 @@ impl Runtime {
                 }
                 let mut gate = None;
                 if call.name == "write_draft" {
+                    let path = tools::string(&args, "path")?;
+                    if s.goal.as_ref().is_some_and(|goal| !goal.allows_draft(path)) {
+                        record_tool(&mut s.history, &call, &json!({"status":"blocked_by_goal_scope","error":"Draft path is outside the active task goal","path":path}).to_string());
+                        s.pending.remove(0);
+                        self.save(s)?;
+                        continue;
+                    }
                     let blocked = clarification::blockers(
                         &self.workspace,
-                        tools::string(&args, "path")?,
+                        path,
                         Some(tools::string(&args, "content")?),
                         args["citations"].as_array().context("Missing citations")?,
                     )?;
@@ -919,6 +965,10 @@ impl Runtime {
                     state: ToolState::Running,
                     result: None,
                 });
+                let validation_inputs = s
+                    .goal
+                    .as_ref()
+                    .and_then(|goal| goal.validation_inputs(&self.workspace, &call, &args));
                 let operation = async {
                     if call.name == "resolve_clarification" {
                         self.resolve(s, &args)
@@ -952,8 +1002,23 @@ impl Runtime {
                     output.len() < 4 * 1024 * 1024,
                     "Tool result is too large; inspect the completed action before retrying"
                 );
-                self.store
-                    .finish_call(&s.id, &call.id, "completed", &output)?;
+                if let Some(mut goal) = s.goal.clone()
+                    && goal.observe(&self.workspace, &call, &args, &value, validation_inputs)
+                {
+                    let prior = s.goal.replace(goal);
+                    if let Err(error) = self
+                        .store
+                        .finish_call_with_session(&s.id, &call.id, &output, s)
+                    {
+                        s.goal = prior;
+                        s.status = Status::NeedsReconciliation;
+                        return Err(error)
+                            .context("Could not save the tool and task goal evidence together");
+                    }
+                } else {
+                    self.store
+                        .finish_call(&s.id, &call.id, "completed", &output)?;
+                }
                 record_tool(&mut s.history, &call, &output);
                 s.pending.remove(0);
                 s.draft_preview = None;
@@ -1318,6 +1383,10 @@ impl Runtime {
         if !applied.is_empty() {
             body.push_str("\n## Applied draft previews\n\n");
             body.push_str(&applied);
+        }
+        if let Some(goal) = &s.goal {
+            body.push_str("\n## Persistent task goal\n\n");
+            body.push_str(&goal.report(&self.workspace).markdown());
         }
         body.push_str("\n## Skill activations\n\n");
         for path in &s.blocked_questions {
