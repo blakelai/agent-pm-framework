@@ -18,7 +18,7 @@ Start with [Project setup](00_Governance/Project-Setup.md). This starter has no 
 | Requirements and backlog | [BRD template](80_Templates/BRD.md), [PRD template](80_Templates/PRD.md), [Requirement template](80_Templates/Requirement.md), [PBI template](80_Templates/PBI.md) |
 | Decisions and changes | [Baseline procedure](00_Governance/Baselines-and-Changes.md), [Decision template](80_Templates/Decision.md), [Change template](80_Templates/Change.md) |
 | Staffing and schedule | [Planning](06_Delivery/Planning.md), [People](06_Delivery/People.md), [Iterations](06_Delivery/Iterations.md) |
-| Verification and release | [Acceptance and release](08_Verification/Acceptance-and-Release.md) |
-| Operations | [Benefits and costs](09_Operations/Benefits-and-Costs.md) |
+| Verification and release | [Acceptance and release](08_Verification/Acceptance-and-Release.md), [UAT template](80_Templates/UAT.md), [Delivery views](agent/Delivery-Workflows.md) |
+| Operations | [Benefits and costs](09_Operations/Benefits-and-Costs.md), [Benefit template](80_Templates/Benefit.md), [Backup and restore](agent/Backup-and-Restore.md) |
 
 Open `Framework.canvas` in Obsidian for the workflow map. Reports are generated on demand; run the relevant tool after changing inputs and review its timestamp.

@@ -12,6 +12,7 @@ Read Settings and Language Policy before authoring. Flat Obsidian Properties hol
 |---|---|---|
 | source | id, type, workflow_status, review_status, sha256, asset | Original-material review is separate from business approval |
 | evidence | id, type, workflow_status, locator, assertion_type, source_sha256 | Set workflow_status:verified only after source review |
+| material_review | id, workflow_schema, workflow_status, target_id, target_sha256, source_id, source_sha256, coverage, locator, reviewed_by, reviewed_at, review_method, outcome | Version-bound human review; separate from business approval |
 | brd / prd / requirement | id, type, version, doc_status, owner, contexts, evidence, language | Business intent, product behavior and atomic assertions |
 | glossary | id, type, context, version, doc_status, language | Authoritative meaning within one bounded context |
 | pbi | id, type, work_type, delivery_status, owner, contexts, sprint, depends_on, language | Executable work; sprint may be null |
@@ -37,3 +38,21 @@ A requirement is one verifiable assertion, linked to its PRD and evidence, with 
 See [baseline/change procedure](Baselines-and-Changes.md), [Planning](../06_Delivery/Planning.md) and [OKF profile](../90_Agent/OKF-Profile.md).
 
 Working tools use flat Properties and JSON-compatible inline lists/maps. Keep optional nested OKF families in JSON-style inline values when using these tools; the export validator accepts standard YAML, but the working reader is not a general-purpose OKF consumer.
+
+## Delivery workflow extension
+
+New change, uat, release and benefit records use workflow_schema: delivery-v1. [Delivery workflows](../agent/Delivery-Workflows.md) defines their states, required fields, evidence gates, event-time rules and editing locations. Templates are [Change](../80_Templates/Change.md), [UAT](../80_Templates/UAT.md), [Release](../80_Templates/Release.md) and [Benefit](../80_Templates/Benefit.md).
+
+Drafts preserve unknown values. Accepted/rejected decisions, actual releases/cancellations and measured benefits are historical; corrections use a new ID and previous_records links. The profile uses explicit actual actors and RFC3339 times, approved requirement versions for UAT, matching acceptance/release scopes and supplied measurement inputs. Native validate and TUI saves share these structural checks. Their success is not proof of an actual event or semantic completeness.
+
+Older Change/Release records without the extension retain their legacy contract and are explicitly marked legacy in the Delivery view. They are not silently upgraded or editable through the new forms. Unknown schema versions fail validation. No baseline approval or project outcome is manufactured by migration.
+
+## Material review extension
+
+Material review records use workflow_schema material-review-v1 under 01_Sources/Reviews. [Material reviews](../agent/Material-Reviews.md) defines draft/recorded states, version bindings, review facts, full/partial coverage, outcomes and explicit predecessor links. The TUI uses preview followed by a separate save; recorded outcomes are historical. Full current verified reviews can satisfy source-review checks without rewriting source/evidence notes. Conflicting, partial, negative or stale records do not establish verified fidelity. Legacy fields remain supported only when there is no new recorded review history. This profile does not authenticate events or grant business approval.
+
+## Scoped clarification profile
+
+New application questions use `clarification_schema: clarification-v1`, `workflow_status: open|resolved`, `blocking_scope: project|records`, `affected_ids` and `affected_paths`. Project scope uses empty lists; record scope needs at least one existing ID or exact managed Markdown path. Missing scope is never inferred as independent work. Owner and due_date remain null until supplied.
+
+Captured responses record `session_id`, `answer_path`, `answer_sha256`, `answer_source`, `answer_received_at` and `answer_for_sha256`. Resolution additionally requires `resolution` and `resolution_at`. The fingerprint binds the original metadata and question body to the actual response; changed questions or source assets require a fresh response. See [clarification behavior](../agent/Clarification.md) for gates, legacy compatibility and manual questions. Structural validity does not prove semantic sufficiency.

@@ -1,7 +1,15 @@
 ---
 id: "CHANGE-NEW"
 type: "change"
-owner: "TBD"
+owner: null
+workflow_schema: "delivery-v1"
+previous_records: []
+affected_records: []
+baseline_id: null
+impact_evidence: []
+decided_by: null
+decided_at: null
+decision_evidence: []
 contexts: []
 evidence: []
 language: "en"

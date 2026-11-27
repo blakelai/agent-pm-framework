@@ -7,3 +7,5 @@ __pycache__/
 .obsidian/workspace*.json
 .DS_Store
 exports/
+.pm-agent/
+agent/target/

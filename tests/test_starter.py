@@ -7,7 +7,7 @@ from pathlib import Path
 from urllib.parse import unquote, urlsplit
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT/'tools'))
+sys.path.insert(0, str(ROOT/'tests/legacy'))
 from pmkit import governance, okf, planning, quality, settings
 from pmkit.vault import read_note, resolve_link, save_note
 from support import copy_starter
@@ -38,7 +38,8 @@ class StarterTests(unittest.TestCase):
             self.assertTrue(p.relative_to(self.root).as_posix().isascii(), str(p))
             if p.suffix in {'.md','.canvas'}:
                 self.assertIsNone(re.search(r'[\u3400-\u9fff]',p.read_text()),str(p))
-            if p.suffix=='.md' and p.name not in {'SKILL.md','index.md','log.md'}:
+            if (p.suffix=='.md' and p.name not in {'SKILL.md','index.md','log.md'}
+                    and p.relative_to(self.root).as_posix() != 'agent/AGENTS.md'):
                 self.assertEqual(read_note(p)[0].get('language'),'en',str(p))
         self.assertEqual(settings.load(self.root)['document_language'],'en')
 
@@ -99,6 +100,15 @@ class StarterTests(unittest.TestCase):
         for p in target.rglob('*.md'):
             body=re.sub(r'```.*?```','',p.read_text(),flags=re.S)
             self.assertNotIn('[[',body,str(p))
+
+    def test_okf_export_excludes_private_agent_state_and_build_files(self):
+        for path in ['.pm-agent/runtime.sqlite3', '.pm-agent/config.toml',
+                     'agent/target/build/private.txt', '.venv/private.txt', '.env']:
+            p=self.root/path;p.parent.mkdir(parents=True,exist_ok=True);p.write_text('private test data')
+        result=okf.export(self.root,Path(self.temp.name)/'bundle')
+        self.assertTrue(result['conformant'])
+        for name in ['.pm-agent', 'agent/target', '.venv', '.env']:
+            self.assertFalse((Path(self.temp.name)/'bundle'/name).exists())
 
 
 if __name__=='__main__': unittest.main()
