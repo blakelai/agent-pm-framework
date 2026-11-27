@@ -419,7 +419,8 @@ impl App {
     }
     pub(super) fn provider_event(&mut self, event: crate::provider::Event) {
         match event {
-            crate::provider::Event::Progress(text) => self.progress.update(text),
+            crate::provider::Event::Progress { message, .. } => self.progress.update(message),
+            crate::provider::Event::Execution(status) => self.progress.observe(status),
             crate::provider::Event::InputAccepted(ids) => {
                 self.attachments.retain(|image| !ids.contains(&image.id))
             }
@@ -436,25 +437,13 @@ impl App {
                 state,
                 result,
             } => {
-                if state == "Approval required" {
-                    self.progress
-                        .pause("Waiting for approval · choose an option below");
-                } else if let Some(result) = &result {
-                    let value =
-                        serde_json::from_str::<serde_json::Value>(result).unwrap_or_default();
-                    if matches!(
-                        value["status"].as_str(),
-                        Some("waiting_for_user" | "blocked_by_grounding")
-                    ) {
-                        self.progress
-                            .pause("Waiting for your answer · review Questions");
-                    } else {
-                        self.progress.update("Processing tool results");
-                    }
+                if result.is_some() {
+                    self.progress.update("Processing tool results");
                 } else {
                     self.progress.update(tool_display::action(&call));
                 }
-                self.messages.tool(&call, &state, result.as_deref());
+                self.messages
+                    .tool(&call, &state.to_string(), result.as_deref());
             }
             crate::provider::Event::Notice(text) => self.notice(&text),
             crate::provider::Event::Usage(usage) => {
@@ -2276,7 +2265,10 @@ mod tests {
         a.append(&"Earlier reply\n\n".repeat(40));
         a.input.insert("Unsent 中文 draft");
         a.start_operation();
-        a.provider_event(ProviderEvent::Progress("Waiting for model response".into()));
+        a.provider_event(ProviderEvent::Progress {
+            phase: crate::execution::Phase::WaitingForModel,
+            message: "Waiting for model response".into(),
+        });
         draw(&mut a, 90, 24);
         a.follow = false;
         a.transcript_scroll = 0;
@@ -2287,7 +2279,7 @@ mod tests {
         };
         a.provider_event(ProviderEvent::Tool {
             call: call.clone(),
-            state: "Running".into(),
+            state: crate::execution::ToolState::Running,
             result: None,
         });
         let buffer = draw(&mut a, 90, 24);
@@ -2311,7 +2303,7 @@ mod tests {
                 .any(|l| l.to_string().contains("Waiting for model response"))
         );
 
-        a.provider_event(ProviderEvent::Tool {call,state:"Result recorded".into(),result:Some(json!([{"title":"付款流程","path":"付款.md"},{"title":"Refund rules","path":"refund.md"},{"title":"Gateway integration","path":"gateway.md"},{"title":"Receipts","path":"receipts.md"}]).to_string())});
+        a.provider_event(ProviderEvent::Tool {call,state:crate::execution::ToolState::ResultRecorded,result:Some(json!([{"title":"付款流程","path":"付款.md"},{"title":"Refund rules","path":"refund.md"},{"title":"Gateway integration","path":"gateway.md"},{"title":"Receipts","path":"receipts.md"}]).to_string())});
         a.follow = true;
         let collapsed = draw(&mut a, 90, 24);
         let visible = buffer_text(&collapsed);
@@ -2341,8 +2333,13 @@ mod tests {
             )
             .unwrap();
         }
+        a.provider_event(ProviderEvent::Execution(
+            crate::runtime::Status::WaitingClarification,
+        ));
+        assert!(buffer_text(&draw(&mut a, 90, 24)).contains("Waiting for your answer"));
         a.progress.cancel();
         a.provider_event(ProviderEvent::Text("Late response text".into()));
+        a.provider_event(ProviderEvent::Execution(crate::runtime::Status::Cancelled));
         assert!(buffer_text(&draw(&mut a, 90, 24)).contains("Stopping"));
         a.progress.session(&crate::runtime::Status::WaitingApproval);
         a.busy = false;

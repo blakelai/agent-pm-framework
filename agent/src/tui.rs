@@ -713,7 +713,7 @@ fn dispatch(
             };
             let _ = tx.send(Event::Tool {
                 call: call.clone(),
-                state: "Running".into(),
+                state: crate::execution::ToolState::Running,
                 result: None,
             });
             let operation = tools::run_pm(&workspace, &command, &args);
@@ -734,7 +734,7 @@ fn dispatch(
                     let error = crate::diagnostics::format_error(&e);
                     let _ = tx.send(Event::Tool {
                         call,
-                        state: "Failed".into(),
+                        state: crate::execution::ToolState::Failed,
                         result: Some(serde_json::json!({"error": error}).to_string()),
                     });
                     Outcome::Error(error)

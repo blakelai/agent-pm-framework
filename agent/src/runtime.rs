@@ -2,6 +2,7 @@ use crate::{
     approval::{Decision, GlobalApprovals, Grant},
     clarification,
     config::Config,
+    execution::{Phase, ToolState},
     grounding,
     mcp::Mcp,
     provider::{Call, Event, Provider, ToolSpec},
@@ -17,21 +18,8 @@ use tokio::sync::mpsc::UnboundedSender;
 use tokio_util::sync::CancellationToken;
 
 pub use crate::draft_preview::Preview as DraftPreview;
+pub use crate::execution::Status;
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "snake_case")]
-pub enum Status {
-    Ready,
-    Running,
-    WaitingClarification,
-    WaitingApproval,
-    WaitingDraftReview,
-    NeedsReconciliation,
-    Completed,
-    Failed,
-    Cancelled,
-    LimitReached,
-}
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Question {
     pub path: String,
@@ -99,6 +87,10 @@ pub fn fingerprint(config: &Config) -> Result<String> {
     Ok(hash(serde_json::to_string(config.active()?)?.as_bytes()))
 }
 impl Session {
+    pub fn run_path(&self) -> String {
+        format!("90_Agent/Runs/RUN-{}.md", self.id)
+    }
+
     pub fn new(config: &Config, stage: &str) -> Result<Self> {
         ensure!(
             STAGES.iter().any(|(s, _, _)| *s == stage),
@@ -586,6 +578,7 @@ impl Runtime {
         s.status = Status::Running;
         s.error = None;
         self.save(s)?;
+        let _ = events.send(Event::Execution(s.status));
         let result = self.run_loop(s, approved_call, events, cancel).await;
         if let Err(e) = result {
             let diagnostic = crate::diagnostics::format_error(&e);
@@ -603,7 +596,7 @@ impl Runtime {
             if let Some(call) = s.pending.first() {
                 let _ = events.send(Event::Tool {
                     call: call.clone(),
-                    state: format!("Stopped — {:?}", s.status),
+                    state: ToolState::Stopped(s.status),
                     result: None,
                 });
             }
@@ -617,6 +610,7 @@ impl Runtime {
                 self.workspace.root.display()
             )
         })?;
+        let _ = events.send(Event::Execution(s.status));
         Ok(())
     }
     async fn run_loop(
@@ -633,13 +627,14 @@ impl Runtime {
             self.provider.append_tool(history, call, result);
             let _ = events.send(Event::Tool {
                 call: call.clone(),
-                state: "Result recorded".into(),
+                state: ToolState::ResultRecorded,
                 result: Some(result.into()),
             });
         };
-        let _ = events.send(Event::Progress(
-            "Preparing conversation and active Skills".into(),
-        ));
+        let _ = events.send(Event::Progress {
+            phase: Phase::PreparingConversation,
+            message: "Preparing conversation and active Skills".into(),
+        });
         let system = self.system(s).with_context(|| format!(
             "Cannot prepare Chat instructions\nStage: {}\nVault: {}\nRequired guidance must be present and readable before contacting the model.",
             s.stage, self.workspace.root.display()
@@ -670,7 +665,7 @@ impl Runtime {
                 let call = s.pending[0].clone();
                 let _ = events.send(Event::Tool {
                     call: call.clone(),
-                    state: "Requested".into(),
+                    state: ToolState::Requested,
                     result: None,
                 });
                 ensure!(
@@ -791,10 +786,13 @@ impl Runtime {
                     ensure!(!cancel.is_cancelled(), "Cancelled before draft write");
                     grounding_receipt = Some(preview.packet_sha256.clone());
                 } else if call.name == "write_draft" {
-                    let _ = events.send(Event::Progress(format!(
-                        "Checking source evidence for {}",
-                        tools::string(&args, "path")?
-                    )));
+                    let _ = events.send(Event::Progress {
+                        phase: Phase::CheckingDraftEvidence,
+                        message: format!(
+                            "Checking source evidence for {}",
+                            tools::string(&args, "path")?
+                        ),
+                    });
                     let packet = match grounding::Packet::prepare(&self.workspace, &args) {
                         Ok(packet) => packet,
                         Err(error) => {
@@ -887,7 +885,7 @@ impl Runtime {
                     s.status = Status::WaitingApproval;
                     let _ = events.send(Event::Tool {
                         call: call.clone(),
-                        state: "Approval required".into(),
+                        state: ToolState::ApprovalRequired,
                         result: None,
                     });
                     self.save(s)?;
@@ -918,7 +916,7 @@ impl Runtime {
                     .begin_call(&s.id, &call.id, &call.name, &call.arguments)?;
                 let _ = events.send(Event::Tool {
                     call: call.clone(),
-                    state: "Running".into(),
+                    state: ToolState::Running,
                     result: None,
                 });
                 let operation = async {
@@ -980,7 +978,10 @@ impl Runtime {
                 })
                 .begin();
             self.save(s)?;
-            let _ = events.send(Event::Progress("Waiting for model response".into()));
+            let _ = events.send(Event::Progress {
+                phase: Phase::WaitingForModel,
+                message: "Waiting for model response".into(),
+            });
             let result = self
                 .provider
                 .complete(&system, &wire_history, &specs, events, cancel)
@@ -1063,10 +1064,10 @@ impl Runtime {
             "Checking source support before writing {}",
             packet.path
         )));
-        let _ = events.send(Event::Progress(format!(
-            "Checking source support before writing {}",
-            packet.path
-        )));
+        let _ = events.send(Event::Progress {
+            phase: Phase::ReviewingDraftEvidence,
+            message: format!("Checking source support before writing {}", packet.path),
+        });
         s.usage = None;
         let _ = events.send(Event::Usage(None));
         let ledger = s
@@ -1338,9 +1339,7 @@ impl Runtime {
             }
         }
         atomic_write(
-            &self
-                .workspace
-                .path(&format!("90_Agent/Runs/RUN-{}.md", s.id))?,
+            &self.workspace.path(&s.run_path())?,
             note(meta, &body)?.as_bytes(),
         )
     }

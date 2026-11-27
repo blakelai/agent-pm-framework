@@ -12,6 +12,7 @@ pub mod doctor;
 mod draft_preview;
 pub mod editing;
 pub mod evaluation;
+pub mod execution;
 mod extraction;
 pub mod governance;
 pub mod grounding;

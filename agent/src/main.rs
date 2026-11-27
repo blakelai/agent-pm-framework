@@ -1,17 +1,16 @@
-use anyhow::{Context, Result, ensure};
+mod chat_cli;
+
+use anyhow::{Result, ensure};
 use clap::{Parser, Subcommand};
 use pm_agent::{
     config::Config,
     provider::Event,
-    runtime::{Runtime, Session, Status},
+    runtime::Session,
     store::Store,
     tools, tui,
     workspace::{Workspace, WorkspaceLock},
 };
-use std::{
-    io::{IsTerminal, Write},
-    path::PathBuf,
-};
+use std::{io::IsTerminal, path::PathBuf};
 use tokio_util::sync::CancellationToken;
 
 #[derive(Parser)]
@@ -65,30 +64,7 @@ enum Command {
         args: Vec<String>,
     },
     /// Run or resume an Agent task; questions and approvals pause it durably.
-    Chat {
-        prompt: Option<String>,
-        #[arg(long, default_value = "workflow")]
-        stage: String,
-        #[arg(long = "skill")]
-        skills: Vec<String>,
-        #[arg(long)]
-        session: Option<String>,
-        #[arg(long, conflicts_with = "deny")]
-        approve: bool,
-        /// Confirm the exact PRD draft preview shown by Chat.
-        #[arg(long, requires = "session", conflicts_with_all = ["prompt", "approve", "deny", "reconcile", "independent", "answer", "skills"])]
-        apply_draft: Option<String>,
-        #[arg(long)]
-        deny: bool,
-        #[arg(long)]
-        reconcile: Option<String>,
-        /// Continue evidence-backed independent work without answering open questions.
-        #[arg(long, requires = "session", conflicts_with_all = ["prompt","answer","approve","deny","reconcile"])]
-        independent: bool,
-        /// Associate the prompt with this question ID or exact path.
-        #[arg(long, requires_all = ["session","prompt"], conflicts_with_all = ["approve","deny","reconcile"])]
-        answer: Option<String>,
-    },
+    Chat(chat_cli::ChatArgs),
     /// Validate configuration and selected Chat prerequisites without contacting services.
     Doctor {
         #[arg(long, default_value = "workflow")]
@@ -161,6 +137,13 @@ enum BackupCommand {
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
+    if let Some(Command::Chat(args)) = &cli.command {
+        let code = chat_cli::run(args, &cli.vault, cli.config.as_deref()).await?;
+        if code != 0 {
+            std::process::exit(code);
+        }
+        return Ok(());
+    }
     if let Some(Command::Eval { command }) = &cli.command {
         use pm_agent::evaluation;
         let observation = match command {
@@ -363,147 +346,7 @@ async fn main() -> Result<()> {
             }
         }
         Command::Doctor { .. } => unreachable!("Doctor runs before acquiring a writer"),
-        Command::Chat {
-            prompt,
-            stage,
-            skills,
-            session,
-            approve,
-            apply_draft,
-            deny,
-            reconcile,
-            independent,
-            answer,
-        } => {
-            if deny {
-                let id = session.as_deref().context("Use --session with --deny")?;
-                let store = Store::open(&workspace.path(".pm-agent/runtime.sqlite3")?)?;
-                let mut saved: Session = store.load(id)?;
-                let call = saved
-                    .pending
-                    .first()
-                    .context("No call awaiting approval")?
-                    .clone();
-                let draft = saved.status == Status::WaitingDraftReview;
-                pm_agent::approval::deny(&workspace, &store, &mut saved, &call)?;
-                eprintln!(
-                    "Session: {}\nState: Cancelled\n{}",
-                    saved.id,
-                    if draft {
-                        "Draft preview discarded; Agent response stopped."
-                    } else {
-                        "Tool use denied; Agent response stopped."
-                    }
-                );
-                return Ok(());
-            }
-            let config = Config::load(&config_path)?;
-            let runtime = Runtime::open_chat(workspace, config).await?;
-            let mut s = match session {
-                Some(id) => runtime.store.load::<Session>(&id)?,
-                None => Session::new(&runtime.config, &stage)?,
-            };
-            let mut approved = None;
-            if !skills.is_empty() {
-                ensure!(
-                    s.pending.is_empty(),
-                    "Cannot change Skills while a tool is pending"
-                );
-                pm_agent::skills::Catalog::discover(&runtime.workspace)?.resolve(&skills)?;
-                for name in skills {
-                    if !s.selected_skills.contains(&name) {
-                        s.selected_skills.push(name);
-                    }
-                }
-            }
-            if approve || deny {
-                if approve {
-                    approved = s.pending.first().map(|c| c.id.clone());
-                }
-                runtime.decision(&mut s, approve)?;
-            }
-            if let Some(preview_id) = apply_draft {
-                runtime.confirm_draft(&mut s, &preview_id)?;
-            }
-            if let Some(result) = reconcile {
-                runtime.reconcile(&mut s, &result)?;
-            }
-            if independent {
-                runtime.continue_independent(&mut s)?;
-            } else if let Some(prompt) = prompt {
-                if let Some(id) = answer {
-                    runtime.answer(&mut s, &id, &prompt)?;
-                } else {
-                    runtime.input(&mut s, &prompt)?;
-                }
-            } else if matches!(
-                s.status,
-                Status::Failed | Status::Cancelled | Status::Completed | Status::LimitReached
-            ) {
-                s.status = Status::Ready;
-            }
-            let cancel = CancellationToken::new();
-            let signal = cancel.clone();
-            tokio::spawn(async move {
-                let _ = tokio::signal::ctrl_c().await;
-                signal.cancel();
-            });
-            let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
-            let printer = tokio::spawn(async move {
-                while let Some(event) = rx.recv().await {
-                    match event {
-                        Event::Text(text) => {
-                            print!("{text}");
-                            let _ = std::io::stdout().flush();
-                        }
-                        Event::Notice(text) => eprintln!("\n{text}"),
-                        Event::Tool { call, state, .. } => {
-                            eprintln!("\nTool: {} — {state}", call.name)
-                        }
-                        Event::Progress(_)
-                        | Event::InputAccepted(_)
-                        | Event::Reasoning(_)
-                        | Event::Usage(_) => {}
-                    }
-                }
-            });
-            if !(approve && s.status == Status::WaitingApproval
-                || s.status == Status::WaitingDraftReview)
-            {
-                runtime.run(&mut s, approved, &tx, &cancel).await?;
-            } else if let Some(error) = &s.error {
-                eprintln!("{error}");
-            }
-            drop(tx);
-            printer.await?;
-            if s.status == Status::WaitingDraftReview {
-                let preview = s
-                    .draft_preview
-                    .as_ref()
-                    .context("Missing saved draft preview")?;
-                eprintln!(
-                    "\nDraft preview {}\n{}\nApply: pm-agent --vault <workspace> --config <config> chat --session {} --apply-draft {}\nDiscard: pm-agent --vault <workspace> chat --session {} --deny",
-                    preview.id,
-                    pm_agent::diagnostics::readable(&preview.text),
-                    s.id,
-                    preview.id,
-                    s.id
-                );
-            }
-            eprintln!(
-                "\nSession: {}\nState: {:?}\nResume: pm-agent --vault <workspace> --config <config> chat --session {} [reply]",
-                s.id, s.status, s.id
-            );
-            if matches!(
-                s.status,
-                Status::Failed
-                    | Status::Cancelled
-                    | Status::NeedsReconciliation
-                    | Status::LimitReached
-            ) {
-                std::process::exit(2);
-            }
-        }
+        Command::Chat(_) => unreachable!("Chat is dispatched with its own output mode"),
     }
     Ok(())
 }

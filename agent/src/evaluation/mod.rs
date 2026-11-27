@@ -510,7 +510,7 @@ pub async fn run(
     let error = result.err().map(|e| e.to_string());
     report.state = "finished".into();
     report.finished_at = Some(chrono::Utc::now().to_rfc3339());
-    report.session_status = Some(session.status.clone());
+    report.session_status = Some(session.status);
     report.usage = Some(crate::budget::summary(Some(&ledger)));
     let files = Workspace { root: root.clone() };
     for (path, bytes) in [

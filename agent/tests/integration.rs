@@ -246,8 +246,8 @@ async fn chat_activity_streams_preserve_service_reasoning_and_actual_tool_result
     let phases = entries
         .iter()
         .filter_map(|e| {
-            if let Event::Progress(text) = e {
-                Some(text.as_str())
+            if let Event::Progress { message, .. } = e {
+                Some(message.as_str())
             } else {
                 None
             }
@@ -271,7 +271,7 @@ async fn chat_activity_streams_preserve_service_reasoning_and_actual_tool_result
             .iter()
             .any(|e| matches!(e, Event::Text(text) if text.contains("SERVICE_REASONING")))
     );
-    assert!(entries.iter().any(|e| matches!(e, Event::Tool { call, state, result: None } if call.id == "inspect-call" && state == "Running")));
+    assert!(entries.iter().any(|e| matches!(e, Event::Tool { call, state: pm_agent::execution::ToolState::Running, result: None } if call.id == "inspect-call")));
     assert!(entries.iter().any(
         |e| matches!(e, Event::Tool { call, result: Some(_), .. } if call.id == "inspect-call")
     ));
@@ -961,6 +961,396 @@ fn events() -> (
     tokio::sync::mpsc::unbounded_channel()
 }
 
+fn json_chat(w: &Workspace) -> tokio::process::Command {
+    let mut command = tokio::process::Command::new(env!("CARGO_BIN_EXE_pm-agent"));
+    command
+        .arg("--vault")
+        .arg(&w.root)
+        .args(["chat", "--json"])
+        .env(
+            "PM_AGENT_GLOBAL_CONFIG",
+            w.root.join(".pm-agent/test-global.toml"),
+        );
+    command
+}
+
+fn chat_json_output(output: std::process::Output, code: i32, status: &str) -> Vec<Value> {
+    assert_eq!(
+        output.status.code(),
+        Some(code),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        output.stderr.is_empty(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    parse_chat_json(&String::from_utf8(output.stdout).unwrap(), status)
+}
+
+fn parse_chat_json(stdout: &str, status: &str) -> Vec<Value> {
+    assert!(stdout.ends_with('\n'));
+    let lines = stdout
+        .lines()
+        .map(|line| serde_json::from_str::<Value>(line).expect(line))
+        .collect::<Vec<_>>();
+    assert!(lines.len() >= 2);
+    let first = &lines[0];
+    assert_eq!(first["type"], "turn.started");
+    assert!(uuid::Uuid::parse_str(first["turn_id"].as_str().unwrap()).is_ok());
+    for (index, line) in lines.iter().enumerate() {
+        assert_eq!(line["schema_version"], 1);
+        assert_eq!(line["sequence"], index + 1);
+        assert_eq!(line["session_id"], first["session_id"]);
+        assert_eq!(line["turn_id"], first["turn_id"]);
+    }
+    assert_eq!(lines.last().unwrap()["type"], "turn.finished");
+    assert_eq!(lines.last().unwrap()["status"], status);
+    assert_eq!(
+        lines
+            .iter()
+            .filter(|line| line["type"] == "turn.finished")
+            .count(),
+        1
+    );
+    lines
+}
+
+#[tokio::test]
+async fn chat_json_correlates_tool_progress_provider_usage_and_written_reports() {
+    let (_dir, w) = fixture();
+    let source = "01_Sources/Assets/stream-fixture.txt";
+    atomic_write(&w.path(source).unwrap(), b"PRIVATE_SOURCE_FIXTURE").unwrap();
+    let text_response = format!(
+        "data: {}\n\ndata: [DONE]\n\n",
+        json!({
+            "choices": [{"delta":{"content":"檢查完成。\nReceipt.","reasoning_content":"PRIVATE_REASONING_FIXTURE"},"finish_reason":"stop"}],
+            "usage":{"prompt_tokens":15,"completion_tokens":8,"total_tokens":23}
+        })
+    );
+    let (url, _, _, task) = server(vec![
+        chat(
+            "",
+            vec![
+                call(0, "read", "read_document", json!({"path":source})),
+                call(1, "check", "pm", json!({"command":"validate","args":[]})),
+            ],
+        ),
+        text_response,
+    ])
+    .await;
+    let cfg = config(url, Protocol::ChatCompletions);
+    atomic_write(
+        &w.path(".pm-agent/config.toml").unwrap(),
+        toml::to_string(&cfg).unwrap().as_bytes(),
+    )
+    .unwrap();
+    let output = json_chat(&w)
+        .arg("Check the test Vault.")
+        .output()
+        .await
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        !stdout.contains("PRIVATE_SOURCE_FIXTURE") && !stdout.contains("PRIVATE_REASONING_FIXTURE")
+    );
+    let lines = chat_json_output(output, 0, "completed");
+    assert_eq!(lines[0]["stage"], "workflow");
+    assert!(lines[0]["session_id"].is_string());
+    assert!(
+        lines
+            .iter()
+            .any(|e| e["type"] == "turn.state_changed" && e["status"] == "running")
+    );
+    assert!(
+        lines
+            .iter()
+            .any(|e| e["type"] == "turn.progress" && e["phase"] == "waiting_for_model")
+    );
+    assert!(
+        lines
+            .iter()
+            .any(|e| e["type"] == "assistant.text.delta" && e["text"] == "檢查完成。\nReceipt.")
+    );
+    assert!(
+        lines
+            .iter()
+            .any(|e| e["type"] == "usage.updated" && e["usage"]["total_tokens"] == 23)
+    );
+    let states = lines
+        .iter()
+        .filter(|e| e["type"] == "tool.updated" && e["call_id"] == "check")
+        .map(|e| e["state"].as_str().unwrap())
+        .collect::<Vec<_>>();
+    assert_eq!(states, ["requested", "running", "result_recorded"]);
+    let finish = lines.last().unwrap();
+    assert!(w.path(finish["run"].as_str().unwrap()).unwrap().is_file());
+    assert_eq!(finish["pending"], Value::Null);
+    let report = &finish["artifacts"][0];
+    assert_eq!(report["kind"], "report");
+    assert_eq!(
+        report["sha256"],
+        hash(w.read(report["path"].as_str().unwrap()).unwrap().as_bytes())
+    );
+    task.abort();
+}
+
+#[tokio::test]
+async fn chat_json_surfaces_clarification_approval_and_offline_denial() {
+    let (_dir, w) = fixture();
+    let (url, _, req, task) = server(vec![
+        chat(
+            "",
+            vec![call(
+                0,
+                "ask",
+                "ask_clarification",
+                json!({"question":"Who owns review?","body":"A named reviewer is required."}),
+            )],
+        ),
+        chat(
+            "",
+            vec![call(
+                0,
+                "settings",
+                "pm",
+                json!({"command":"settings","args":["--document-language","zh-TW"]}),
+            )],
+        ),
+    ])
+    .await;
+    let cfg = config(url, Protocol::ChatCompletions);
+    let config_path = w.path(".pm-agent/config.toml").unwrap();
+    atomic_write(&config_path, toml::to_string(&cfg).unwrap().as_bytes()).unwrap();
+
+    let question = chat_json_output(
+        json_chat(&w)
+            .arg("Ask about the missing owner.")
+            .output()
+            .await
+            .unwrap(),
+        0,
+        "waiting_clarification",
+    );
+    let end = question.last().unwrap();
+    assert_eq!(end["pending"]["kind"], "clarification");
+    let question_path = end["pending"]["questions"][0].as_str().unwrap();
+    assert_eq!(end["artifacts"][0]["kind"], "question");
+    assert_eq!(end["artifacts"][0]["path"], question_path);
+    assert!(w.read(question_path).unwrap().contains("Who owns review?"));
+
+    let approval = chat_json_output(
+        json_chat(&w)
+            .arg("Change the staged workspace language.")
+            .output()
+            .await
+            .unwrap(),
+        0,
+        "waiting_approval",
+    );
+    let end = approval.last().unwrap();
+    let session = end["session_id"].as_str().unwrap();
+    assert_eq!(end["pending"]["kind"], "approval");
+    assert_eq!(end["pending"]["call"]["call_id"], "settings");
+    assert!(approval.iter().any(|e| e["state"] == "approval_required"));
+    assert!(!approval.iter().any(|e| e.to_string().contains("zh-TW")));
+    std::fs::remove_file(config_path).unwrap();
+    let inspected = chat_json_output(
+        json_chat(&w)
+            .args(["--session", session])
+            .output()
+            .await
+            .unwrap(),
+        0,
+        "waiting_approval",
+    );
+    assert_eq!(inspected.len(), 2);
+    assert_eq!(inspected[0]["session_id"], end["session_id"]);
+    assert_ne!(inspected[0]["turn_id"], end["turn_id"]);
+    let denied = chat_json_output(
+        json_chat(&w)
+            .args(["--session", session, "--deny"])
+            .output()
+            .await
+            .unwrap(),
+        0,
+        "cancelled",
+    );
+    assert_eq!(denied.last().unwrap()["run"], end["run"]);
+    assert_eq!(w.language().unwrap(), "en");
+    assert_eq!(req.lock().unwrap().len(), 2);
+    task.abort();
+}
+
+#[tokio::test]
+async fn chat_json_distinguishes_preflight_failure_provider_failure_limits_and_reconciliation() {
+    let (_dir, w) = fixture();
+    let config_path = w.path(".pm-agent/config.toml").unwrap();
+    let failed = chat_json_output(
+        json_chat(&w)
+            .arg("Check missing configuration.")
+            .output()
+            .await
+            .unwrap(),
+        1,
+        "failed",
+    );
+    assert_eq!(failed[0]["session_id"], Value::Null);
+    assert!(
+        failed[1]["diagnostic"]
+            .as_str()
+            .unwrap()
+            .contains("config.toml")
+    );
+    assert_eq!(failed[1]["run"], Value::Null);
+
+    let (url, _, req, task) = server(vec!["data: [DONE]\n\n".to_owned()]).await;
+    let mut cfg = config(url, Protocol::ChatCompletions);
+    let save_config = |cfg: &Config| {
+        atomic_write(&config_path, toml::to_string(cfg).unwrap().as_bytes()).unwrap()
+    };
+    save_config(&cfg);
+    let failure = chat_json_output(
+        json_chat(&w)
+            .arg("Check the truncated response.")
+            .output()
+            .await
+            .unwrap(),
+        2,
+        "failed",
+    );
+    assert!(
+        w.path(failure.last().unwrap()["run"].as_str().unwrap())
+            .unwrap()
+            .is_file()
+    );
+
+    cfg.session_limits.max_total_tokens = Some(0);
+    save_config(&cfg);
+    let limited = chat_json_output(
+        json_chat(&w)
+            .arg("Check the configured guard.")
+            .output()
+            .await
+            .unwrap(),
+        2,
+        "limit_reached",
+    );
+    assert!(
+        limited.last().unwrap()["diagnostic"]
+            .as_str()
+            .unwrap()
+            .contains("limit")
+    );
+
+    cfg.session_limits.max_total_tokens = None;
+    save_config(&cfg);
+    let mut interrupted = Session::new(&cfg, "workflow").unwrap();
+    interrupted.pending.push(pm_agent::provider::Call {
+        id: "interrupted".into(),
+        name: "pm".into(),
+        arguments: json!({"command":"validate","args":[]}).to_string(),
+    });
+    let store =
+        pm_agent::store::Store::open(&w.path(".pm-agent/runtime.sqlite3").unwrap()).unwrap();
+    store.save(&interrupted.id, &interrupted).unwrap();
+    let call = &interrupted.pending[0];
+    store
+        .begin_call(&interrupted.id, &call.id, &call.name, &call.arguments)
+        .unwrap();
+    let paused = chat_json_output(
+        json_chat(&w)
+            .args(["--session", &interrupted.id])
+            .output()
+            .await
+            .unwrap(),
+        2,
+        "needs_reconciliation",
+    );
+    assert_eq!(paused.last().unwrap()["pending"]["kind"], "reconciliation");
+    assert_eq!(
+        paused.last().unwrap()["pending"]["call"]["call_id"],
+        "interrupted"
+    );
+    assert_eq!(req.lock().unwrap().len(), 1);
+    task.abort();
+}
+
+#[tokio::test]
+async fn chat_json_flushes_text_before_provider_finishes_and_records_interrupt() {
+    use futures_util::StreamExt;
+    use std::{io, process::Stdio, time::Duration};
+    use tokio::io::{AsyncBufReadExt, BufReader};
+
+    let (_dir, w) = fixture();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let task = tokio::spawn(async move {
+        let app = Router::new().route("/v1/chat/completions", post(|| async {
+            let chunk = format!("data: {}\n\n",json!({"choices":[{"delta":{"content":"Before interrupt"},"finish_reason":null}]}));
+            let body = axum::body::Body::from_stream(futures_util::stream::once(async { Ok::<_,io::Error>(chunk) }).chain(futures_util::stream::pending()));
+            ([("content-type","text/event-stream")],body)
+        }));
+        axum::serve(listener, app).await.unwrap();
+    });
+    let mut cfg = config(format!("http://{addr}/v1"), Protocol::ChatCompletions);
+    cfg.providers.get_mut("fixture").unwrap().timeout_seconds = 20;
+    atomic_write(
+        &w.path(".pm-agent/config.toml").unwrap(),
+        toml::to_string(&cfg).unwrap().as_bytes(),
+    )
+    .unwrap();
+    let mut child = json_chat(&w)
+        .arg("Start a streaming reply.")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .kill_on_drop(true)
+        .spawn()
+        .unwrap();
+    let mut reader = BufReader::new(child.stdout.take().unwrap()).lines();
+    let mut output = String::new();
+    tokio::time::timeout(Duration::from_secs(8), async {
+        loop {
+            let line = reader.next_line().await.unwrap().unwrap();
+            output.push_str(&line);
+            output.push('\n');
+            if serde_json::from_str::<Value>(&line).unwrap()["type"] == "assistant.text.delta" {
+                break;
+            }
+        }
+    })
+    .await
+    .expect("JSONL should be flushed while the SSE response is open");
+    let pid = child.id().unwrap().to_string();
+    assert!(
+        tokio::process::Command::new("kill")
+            .args(["-INT", &pid])
+            .status()
+            .await
+            .unwrap()
+            .success()
+    );
+    let code = tokio::time::timeout(Duration::from_secs(8), async {
+        while let Some(line) = reader.next_line().await.unwrap() {
+            output.push_str(&line);
+            output.push('\n');
+        }
+        child.wait().await.unwrap().code()
+    })
+    .await
+    .unwrap();
+    assert_eq!(code, Some(2));
+    let lines = parse_chat_json(&output, "cancelled");
+    assert!(lines.iter().any(|e| e["text"] == "Before interrupt"));
+    assert!(
+        w.path(lines.last().unwrap()["run"].as_str().unwrap())
+            .unwrap()
+            .is_file()
+    );
+    task.abort();
+}
+
 #[tokio::test]
 async fn clarification_prevents_parallel_write_and_resumes_after_actual_answer() {
     let (_dir, w) = fixture();
@@ -1223,6 +1613,25 @@ async fn chat_cli_reopens_and_applies_only_the_named_draft_preview() {
             .unwrap()
             .contains(&preview.id)
     );
+    let stream = chat_json_output(
+        json_chat(&w)
+            .args(["--session", &session_id])
+            .output()
+            .await
+            .unwrap(),
+        0,
+        "waiting_draft_review",
+    );
+    let pending = &stream.last().unwrap()["pending"];
+    assert_eq!(pending["kind"], "draft_review");
+    assert_eq!(pending["preview_id"], preview.id);
+    assert_eq!(pending["path"], path);
+    assert!(
+        pending["text"]
+            .as_str()
+            .unwrap()
+            .contains("Proposed changes")
+    );
     let wrong = chat_command()
         .args(["--session", &session_id, "--apply-draft", "wrong"])
         .output()
@@ -1232,16 +1641,16 @@ async fn chat_cli_reopens_and_applies_only_the_named_draft_preview() {
     assert!(!w.path(&path).unwrap().exists());
     assert_eq!(requests.lock().unwrap().len(), 2);
 
-    let applied = chat_command()
+    let applied = json_chat(&w)
         .args(["--session", &session_id, "--apply-draft", &preview.id])
         .output()
         .await
         .unwrap();
-    assert!(
-        applied.status.success(),
-        "{}",
-        String::from_utf8_lossy(&applied.stderr)
-    );
+    let applied = chat_json_output(applied, 0, "completed");
+    let draft = &applied.last().unwrap()["artifacts"][0];
+    assert_eq!(draft["kind"], "draft");
+    assert_eq!(draft["path"], path);
+    assert_eq!(draft["sha256"], hash(w.read(&path).unwrap().as_bytes()));
     assert!(w.path(&path).unwrap().is_file());
     assert_eq!(requests.lock().unwrap().len(), 3);
     server.abort();

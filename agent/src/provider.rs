@@ -1,4 +1,7 @@
-use crate::config::{Protocol, ProviderConfig, validate_endpoint};
+use crate::{
+    config::{Protocol, ProviderConfig, validate_endpoint},
+    execution::{Phase, Status, ToolState},
+};
 use anyhow::{Context, Result, bail, ensure};
 use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
@@ -10,13 +13,17 @@ use tokio_util::sync::CancellationToken;
 #[derive(Debug, Clone)]
 pub enum Event {
     /// Public runtime phase, never private model reasoning or an inferred intent.
-    Progress(String),
+    Progress {
+        phase: Phase,
+        message: String,
+    },
+    Execution(Status),
     InputAccepted(Vec<String>),
     Text(String),
     Reasoning(String),
     Tool {
         call: Call,
-        state: String,
+        state: ToolState,
         result: Option<String>,
     },
     Notice(String),

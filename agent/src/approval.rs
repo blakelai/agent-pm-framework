@@ -114,7 +114,7 @@ pub fn deny(
         at: chrono::Utc::now().to_rfc3339(),
     });
     store.save(&session.id, session)?;
-    let path = workspace.path(&format!("90_Agent/Runs/RUN-{}.md", session.id))?;
+    let path = workspace.path(&session.run_path())?;
     let (mut meta, mut body) = if path.exists() {
         parse_note(&fs::read_to_string(&path)?)?
     } else {

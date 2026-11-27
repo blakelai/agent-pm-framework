@@ -207,6 +207,29 @@ Legacy `/approve` and CLI `chat --approve` allow once. `/deny` and CLI `chat --s
 
 Chat pauses a supported PRD draft before writing. Review the proposed changes, cited evidence and open questions in the transcript, then choose **Apply reviewed draft** or **Discard and stop**. The CLI prints the same preview and its ID. Reopen it with `chat --session ID`, apply it with `chat --session ID --apply-draft PREVIEW_ID`, or discard it with `chat --session ID --deny`. Changes to the target, evidence or applicable baseline require a fresh preview. [Terminal draft review](Interaction.md#prd-draft-review)
 
+## Stream Chat execution events
+
+Use `chat --json` to consume execution events as newline-delimited JSON on stdout. Each line includes `schema_version` (currently `1`), `type`, `session_id`, `turn_id`, and `sequence`. A turn identifies one CLI invocation. Resuming keeps the session ID and starts a new turn with sequence `1`. A startup failure before the application loads or creates a session uses a null session ID. Command-line parsing errors appear on stderr.
+
+```sh
+pm-agent --vault /path/to/vault chat --json --stage prd "Review the supplied scope."
+pm-agent --vault /path/to/vault chat --json --session SESSION_ID
+```
+
+| Event | Fields beyond the common envelope |
+|---|---|
+| `turn.started` | `stage` when the session is available |
+| `turn.state_changed` | `status` when the runtime starts or records its outcome |
+| `turn.progress` | `phase` and a human-readable `message` |
+| `assistant.text.delta` | `text`, in stream order |
+| `usage.updated` | `usage` with service-reported token counts, or null when unavailable |
+| `tool.updated` | `call_id`, `tool`, `state`, native PM `exit_code` when available, and `artifacts`. A `stopped` tool also includes the execution `status`. |
+| `turn.finished` | `status`, `run`, `pending`, `artifacts`, and `diagnostic` |
+
+Use `turn.finished.status` to branch on `completed`, `failed`, `cancelled`, `limit_reached`, `waiting_clarification`, `waiting_approval`, `waiting_draft_review`, or `needs_reconciliation`. The pending object identifies the question paths, tool call, or exact draft preview for the associated pause. Reopening a saved clarification, approval, draft review, or reconciliation pause with a bare `--session ID` in JSON mode shows the saved state locally. Supply the corresponding `--answer`, `--approve`, `--apply-draft`, or `--reconcile` option to continue.
+
+`run` is the path of the available session Run. Artifact entries carry `kind`, a Vault-relative `path`, and the SHA-256 reported by the tool when available. They include saved drafts, question records, reports, work packets, and baseline manifests. A `result_recorded` tool event can carry a failing command exit code. The CLI exits `1` for invocation errors and `2` for a failed, interrupted, limited, or unreconciled execution. Completed runs and ordinary pauses exit `0`, as does a successful explicit `--deny` with status `cancelled`.
+
 ## MCP tools
 
 Configure `mcp` profiles in the local config using the commented examples. The official Rust MCP SDK handles initialization and transport negotiation for stdio and Streamable HTTP. Stdio commands run only from operator configuration. Their environment is restricted to basic process variables and explicit `env_names`; server stderr is suppressed to avoid disrupting the terminal or persisting accidental secrets.

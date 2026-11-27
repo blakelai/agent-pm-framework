@@ -162,7 +162,7 @@ pub fn observe(
     Ok(Observation {
         id: task.id.clone(),
         session_id: session.id.clone(),
-        status: session.status.clone(),
+        status: session.status,
         outcome: outcome(&selected),
         checks: selected,
         usage: crate::budget::summary(session.request_ledger.as_ref()),

@@ -27,10 +27,9 @@ impl Progress {
             self.label = label.into();
         }
     }
-    pub fn pause(&mut self, label: impl Into<String>) {
-        if !self.stopping {
-            self.label = label.into();
-            self.active = false;
+    pub fn observe(&mut self, status: Status) {
+        if !self.stopping && !matches!(status, Status::Ready | Status::Running) {
+            self.session(&status);
         }
     }
     pub fn cancel(&mut self) {
@@ -140,7 +139,7 @@ mod tests {
         p.start();
         p.cancel();
         p.update("Writing response");
-        p.pause("Late approval event");
+        p.observe(Status::WaitingApproval);
         assert!(
             p.line(80, true)
                 .contains("waiting for the operation outcome")
