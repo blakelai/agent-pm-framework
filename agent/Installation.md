@@ -14,7 +14,7 @@ The Native packages workflow builds and checks each target independently. Pull r
 
 | Package target | Native build and package verification |
 |---|---|
-| aarch64-apple-darwin | macOS 14 Apple Silicon runner |
+| aarch64-apple-darwin | macOS 15 Apple Silicon runner |
 | x86_64-unknown-linux-gnu | Ubuntu 22.04 x86_64 runner, glibc environment |
 
 These are exercised environments, not certification of every OS version or Linux distribution. Intel Macs, Linux ARM64 and musl/Alpine packages are outside this first matrix. GitHub's [runner reference](https://docs.github.com/en/actions/reference/runners/github-hosted-runners) identifies available native architectures. The installer rejects a package for a different host architecture.
