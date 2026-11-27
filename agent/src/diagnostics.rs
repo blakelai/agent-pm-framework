@@ -39,7 +39,7 @@ pub fn format_error(error: &anyhow::Error) -> String {
     text
 }
 
-fn readable(text: &str) -> String {
+pub fn readable(text: &str) -> String {
     text.chars()
         .map(|c| {
             if c.is_control() && c != '\n' && c != '\t' {

@@ -18,10 +18,11 @@ pub enum Kind {
     Tool,
     Activity,
     Error,
+    DraftPreview,
 }
 impl Kind {
     fn foldable(self) -> bool {
-        !matches!(self, Self::User | Self::Assistant)
+        !matches!(self, Self::User | Self::Assistant | Self::DraftPreview)
     }
 }
 struct Entry {
@@ -154,6 +155,7 @@ impl Transcript {
                 Kind::Tool => Color::Blue,
                 Kind::Reasoning | Kind::Activity => Color::Gray,
                 Kind::Error => Color::Red,
+                Kind::DraftPreview => Color::Cyan,
             };
             let prefix = if entry.kind.foldable() {
                 if entry.expanded { "▾ " } else { "▸ " }
@@ -190,7 +192,7 @@ impl Transcript {
                     body.lines.extend(content.lines);
                     body.links.extend(content.links);
                     body
-                } else if matches!(entry.kind, Kind::Error | Kind::Tool) {
+                } else if matches!(entry.kind, Kind::Error | Kind::Tool | Kind::DraftPreview) {
                     diagnostic_text(&entry.body, width)
                 } else {
                     markdown::render(&entry.body, width)
@@ -343,12 +345,21 @@ impl Transcript {
     }
     /// Refresh results for already-visible calls after local approval/denial/reconciliation.
     pub fn sync_tools(&mut self, session: &Session) {
+        self.boundary();
+        self.entries
+            .retain(|entry| entry.kind != Kind::DraftPreview);
         for item in &session.history {
             self.apply_result(item);
         }
         for call in &session.pending {
             self.tool(call, &format!("Pending · {:?}", session.status), None);
         }
+        if session.status == crate::runtime::Status::WaitingDraftReview
+            && let Some(preview) = &session.draft_preview
+        {
+            self.push(Kind::DraftPreview, "Draft preview", &preview.text);
+        }
+        self.changed();
     }
 }
 pub fn message_text(item: &Value) -> String {

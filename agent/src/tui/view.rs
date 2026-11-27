@@ -470,11 +470,20 @@ impl App {
         self.progress.start();
     }
     pub(super) fn update_approval(&mut self, session: &Session) {
-        self.approval = if session.status == crate::runtime::Status::WaitingApproval {
-            session
-                .pending
-                .first()
-                .map(|call| super::approval_prompt::Prompt::new(session.id.clone(), call.clone()))
+        self.approval = if matches!(
+            session.status,
+            crate::runtime::Status::WaitingApproval | crate::runtime::Status::WaitingDraftReview
+        ) {
+            session.pending.first().map(|call| {
+                super::approval_prompt::Prompt::new(
+                    session.id.clone(),
+                    call.clone(),
+                    session
+                        .draft_preview
+                        .as_ref()
+                        .map(|preview| preview.id.clone()),
+                )
+            })
         } else {
             None
         };
@@ -499,6 +508,7 @@ impl App {
             session_id: prompt.session_id,
             call: prompt.call,
             decision,
+            preview_id: prompt.preview_id,
         })
     }
     pub(super) fn start_clipboard(&mut self) -> u64 {
@@ -2978,6 +2988,39 @@ mod tests {
         let session: Session=serde_json::from_value(serde_json::json!({"id":"approval-fixture","status":"waiting_approval","provider_fingerprint":"fixture","history":[],"pending":[{"id":"permission","name":"pm","arguments":"{\"command\":\"settings\",\"args\":[\"--document-language\",\"zh-TW\"]}"}],"questions":[],"last_output":"","error":null,"stage":"workflow"})).unwrap();
         app.finish_session(session);
         app
+    }
+    #[test]
+    fn draft_review_restores_the_visible_diff_and_binds_the_apply_choice() {
+        let mut app = approval_chat();
+        let session: Session = serde_json::from_value(serde_json::json!({
+            "id":"draft-fixture", "status":"waiting_draft_review", "provider_fingerprint":"fixture",
+            "history":[], "pending":[{"id":"draft-call","name":"write_draft","arguments":"{}"}],
+            "questions":[], "last_output":"", "error":null, "stage":"prd",
+            "draft_preview":{"id":"preview-123","path":"PRD.md","packet_sha256":"packet","call_sha256":"call","baselines_sha256":"baseline",
+                "text":"PRD.md\n\nProposed changes\n-    1  Before\n+    1  After\n\nCited evidence\n- Source.md\n\nOpen questions\nNone recorded."}
+        })).unwrap();
+        app.resume_chat(&session);
+        let text = buffer_text(&draw(&mut app, 100, 38));
+        for expected in [
+            "Draft preview",
+            "Proposed changes",
+            "Before",
+            "After",
+            "Source.md",
+            "Open questions",
+            "Apply reviewed draft",
+            "Discard and stop",
+        ] {
+            assert!(text.contains(expected), "Missing {expected}: {text}");
+        }
+        assert!(!text.contains("Always allow"));
+        let Command::Approve(selection) = key(&mut app, KeyCode::Enter) else {
+            panic!("Expected a draft review selection");
+        };
+        assert_eq!(selection.preview_id.as_deref(), Some("preview-123"));
+        assert_eq!(selection.call.id, "draft-call");
+        assert_eq!(selection.decision, crate::approval::Decision::Once);
+        assert_eq!(app.input.text, "Unsent 中文 draft");
     }
     #[test]
     fn approval_composer_preserves_drafts_and_exposes_all_four_explicit_decisions() {

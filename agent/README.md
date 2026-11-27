@@ -203,6 +203,10 @@ Global permissions are stored in `$XDG_CONFIG_HOME/pm-agent/config.toml`, or `~/
 
 Legacy `/approve` and CLI `chat --approve` allow once. `/deny` and CLI `chat --session ID --deny` stop the response; denial works using saved local state even if provider configuration is unavailable. Restoring a waiting session reopens the picker.
 
+## Review a PRD draft in Chat
+
+Chat pauses a supported PRD draft before writing. Review the proposed changes, cited evidence and open questions in the transcript, then choose **Apply reviewed draft** or **Discard and stop**. The CLI prints the same preview and its ID. Reopen it with `chat --session ID`, apply it with `chat --session ID --apply-draft PREVIEW_ID`, or discard it with `chat --session ID --deny`. Changes to the target, evidence or applicable baseline require a fresh preview. [Terminal draft review](Interaction.md#prd-draft-review)
+
 ## MCP tools
 
 Configure `mcp` profiles in the local config using the commented examples. The official Rust MCP SDK handles initialization and transport negotiation for stdio and Streamable HTTP. Stdio commands run only from operator configuration. Their environment is restricted to basic process variables and explicit `env_names`; server stderr is suppressed to avoid disrupting the terminal or persisting accidental secrets.

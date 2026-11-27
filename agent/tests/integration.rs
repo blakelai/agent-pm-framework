@@ -1019,7 +1019,7 @@ async fn tool_roundtrip_creates_a_sourced_draft_and_preserves_hashes() {
     .unwrap();
     let (url,_,requests,server)=server(vec![chat("",vec![call(0,"read","read_document",json!({"path":"00_Governance/Project.md"}))]),chat("",vec![call(0,"write","write_draft",json!({"path":"04_Requirements/PRD/PRD-TEST.md","content":draft,"expected_hash":null,"citations":[{"path":"00_Governance/Project.md","sha256":hash(source.as_bytes())}]}))]),supported_review("00_Governance/Project.md", &draft, &source),chat("Draft saved; semantic review remains necessary.",vec![])]).await;
     let cfg = config(url, Protocol::ChatCompletions);
-    let runtime = Runtime::open(w.clone(), cfg.clone()).await.unwrap();
+    let runtime = Runtime::open_chat(w.clone(), cfg.clone()).await.unwrap();
     let mut s = Session::new(&cfg, "prd").unwrap();
     runtime
         .input(&mut s, "Create a draft grounded in the charter.")
@@ -1028,13 +1028,41 @@ async fn tool_roundtrip_creates_a_sourced_draft_and_preserves_hashes() {
         .run(&mut s, None, &events().0, &CancellationToken::new())
         .await
         .unwrap();
-    assert_eq!(s.status, Status::Completed);
+    let path = "04_Requirements/PRD/PRD-TEST.md";
+    assert_eq!(s.status, Status::WaitingDraftReview);
+    assert!(!w.path(path).unwrap().exists());
+    assert_eq!(requests.lock().unwrap().len(), 3);
+    let preview = s.draft_preview.as_ref().unwrap();
+    assert!(preview.text.contains("+ "));
+    assert!(
+        preview
+            .text
+            .contains("The charter requires confirmed project inputs.")
+    );
+    assert!(preview.text.contains(&hash(source.as_bytes())));
+    assert!(preview.text.contains("Open questions\nNone recorded."));
+    let preview_id = preview.id.clone();
+    drop(runtime);
+    let runtime = Runtime::open_chat(w.clone(), cfg).await.unwrap();
+    let mut s: Session = runtime.store.load(&s.id).unwrap();
+    assert!(runtime.decision(&mut s, true).is_err());
+    assert!(runtime.confirm_draft(&mut s, "older-preview").is_err());
+    assert!(!w.path(path).unwrap().exists());
+    runtime.confirm_draft(&mut s, &preview_id).unwrap();
+    let mut s: Session = runtime.store.load(&s.id).unwrap();
+    runtime
+        .run(&mut s, None, &events().0, &CancellationToken::new())
+        .await
+        .unwrap();
+    assert_eq!(s.status, Status::Completed, "{:?}", s.error);
+    assert!(s.draft_preview.is_none());
     assert!(
         w.read("04_Requirements/PRD/PRD-TEST.md")
             .unwrap()
             .contains("evidence_paths")
     );
     let req = requests.lock().unwrap();
+    assert_eq!(req.len(), 4);
     assert!(
         req[1]["messages"]
             .as_array()
@@ -1042,6 +1070,180 @@ async fn tool_roundtrip_creates_a_sourced_draft_and_preserves_hashes() {
             .iter()
             .any(|m| m["role"] == "tool" && m["tool_call_id"] == "read")
     );
+    let run = w.read(&format!("90_Agent/Runs/RUN-{}.md", s.id)).unwrap();
+    assert!(run.contains("## Applied draft previews"));
+    assert!(run.contains(&preview_id));
+    assert!(run.contains(&hash(w.read(path).unwrap().as_bytes())));
+    server.abort();
+}
+
+#[tokio::test]
+async fn chat_draft_preview_rejects_changes_to_the_original_source_or_baseline() {
+    use pm_agent::{baselines, records::Records};
+
+    for changed in ["original", "source", "baseline", "baseline_decision"] {
+        let (_dir, w) = fixture();
+        let mut args = grounding_args(&w, "Integer durations from 1 through 7 are valid.");
+        let path = args["path"].as_str().unwrap().to_owned();
+        let source = args["citations"][0]["path"].as_str().unwrap().to_owned();
+        let original = note(json!({"id":"PRD-GROUND","type":"prd","title":"Grounding fixture","version":1,"doc_status":"draft","language":"en"}), "# Grounding fixture\n\nPrevious text.").unwrap();
+        atomic_write(&w.path(&path).unwrap(), original.as_bytes()).unwrap();
+        args["expected_hash"] = json!(hash(original.as_bytes()));
+        let baseline = baselines::capture(
+            &Records::load(&w).unwrap(),
+            "BL-PREVIEW",
+            &["PRD-GROUND".into()],
+        )
+        .unwrap();
+        let manifest = baseline["manifest"].as_str().unwrap();
+        let review = supported_review(
+            &source,
+            args["content"].as_str().unwrap(),
+            &w.read(&source).unwrap(),
+        );
+        let (url, _, requests, server) = server(vec![
+            chat("", vec![call(0, "draft", "write_draft", args)]),
+            review,
+        ])
+        .await;
+        let cfg = config(url, Protocol::ChatCompletions);
+        let rt = Runtime::open_chat(w.clone(), cfg.clone()).await.unwrap();
+        let mut s = Session::new(&cfg, "prd").unwrap();
+        rt.input(&mut s, "Propose the updated PRD.").unwrap();
+        rt.run(&mut s, None, &events().0, &CancellationToken::new())
+            .await
+            .unwrap();
+        assert_eq!(s.status, Status::WaitingDraftReview, "{:?}", s.error);
+        let preview = s.draft_preview.as_ref().unwrap();
+        assert!(preview.text.contains("Previous text."));
+        assert!(preview.text.contains("BL-PREVIEW"));
+        let preview_id = preview.id.clone();
+        rt.confirm_draft(&mut s, &preview_id).unwrap();
+        match changed {
+            "original" => atomic_write(
+                &w.path(&path).unwrap(),
+                format!("{original}\nExternal edit\n").as_bytes(),
+            )
+            .unwrap(),
+            "source" => {
+                atomic_write(&w.path(&source).unwrap(), b"Source changed after preview").unwrap()
+            }
+            "baseline" => {
+                let mut value: Value = serde_json::from_str(&w.read(manifest).unwrap()).unwrap();
+                value["created_at"] = json!("changed after preview");
+                atomic_write(
+                    &w.path(manifest).unwrap(),
+                    &serde_json::to_vec(&value).unwrap(),
+                )
+                .unwrap();
+            }
+            "baseline_decision" => {
+                let decision = note(json!({"id":"DEC-PREVIEW","type":"decision","title":"Baseline decision","decision_type":"baseline_approval","baseline_id":"BL-PREVIEW","baseline_sha256":baseline["manifest_sha256"],"workflow_status":"accepted","decided_by":"Synthetic fixture","decided_at":"2026-10-15T00:00:00Z","decision_evidence":"Fixture","language":"en"}), "# Baseline decision").unwrap();
+                atomic_write(
+                    &w.path("07_Decisions/DEC-PREVIEW.md").unwrap(),
+                    decision.as_bytes(),
+                )
+                .unwrap();
+            }
+            _ => unreachable!(),
+        }
+        let current = w.read(&path).unwrap();
+        rt.run(&mut s, None, &events().0, &CancellationToken::new())
+            .await
+            .unwrap();
+        assert_eq!(s.status, Status::Failed, "{changed}: {:?}", s.error);
+        assert!(
+            s.error
+                .as_deref()
+                .unwrap()
+                .contains("Draft preview is stale")
+        );
+        assert!(s.draft_preview.is_none() && s.pending.is_empty());
+        assert_eq!(w.read(&path).unwrap(), current);
+        assert!(rt.store.calls(&s.id).unwrap().is_empty());
+        assert_eq!(requests.lock().unwrap().len(), 2);
+        server.abort();
+    }
+}
+
+#[tokio::test]
+async fn chat_cli_reopens_and_applies_only_the_named_draft_preview() {
+    let (_dir, w) = fixture();
+    let args = grounding_args(&w, "Integer durations from 1 through 7 are valid.");
+    let path = args["path"].as_str().unwrap().to_owned();
+    let source = args["citations"][0]["path"].as_str().unwrap();
+    let review = supported_review(
+        source,
+        args["content"].as_str().unwrap(),
+        &w.read(source).unwrap(),
+    );
+    let (url, _, requests, server) = server(vec![
+        chat("", vec![call(0, "cli-draft", "write_draft", args)]),
+        review,
+        chat("Confirmed draft saved.", vec![]),
+    ])
+    .await;
+    let cfg = config(url, Protocol::ChatCompletions);
+    let config_path = w.path(".pm-agent/config.toml").unwrap();
+    atomic_write(&config_path, toml::to_string(&cfg).unwrap().as_bytes()).unwrap();
+    let chat_command = || {
+        let mut command = tokio::process::Command::new(env!("CARGO_BIN_EXE_pm-agent"));
+        command
+            .arg("--vault")
+            .arg(&w.root)
+            .arg("--config")
+            .arg(&config_path)
+            .arg("chat");
+        command
+    };
+    let proposed = chat_command()
+        .args(["--stage", "prd", "Propose a PRD draft."])
+        .output()
+        .await
+        .unwrap();
+    let preview_output = String::from_utf8(proposed.stderr).unwrap();
+    assert!(proposed.status.success(), "{preview_output}");
+    assert!(
+        preview_output.contains("Proposed changes") && preview_output.contains("--apply-draft")
+    );
+    let store =
+        pm_agent::store::Store::open(&w.path(".pm-agent/runtime.sqlite3").unwrap()).unwrap();
+    let (session_id, _) = store.sessions().unwrap().pop().unwrap();
+    let session: Session = store.load(&session_id).unwrap();
+    let preview = session.draft_preview.unwrap();
+
+    let reopened = chat_command()
+        .args(["--session", &session_id])
+        .output()
+        .await
+        .unwrap();
+    assert!(reopened.status.success());
+    assert!(
+        String::from_utf8(reopened.stderr)
+            .unwrap()
+            .contains(&preview.id)
+    );
+    let wrong = chat_command()
+        .args(["--session", &session_id, "--apply-draft", "wrong"])
+        .output()
+        .await
+        .unwrap();
+    assert!(!wrong.status.success());
+    assert!(!w.path(&path).unwrap().exists());
+    assert_eq!(requests.lock().unwrap().len(), 2);
+
+    let applied = chat_command()
+        .args(["--session", &session_id, "--apply-draft", &preview.id])
+        .output()
+        .await
+        .unwrap();
+    assert!(
+        applied.status.success(),
+        "{}",
+        String::from_utf8_lossy(&applied.stderr)
+    );
+    assert!(w.path(&path).unwrap().is_file());
+    assert_eq!(requests.lock().unwrap().len(), 3);
     server.abort();
 }
 
@@ -1052,7 +1254,7 @@ async fn scoped_question_allows_explicit_independent_work_but_blocks_other_sessi
     atomic_write(&w.path(root).unwrap(),note(json!({"id":"REQ-SCOPED","type":"requirement","title":"Synthetic","language":"en","doc_status":"draft"}),"# Synthetic gap").unwrap().as_bytes()).unwrap();
     let (url,queue,_,server)=server(vec![chat("",vec![call(0,"ask-scope","ask_clarification",json!({"question":"Which rule applies?","body":"Supply the missing rule for REQ-SCOPED.","blocking_scope":"records","affected_ids":["REQ-SCOPED"]}))])]).await;
     let cfg = config(url, Protocol::ChatCompletions);
-    let rt = Runtime::open(w.clone(), cfg.clone()).await.unwrap();
+    let rt = Runtime::open_chat(w.clone(), cfg.clone()).await.unwrap();
     let mut s = Session::new(&cfg, "prd").unwrap();
     rt.input(&mut s, "Inspect the synthetic source.").unwrap();
     rt.run(&mut s, None, &events().0, &CancellationToken::new())
@@ -1075,6 +1277,15 @@ async fn scoped_question_allows_explicit_independent_work_but_blocks_other_sessi
         ),
         chat("Independent work saved; the rule remains unknown.", vec![]),
     ]);
+    rt.run(&mut s, None, &events().0, &CancellationToken::new())
+        .await
+        .unwrap();
+    assert_eq!(s.status, Status::WaitingDraftReview);
+    let preview = s.draft_preview.as_ref().unwrap();
+    assert!(preview.text.contains(&question));
+    assert!(preview.text.contains("Which rule applies?"));
+    let preview_id = preview.id.clone();
+    rt.confirm_draft(&mut s, &preview_id).unwrap();
     rt.run(&mut s, None, &events().0, &CancellationToken::new())
         .await
         .unwrap();

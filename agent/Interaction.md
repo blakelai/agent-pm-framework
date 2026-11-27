@@ -82,6 +82,12 @@ A selection binds the saved conversation and exact pending call. A changed pendi
 
 Conversation permissions are persisted with that session. Global permissions live in the separate user settings file described in [application setup](README.md#tool-approval-choices). Both apply to the current tool with different future arguments; PM permissions distinguish subcommands and MCP permissions bind server configuration and parameter schema. All existing execution and clarification checks still apply.
 
+## PRD draft review
+
+After source review supports a PRD draft, Chat displays the proposed changes, cited sources and hashes, applicable baseline manifests, and open questions. Page Up/Down scrolls the preview. Choose **Apply reviewed draft** to confirm this exact proposal or **Discard and stop** to drop it. Esc discards the preview. Restoring the conversation with `/resume ID` restores the pending preview and choices. The composer keeps unsent text and attachments during review.
+
+Before applying, the runtime checks the original document, source packet and applicable baseline versions and decisions again. Applicable baselines are captured manifests containing the PRD ID or referenced by cited project records and baseline files. If any inputs changed, use `/continue` to have the Agent reread them and propose a fresh preview. A successful write records the preview ID, confirmation time and saved document hash in the Run. Confirmation authorizes only this draft write and leaves human semantic review and project approval pending. [Source-to-claim review](Grounding.md)
+
 ## Command and Skill suggestions
 
 Type `/` at the start of the composer to open command suggestions; continued typing filters them. `/stage ` offers workflow stages and `/pm ` offers the native command catalog. Type `$` as a leading activation token to filter valid project Skills by name. Multiple leading Skills are supported. A `$` inside ordinary prose does not activate a Skill or open its picker.

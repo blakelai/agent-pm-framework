@@ -75,6 +75,9 @@ enum Command {
         session: Option<String>,
         #[arg(long, conflicts_with = "deny")]
         approve: bool,
+        /// Confirm the exact PRD draft preview shown by Chat.
+        #[arg(long, requires = "session", conflicts_with_all = ["prompt", "approve", "deny", "reconcile", "independent", "answer", "skills"])]
+        apply_draft: Option<String>,
         #[arg(long)]
         deny: bool,
         #[arg(long)]
@@ -366,6 +369,7 @@ async fn main() -> Result<()> {
             skills,
             session,
             approve,
+            apply_draft,
             deny,
             reconcile,
             independent,
@@ -380,15 +384,21 @@ async fn main() -> Result<()> {
                     .first()
                     .context("No call awaiting approval")?
                     .clone();
+                let draft = saved.status == Status::WaitingDraftReview;
                 pm_agent::approval::deny(&workspace, &store, &mut saved, &call)?;
                 eprintln!(
-                    "Session: {}\nState: Cancelled\nTool use denied; Agent response stopped.",
-                    saved.id
+                    "Session: {}\nState: Cancelled\n{}",
+                    saved.id,
+                    if draft {
+                        "Draft preview discarded; Agent response stopped."
+                    } else {
+                        "Tool use denied; Agent response stopped."
+                    }
                 );
                 return Ok(());
             }
             let config = Config::load(&config_path)?;
-            let runtime = Runtime::open(workspace, config).await?;
+            let runtime = Runtime::open_chat(workspace, config).await?;
             let mut s = match session {
                 Some(id) => runtime.store.load::<Session>(&id)?,
                 None => Session::new(&runtime.config, &stage)?,
@@ -411,6 +421,9 @@ async fn main() -> Result<()> {
                     approved = s.pending.first().map(|c| c.id.clone());
                 }
                 runtime.decision(&mut s, approve)?;
+            }
+            if let Some(preview_id) = apply_draft {
+                runtime.confirm_draft(&mut s, &preview_id)?;
             }
             if let Some(result) = reconcile {
                 runtime.reconcile(&mut s, &result)?;
@@ -454,13 +467,29 @@ async fn main() -> Result<()> {
                     }
                 }
             });
-            if !(approve && s.status == Status::WaitingApproval) {
+            if !(approve && s.status == Status::WaitingApproval
+                || s.status == Status::WaitingDraftReview)
+            {
                 runtime.run(&mut s, approved, &tx, &cancel).await?;
             } else if let Some(error) = &s.error {
                 eprintln!("{error}");
             }
             drop(tx);
             printer.await?;
+            if s.status == Status::WaitingDraftReview {
+                let preview = s
+                    .draft_preview
+                    .as_ref()
+                    .context("Missing saved draft preview")?;
+                eprintln!(
+                    "\nDraft preview {}\n{}\nApply: pm-agent --vault <workspace> --config <config> chat --session {} --apply-draft {}\nDiscard: pm-agent --vault <workspace> chat --session {} --deny",
+                    preview.id,
+                    pm_agent::diagnostics::readable(&preview.text),
+                    s.id,
+                    preview.id,
+                    s.id
+                );
+            }
             eprintln!(
                 "\nSession: {}\nState: {:?}\nResume: pm-agent --vault <workspace> --config <config> chat --session {} [reply]",
                 s.id, s.status, s.id

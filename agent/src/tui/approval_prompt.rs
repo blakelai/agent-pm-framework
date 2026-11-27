@@ -19,29 +19,43 @@ const OPTIONS: [(Decision, &str); 4] = [
     (Decision::Always, "3. Always allow (global settings)"),
     (Decision::Deny, "4. Deny and stop"),
 ];
+const DRAFT_OPTIONS: [(Decision, &str); 2] = [
+    (Decision::Once, "1. Apply reviewed draft"),
+    (Decision::Deny, "2. Discard and stop"),
+];
 #[derive(Debug, PartialEq)]
 pub struct Selection {
     pub session_id: String,
     pub call: Call,
     pub decision: Decision,
+    pub preview_id: Option<String>,
 }
 pub(super) struct Prompt {
     pub session_id: String,
     pub call: Call,
+    pub preview_id: Option<String>,
     pub area: Rect,
     selected: usize,
     offset: usize,
     choices: Rect,
 }
 impl Prompt {
-    pub fn new(session_id: String, call: Call) -> Self {
+    pub fn new(session_id: String, call: Call, preview_id: Option<String>) -> Self {
         Self {
             session_id,
             call,
+            preview_id,
             area: Rect::default(),
             selected: 0,
             offset: 0,
             choices: Rect::default(),
+        }
+    }
+    fn options(&self) -> &'static [(Decision, &'static str)] {
+        if self.preview_id.is_some() {
+            &DRAFT_OPTIONS
+        } else {
+            &OPTIONS
         }
     }
     pub fn key(&mut self, key: KeyEvent) -> Option<Decision> {
@@ -54,26 +68,34 @@ impl Prompt {
         {
             return None;
         }
+        let options = self.options();
         match key.code {
-            KeyCode::Up | KeyCode::BackTab => self.selected = (self.selected + 3) % 4,
-            KeyCode::Down | KeyCode::Tab => self.selected = (self.selected + 1) % 4,
-            KeyCode::Char(c @ '1'..='4') => self.selected = c as usize - '1' as usize,
-            KeyCode::Enter => return Some(OPTIONS[self.selected].0),
+            KeyCode::Up | KeyCode::BackTab => {
+                self.selected = (self.selected + options.len() - 1) % options.len()
+            }
+            KeyCode::Down | KeyCode::Tab => self.selected = (self.selected + 1) % options.len(),
+            KeyCode::Char(c @ '1'..='4') if (c as usize - '1' as usize) < options.len() => {
+                self.selected = c as usize - '1' as usize
+            }
+            KeyCode::Enter => return Some(options[self.selected].0),
             _ => {}
         }
         None
     }
     pub fn mouse(&mut self, mouse: MouseEvent) -> Option<Decision> {
+        let options = self.options();
         match mouse.kind {
             MouseEventKind::ScrollUp => self.selected = self.selected.saturating_sub(1),
-            MouseEventKind::ScrollDown => self.selected = (self.selected + 1).min(3),
+            MouseEventKind::ScrollDown => {
+                self.selected = (self.selected + 1).min(options.len() - 1)
+            }
             MouseEventKind::Down(MouseButton::Left)
                 if self.choices.contains((mouse.column, mouse.row).into()) =>
             {
                 let index = self.offset + mouse.row.saturating_sub(self.choices.y) as usize;
-                if index < 4 {
+                if index < options.len() {
                     self.selected = index;
-                    return Some(OPTIONS[index].0);
+                    return Some(options[index].0);
                 }
             }
             _ => {}
@@ -81,9 +103,19 @@ impl Prompt {
         None
     }
     pub fn height(&self, width: u16) -> u16 {
-        self.description(width.saturating_sub(2) as usize).len() as u16 + 7
+        self.description(width.saturating_sub(2) as usize).len() as u16
+            + self.options().len() as u16
+            + 3
     }
     fn description(&self, width: usize) -> Vec<Line<'static>> {
+        if self.preview_id.is_some() {
+            return markdown::wrap(
+                vec![Line::raw(
+                    "Review the diff and citations above · Page Up to scroll",
+                )],
+                width,
+            );
+        }
         let args: Value = serde_json::from_str(&self.call.arguments).unwrap_or_default();
         let content = if self.call.name == "pm" {
             let args = args["args"]
@@ -133,7 +165,11 @@ impl Prompt {
         let style = Style::default().bg(Color::DarkGray).fg(Color::White);
         let block = Block::default()
             .borders(Borders::ALL)
-            .title(" Tool approval ")
+            .title(if self.preview_id.is_some() {
+                " Draft review "
+            } else {
+                " Tool approval "
+            })
             .style(style);
         let inner = block.inner(area);
         frame.render_widget(block, area);
@@ -142,7 +178,10 @@ impl Prompt {
         let rows = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
-                Constraint::Length((description.len() as u16).min(inner.height.saturating_sub(5))),
+                Constraint::Length(
+                    (description.len() as u16)
+                        .min(inner.height.saturating_sub(self.options().len() as u16 + 1)),
+                ),
                 Constraint::Min(0),
                 Constraint::Length(inner.height.min(1)),
             ])
@@ -151,7 +190,7 @@ impl Prompt {
         let mut state = ListState::default().with_selected(Some(self.selected));
         *state.offset_mut() = self.offset;
         frame.render_stateful_widget(
-            List::new(OPTIONS.iter().map(|(_, label)| {
+            List::new(self.options().iter().map(|(_, label)| {
                 ListItem::new(transcript::ellipsize(label, width.saturating_sub(2)))
             }))
             .style(style)
@@ -164,7 +203,11 @@ impl Prompt {
         self.choices = rows[1];
         frame.render_widget(
             Paragraph::new(transcript::ellipsize(
-                "↑↓ / 1–4 select · Enter confirm · Esc deny",
+                if self.preview_id.is_some() {
+                    "↑↓ / 1–2 select · Enter confirm · Esc discard"
+                } else {
+                    "↑↓ / 1–4 select · Enter confirm · Esc deny"
+                },
                 width,
             ))
             .style(style),

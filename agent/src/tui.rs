@@ -398,8 +398,12 @@ fn finish_chat_outcome(
     mut session: Session,
     stop_requested: bool,
 ) {
-    // Esc may arrive after the worker saved WaitingApproval but before the UI receives it.
-    let error = if stop_requested && session.status == Status::WaitingApproval {
+    // Esc may arrive after the worker saved a pending decision and before the UI receives it.
+    let error = if stop_requested
+        && matches!(
+            session.status,
+            Status::WaitingApproval | Status::WaitingDraftReview
+        ) {
         session
             .pending
             .first()
@@ -434,33 +438,51 @@ fn decide_tool(
     );
     let mut session: Session = store.load(&selection.session_id)?;
     anyhow::ensure!(
-        session.status == Status::WaitingApproval
-            && session.pending.first() == Some(&selection.call),
+        matches!(
+            session.status,
+            Status::WaitingApproval | Status::WaitingDraftReview
+        ) && session.pending.first() == Some(&selection.call)
+            && session.draft_preview.as_ref().map(|preview| &preview.id)
+                == selection.preview_id.as_ref(),
         "Pending tool changed; review the current approval request"
     );
     if selection.decision == crate::approval::Decision::Deny {
         let result = crate::approval::deny(workspace, store, &mut session, &selection.call);
         app.finish_session(session);
         result?;
-        app.notice("Tool use denied; Agent response stopped.");
+        app.notice(if selection.preview_id.is_some() {
+            "Draft preview discarded; Agent response stopped."
+        } else {
+            "Tool use denied; Agent response stopped."
+        });
         return Ok(None);
     }
     let config = Config::load(config_path)?;
     let workspace = workspace.clone();
     let expected = selection.call.clone();
     let decision = selection.decision;
+    let preview_id = selection.preview_id.clone();
     let tx = tx.clone();
     let done = done.clone();
     let cancel = CancellationToken::new();
     let signal = cancel.clone();
     tokio::spawn(async move {
         let result = async {
-            let runtime = Runtime::open(workspace, config).await?;
+            let runtime = Runtime::open_chat(workspace, config).await?;
             anyhow::ensure!(
                 !signal.is_cancelled(),
                 "Cancelled before recording the tool approval"
             );
-            let approved = runtime.decide_approval(&mut session, &expected, decision)?;
+            let approved = if let Some(preview_id) = preview_id {
+                anyhow::ensure!(
+                    decision == crate::approval::Decision::Once,
+                    "Confirm this draft once after reviewing its preview"
+                );
+                runtime.confirm_draft(&mut session, &preview_id)?;
+                None
+            } else {
+                runtime.decide_approval(&mut session, &expected, decision)?
+            };
             if session.status == Status::WaitingApproval {
                 if let Some(error) = &session.error {
                     let _ = tx.send(Event::Notice(error.clone()));
@@ -512,6 +534,7 @@ fn dispatch(
             session_id: id,
             call,
             decision,
+            preview_id: None,
         };
         return decide_tool(workspace, config_path, app, store, &selection, tx, done);
     }
@@ -610,10 +633,14 @@ fn dispatch(
     }
     if let Some(id) = input.strip_prefix("/resume ") {
         let s: Session = store.load(id.trim())?;
-        app.status = format!(
-            "Loaded {:?}; /continue or answer its pending question",
-            s.status
-        );
+        app.status = if s.status == Status::WaitingDraftReview {
+            "Loaded the pending PRD draft preview".into()
+        } else {
+            format!(
+                "Loaded {:?}; /continue or answer its pending question",
+                s.status
+            )
+        };
         app.stage = s.stage.clone();
         app.usage = s.usage.clone();
         app.resume_chat(&s);
@@ -767,7 +794,7 @@ fn dispatch(
     tokio::spawn(async move {
         let mut input_accepted = false;
         let result = async {
-            let runtime = Runtime::open(workspace, config).await?;
+            let runtime = Runtime::open_chat(workspace, config).await?;
             match action {
                 Action::Message(input) => {
                     runtime.input_with_images(&mut session, &input, &images)?
@@ -828,6 +855,7 @@ mod tests {
             session_id: session.id.clone(),
             call: session.pending[0].clone(),
             decision: crate::approval::Decision::Deny,
+            preview_id: None,
         };
         session.pending[0].arguments = "{\"changed\":true}".into();
         store.save(&session.id, &session).unwrap();

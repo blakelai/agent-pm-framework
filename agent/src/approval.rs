@@ -81,7 +81,10 @@ pub fn deny(
         workspace::{note, parse_note},
     };
     ensure!(
-        session.status == Status::WaitingApproval && session.pending.first() == Some(expected),
+        matches!(
+            session.status,
+            Status::WaitingApproval | Status::WaitingDraftReview
+        ) && session.pending.first() == Some(expected),
         "Pending tool changed; review the current approval request"
     );
     for (index, call) in session.pending.drain(..).enumerate() {
@@ -102,6 +105,7 @@ pub fn deny(
     }
     session.status = Status::Cancelled;
     session.pending_approval = None;
+    session.draft_preview = None;
     session.error = None;
     session.approval_decisions.push(Record {
         call_id: expected.id.clone(),

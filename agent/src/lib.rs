@@ -9,6 +9,7 @@ pub mod delivery;
 pub mod diagnostics;
 pub mod distribution;
 pub mod doctor;
+mod draft_preview;
 pub mod editing;
 pub mod evaluation;
 mod extraction;

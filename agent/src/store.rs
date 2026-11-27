@@ -55,6 +55,15 @@ impl Store {
         );
         Ok(calls)
     }
+    pub(crate) fn saved_draft_results(&self, session: &str) -> Result<Vec<String>> {
+        let connection = self.conn.lock().unwrap();
+        let mut statement = connection.prepare(
+            "SELECT result FROM ledger WHERE session=?1 AND name='write_draft' AND status='completed' AND result IS NOT NULL ORDER BY rowid",
+        )?;
+        Ok(statement
+            .query_map([session], |row| row.get(0))?
+            .collect::<rusqlite::Result<_>>()?)
+    }
     pub fn begin_call(&self, session: &str, id: &str, name: &str, args: &str) -> Result<()> {
         self.conn.lock().unwrap().execute("INSERT INTO ledger(session,call_id,name,arguments,status) VALUES (?1,?2,?3,?4,'started')",params![session,id,name,args])?;
         Ok(())

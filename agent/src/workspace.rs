@@ -408,6 +408,12 @@ impl Workspace {
                 meta["doc_status"] == "draft",
                 "Only existing draft documents can be edited by the Agent"
             );
+            if meta["type"] == "prd" || m["type"] == "prd" {
+                ensure!(
+                    meta["type"] == m["type"] && meta["id"] == m["id"],
+                    "A PRD draft update must preserve its record type and ID"
+                );
+            }
             ensure!(
                 meta.get("baseline_id").is_none_or(Value::is_null),
                 "Pinned content requires a new versioned draft"
