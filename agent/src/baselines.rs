@@ -116,6 +116,11 @@ pub fn load(workspace: &Workspace, id: &str) -> Result<(Value, String)> {
 }
 pub fn approval(records: &Records, id: &str) -> Result<(Value, String)> {
     let (manifest, sha) = load(&records.workspace, id)?;
+    let decision = approved_decision(records, id, &sha)?;
+    Ok((manifest, decision))
+}
+
+pub(crate) fn approved_decision(records: &Records, id: &str, sha: &str) -> Result<String> {
     let matching: Vec<_> = records
         .active
         .iter()
@@ -141,7 +146,7 @@ pub fn approval(records: &Records, id: &str) -> Result<(Value, String)> {
                 .iter()
                 .all(|k| truth(&m[k]))
         {
-            return Ok((manifest, d.path.clone()));
+            return Ok(d.path.clone());
         }
     }
     bail!("No accepted decision for this exact baseline manifest: {id}")

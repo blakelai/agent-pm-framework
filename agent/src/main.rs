@@ -1,8 +1,9 @@
 mod chat_cli;
 
 use anyhow::{Result, ensure};
-use clap::{Parser, Subcommand};
+use clap::{Args, Parser, Subcommand};
 use pm_agent::{
+    change_review,
     config::Config,
     goals::{self, Criteria},
     provider::Event,
@@ -71,6 +72,11 @@ enum Command {
         #[command(subcommand)]
         action: GoalAction,
     },
+    /// Compare controlled document versions and record version-pinned change reviews.
+    ChangeReview {
+        #[command(subcommand)]
+        action: ReviewAction,
+    },
     /// Validate configuration and selected Chat prerequisites without contacting services.
     Doctor {
         #[arg(long, default_value = "workflow")]
@@ -86,6 +92,54 @@ enum Command {
         last: bool,
     },
 }
+#[derive(Args)]
+struct ReviewSelection {
+    /// Stable ID of the controlled document.
+    id: String,
+    /// Manifest with an accepted approval decision.
+    #[arg(long)]
+    baseline: String,
+    /// Captured candidate manifest. Omit to select the active document.
+    #[arg(long)]
+    candidate: Option<String>,
+    /// Additional evidence record IDs to include in the review.
+    #[arg(long)]
+    evidence: Vec<String>,
+}
+
+impl From<ReviewSelection> for change_review::Request {
+    fn from(selection: ReviewSelection) -> Self {
+        Self {
+            id: selection.id,
+            baseline: selection.baseline,
+            candidate: selection.candidate,
+            evidence: selection.evidence,
+        }
+    }
+}
+
+#[derive(Subcommand)]
+enum ReviewAction {
+    /// Read the diff, recorded references and mechanical findings as JSON.
+    Compare {
+        #[command(flatten)]
+        selection: ReviewSelection,
+    },
+    /// Save a new review report against an explicitly reviewed comparison basis.
+    Record {
+        #[command(flatten)]
+        selection: ReviewSelection,
+        #[arg(long)]
+        review_id: String,
+        /// Exact basis_sha256 returned by compare.
+        #[arg(long)]
+        expect: String,
+        /// File containing operator-supplied semantic findings as JSON.
+        #[arg(long)]
+        findings: Option<PathBuf>,
+    },
+}
+
 #[derive(Subcommand)]
 enum GoalAction {
     /// Save a goal and its exact draft scope. Starts a new session when no ID is supplied.
@@ -386,6 +440,31 @@ async fn main() -> Result<()> {
         }
         Command::Doctor { .. } => unreachable!("Doctor runs before acquiring a writer"),
         Command::Chat(_) => unreachable!("Chat is dispatched with its own output mode"),
+        Command::ChangeReview { action } => match action {
+            ReviewAction::Compare { selection } => {
+                let review = change_review::load(&workspace, &selection.into())?;
+                println!("{}", serde_json::to_string_pretty(&review)?);
+            }
+            ReviewAction::Record {
+                selection,
+                review_id,
+                expect,
+                findings,
+            } => {
+                let findings = findings
+                    .as_deref()
+                    .map(change_review::Observations::read)
+                    .transpose()?;
+                let receipt = change_review::record(
+                    &workspace,
+                    &selection.into(),
+                    &review_id,
+                    &expect,
+                    findings.as_ref(),
+                )?;
+                println!("{}", serde_json::to_string_pretty(&receipt)?);
+            }
+        },
         Command::Goal { action } => {
             let store = Store::open(&workspace.path(".pm-agent/runtime.sqlite3")?)?;
             let (session, json) = match action {

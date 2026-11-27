@@ -23,6 +23,13 @@ fn escaped(text: &str) -> String {
         .collect()
 }
 
+const TABS: [&str; 4] = [
+    "1 Impact",
+    "2 Baseline diff",
+    "3 Source diff",
+    "4 Change review",
+];
+
 pub struct Inspector {
     pub request: Request,
     pub ticket: Option<u64>,
@@ -80,6 +87,15 @@ impl Inspector {
         self.ticket = None;
         match result {
             Ok(snapshot) => {
+                let reviewed_baseline = match (self.tab, &self.request.target) {
+                    (1, Target::Baseline(id)) | (3, Target::Review(id)) => Some(id),
+                    _ => None,
+                };
+                if let Some(index) = reviewed_baseline
+                    .and_then(|id| snapshot.baselines.iter().position(|entry| entry == id))
+                {
+                    self.selected = index;
+                }
                 self.snapshot = Some(snapshot);
                 self.message =
                     "Read-only. R revalidates captured bytes; no live repository sync.".into();
@@ -118,7 +134,7 @@ impl Inspector {
                 .iter()
                 .map(|c| format!("{} · {}", c.id, c.kind))
                 .collect(),
-            1 => s.baselines.clone(),
+            1 | 3 => s.baselines.clone(),
             _ => vec![s.id.clone()],
         }
     }
@@ -144,17 +160,32 @@ impl Inspector {
         self.scroll = 0;
         self.cache = None;
     }
+    fn selected_baseline(&self) -> Option<Target> {
+        let id = self
+            .snapshot
+            .as_ref()?
+            .baselines
+            .get(self.selected)?
+            .clone();
+        match self.tab {
+            1 => Some(Target::Baseline(id)),
+            3 => Some(Target::Review(id)),
+            _ => None,
+        }
+    }
     fn action(&mut self, key: char) -> Command {
         match key {
             'r' => self.reload(match self.tab {
                 0 => Target::Impact,
-                1 => self
-                    .snapshot
-                    .as_ref()
-                    .and_then(|s| s.baselines.get(self.selected))
-                    .map(|id| Target::Baseline(id.clone()))
-                    .unwrap_or_else(|| self.request.target.clone()),
-                _ => Target::Source,
+                2 => Target::Source,
+                t => self
+                    .selected_baseline()
+                    .unwrap_or_else(|| match (&self.request.target, t) {
+                        (Target::Baseline(_), 1) | (Target::Review(_), 3) => {
+                            self.request.target.clone()
+                        }
+                        _ => Target::Impact,
+                    }),
             }),
             'x' => Command::CloseInspection,
             'o' => self
@@ -174,15 +205,9 @@ impl Inspector {
                 .unwrap_or(Command::None),
             'c' => {
                 self.detail_focus = true;
-                if self.tab == 1 {
-                    self.snapshot
-                        .as_ref()
-                        .and_then(|s| s.baselines.get(self.selected))
-                        .map(|id| self.reload(Target::Baseline(id.clone())))
-                        .unwrap_or(Command::None)
-                } else {
-                    Command::None
-                }
+                self.selected_baseline()
+                    .map(|target| self.reload(target))
+                    .unwrap_or(Command::None)
             }
             'm' => {
                 self.maximized = !self.maximized;
@@ -200,16 +225,16 @@ impl Inspector {
                     return Command::Quit;
                 }
                 match k.code {
-                    KeyCode::Char(c @ '1'..='3')
+                    KeyCode::Char(c @ '1'..='4')
                         if k.modifiers.is_empty() || k.modifiers == KeyModifiers::ALT =>
                     {
                         return self.switch(c as usize - '1' as usize);
                     }
                     KeyCode::Left if k.modifiers == KeyModifiers::ALT => {
-                        return self.switch((self.tab + 2) % 3);
+                        return self.switch((self.tab + TABS.len() - 1) % TABS.len());
                     }
                     KeyCode::Right if k.modifiers == KeyModifiers::ALT => {
-                        return self.switch((self.tab + 1) % 3);
+                        return self.switch((self.tab + 1) % TABS.len());
                     }
                     KeyCode::Tab | KeyCode::BackTab => self.detail_focus = !self.detail_focus,
                     KeyCode::Enter => return self.action('c'),
@@ -336,6 +361,12 @@ impl Inspector {
         {
             return markdown::render("# Select a captured baseline\n\nEnter, Compare, or right-click explicitly compares the selected candidate. Membership, integrity and recorded approval are checked then. No baseline is selected automatically.\n\nAn empty list means no captured baseline manifests were found.",width as usize).lines;
         }
+        if self.tab == 3 && self.selected_baseline().as_ref() != Some(&self.request.target) {
+            return markdown::render(
+                "# Select an approved baseline\n\nEnter compares the active document with the selected baseline and checks its approval. The CLI can compare two captured versions and save a review report.",
+                width as usize,
+            ).lines;
+        }
         if self.tab == 2 && self.request.target != Target::Source {
             return markdown::render(
                 "Use R to compare this evidence with its latest registered snapshot.",
@@ -345,6 +376,22 @@ impl Inspector {
         }
         if let Some(error) = &s.comparison_error {
             return markdown::render(&format!("# Comparison unavailable\n\n{error}\n\nSupply or repair the referenced data; R revalidates."),width as usize).lines;
+        }
+        if self.tab == 3
+            && let Some(review) = &s.change_review
+        {
+            let details = review.summary();
+            let clip = details.floor_char_boundary(details.len().min(200_000));
+            let tail = if clip < details.len() {
+                "\nDisplay limited to 200,000 bytes. Use the CLI for the complete review.\n"
+            } else {
+                ""
+            };
+            let text = format!(
+                "# Version-pinned change review\n\n{}\n{tail}\n## Semantic findings\n\nPending. Use change-review record to save operator observations for this comparison.\n\n## Exact text differences\n\n",
+                &details[..clip]
+            );
+            return self.diff_lines(&text, Some(&review.diff), width);
         }
         let Some(c) = &s.comparison else {
             return markdown::render("Use R to load the selected comparison.", width as usize)
@@ -359,11 +406,20 @@ impl Inspector {
                     .unwrap_or_else(|| v.to_string())
             ));
         }
-        if let Some(d) = &c.diff {
+        self.diff_lines(&text, c.diff.as_ref(), width)
+    }
+    fn diff_lines(
+        &self,
+        text: &str,
+        diff: Option<&crate::inspection::Diff>,
+        width: u16,
+    ) -> Vec<Line<'static>> {
+        let mut text = text.to_owned();
+        if let Some(d) = diff {
             text.push_str(&format!("\nOld SHA256: {}\n\nNew SHA256: {}\n\n{}; final newline old={} new={}\n\nOld / New line numbers; + added, - removed. Control characters are escaped.\n\n",d.old_sha256,d.new_sha256,d.algorithm,d.old_final_newline,d.new_final_newline));
         }
         let mut lines = markdown::render(&text, width as usize).lines;
-        if let Some(d) = &c.diff {
+        if let Some(d) = diff {
             let mut raw = vec![];
             let mut budget = 200_000usize;
             let mut clipped = false;
@@ -392,7 +448,7 @@ impl Inspector {
             }
             lines.extend(markdown::wrap(raw, width as usize));
             if clipped {
-                lines.extend(markdown::render("\nDisplay limited to 200,000 characters. Use pm inspect for the complete bounded comparison; omitted text is not verified by this display.",width as usize).lines);
+                lines.extend(markdown::render("\nDisplay limited to 200,000 characters. Use the CLI for the complete comparison.",width as usize).lines);
             }
         }
         lines
@@ -410,13 +466,10 @@ impl Inspector {
             .split(f.area());
         self.tabs = Layout::default()
             .direction(Direction::Horizontal)
-            .constraints([Constraint::Ratio(1, 3); 3])
+            .constraints([Constraint::Ratio(1, TABS.len() as u32); TABS.len()])
             .split(rows[0])
             .to_vec();
-        for (i, label) in ["1 Impact", "2 Baseline diff", "3 Source diff"]
-            .iter()
-            .enumerate()
-        {
+        for (i, label) in TABS.iter().enumerate() {
             f.render_widget(
                 Paragraph::new(*label).style(Style::default().fg(if self.tab == i {
                     Color::Cyan
@@ -577,6 +630,7 @@ mod tests {
                 diff: Some(diff("old\u{1b}[31m\n", &"new 中文\n".repeat(30)).unwrap()),
             }),
             comparison_error: None,
+            change_review: None,
             boundary: "Review candidates only".into(),
         }
     }
@@ -651,6 +705,38 @@ mod tests {
         i.start(request(), 4);
         assert!(i.finish(4, Ok(snapshot())));
         assert!(i.snapshot.is_some());
+    }
+    #[test]
+    fn change_review_requires_explicit_baseline_and_rechecks_the_same_selection() {
+        let mut i = ready();
+        assert_eq!(key(&mut i, KeyCode::Char('4')), Command::None);
+        assert!(
+            i.lines(80)
+                .iter()
+                .any(|l| l.to_string().contains("Select an approved baseline"))
+        );
+        key(&mut i, KeyCode::Down);
+        let review = Request {
+            id: "REQ-TEST".into(),
+            target: Target::Review("BASE-B".into()),
+        };
+        assert_eq!(
+            key(&mut i, KeyCode::Enter),
+            Command::Inspect(review.clone())
+        );
+        i.start(review.clone(), 2);
+        let mut rejected = snapshot();
+        rejected.baselines.insert(0, "BASE-0".into());
+        rejected.comparison_error = Some("No accepted decision".into());
+        assert!(i.finish(2, Ok(rejected)));
+        assert_eq!(i.selected, 2);
+        assert!(
+            i.lines(80)
+                .iter()
+                .any(|l| l.to_string().contains("No accepted decision"))
+        );
+        i.invalidate();
+        assert_eq!(key(&mut i, KeyCode::Char('r')), Command::Inspect(review));
     }
     #[test]
     fn colored_exact_diff_mouse_scroll_maximize_and_small_windows() {

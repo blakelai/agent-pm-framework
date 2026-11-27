@@ -16,6 +16,7 @@ pub enum Target {
     Impact,
     Baseline(String),
     Source,
+    Review(String),
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Request {
@@ -48,6 +49,8 @@ pub struct Snapshot {
     pub baselines: Vec<String>,
     pub comparison: Option<Comparison>,
     pub comparison_error: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub change_review: Option<Box<crate::change_review::Review>>,
     pub boundary: String,
 }
 #[derive(Serialize)]
@@ -94,6 +97,43 @@ pub(crate) fn graph(records: &Records, id: &str) -> Result<(Vec<Candidate>, Vec<
                 }
                 Err(e) => {
                     unresolved.insert(format!("{consumer}: {raw}: {e}"));
+                }
+            }
+        }
+        let fields: &[&str] = match d.kind.as_str() {
+            "brd" | "prd" | "requirement" => &["parents"],
+            "pbi" => &["parents", "satisfies", "origins", "depends_on"],
+            "testcase" => &["requirements"],
+            "test_run" => &["cases"],
+            _ => &[],
+        };
+        for field in fields {
+            let Some(value) = d.metadata.get(*field).filter(|v| !v.is_null()) else {
+                continue;
+            };
+            let Some(items) = value.as_array() else {
+                unresolved.insert(format!("{consumer}: {field} must be a list"));
+                continue;
+            };
+            for item in items {
+                let resolved = item
+                    .as_str()
+                    .context("Reference must be a string")
+                    .and_then(|raw| records.resolve_path(raw));
+                match resolved {
+                    Ok(path) if bypath.contains_key(path.as_str()) => {
+                        refs.insert(
+                            bypath[path.as_str()].to_string(),
+                            format!("{field}: {item}"),
+                        );
+                    }
+                    Ok(_) => {
+                        unresolved
+                            .insert(format!("{consumer}: {field}: unmanaged reference {item}"));
+                    }
+                    Err(error) => {
+                        unresolved.insert(format!("{consumer}: {field}: {item}: {error}"));
+                    }
                 }
             }
         }
@@ -220,13 +260,32 @@ pub fn load(w: &Workspace, request: &Request) -> Result<Snapshot> {
     }
     baselines.sort();
     let comparison = match &request.target {
-        Target::Impact => Ok(None),
+        Target::Impact | Target::Review(_) => Ok(None),
         Target::Baseline(id) => baseline(&records, d, id).map(Some),
         Target::Source => source(&records, d).map(Some),
     };
-    let (comparison, comparison_error) = match comparison {
+    let (comparison, mut comparison_error) = match comparison {
         Ok(c) => (c, None),
         Err(e) => (None, Some(format!("{e:#}"))),
+    };
+    let change_review = if let Target::Review(baseline) = &request.target {
+        match crate::change_review::load(
+            w,
+            &crate::change_review::Request {
+                id: request.id.clone(),
+                baseline: baseline.clone(),
+                candidate: None,
+                evidence: vec![],
+            },
+        ) {
+            Ok(review) => Some(Box::new(review)),
+            Err(error) => {
+                comparison_error = Some(format!("{error:#}"));
+                None
+            }
+        }
+    } else {
+        None
     };
     // Reject mixed reads of active notes; snapshots have their own byte checks.
     let stamp = |r: &Records| {
@@ -243,7 +302,7 @@ pub fn load(w: &Workspace, request: &Request) -> Result<Snapshot> {
     Ok(Snapshot {
         id: request.id.clone(), path: d.path.clone(), title: d.title.clone(),
         loaded_at: records::timestamp(), current_sha256: d.hash.clone(), candidates,
-        unresolved, baselines, comparison, comparison_error,
+        unresolved, baselines, comparison, comparison_error, change_review,
         boundary: "Recorded references identify review candidates, not invalid requirements. One shortest reference chain is shown per candidate. Unresolved links and unrecorded relationships limit coverage. Captured baselines and evidence are never rewritten.".into(),
     })
 }

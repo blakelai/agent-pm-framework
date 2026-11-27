@@ -460,6 +460,17 @@ impl Workspace {
         Ok(output)
     }
 }
+pub(crate) fn atomic_create(path: &Path, bytes: &[u8]) -> Result<()> {
+    let parent = path.parent().context("Missing parent directory")?;
+    fs::create_dir_all(parent)?;
+    let mut temp = tempfile::NamedTempFile::new_in(parent)?;
+    temp.write_all(bytes)?;
+    temp.as_file().sync_all()?;
+    temp.persist_noclobber(path)
+        .context("Record already exists. Use a new ID to preserve history")?;
+    Ok(())
+}
+
 pub fn atomic_write(path: &Path, bytes: &[u8]) -> Result<()> {
     let parent = path.parent().context("Missing parent")?;
     fs::create_dir_all(parent).with_context(|| {

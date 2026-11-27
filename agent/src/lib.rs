@@ -2,6 +2,7 @@ pub mod approval;
 pub mod backup;
 pub mod baselines;
 pub mod budget;
+pub mod change_review;
 pub mod chat_images;
 pub mod clarification;
 pub mod config;
