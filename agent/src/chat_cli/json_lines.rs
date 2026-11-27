@@ -27,6 +27,11 @@ struct Envelope<'a> {
 #[derive(Serialize)]
 #[serde(tag = "type")]
 enum Line<'a> {
+    #[serde(rename = "turn.steering")]
+    Steering {
+        #[serde(flatten)]
+        feedback: &'a pm_agent::steering::Feedback,
+    },
     #[serde(rename = "turn.started")]
     Started { stage: Option<&'a str> },
     #[serde(rename = "turn.state_changed")]
@@ -108,6 +113,8 @@ enum Pending<'a> {
     },
     Reconciliation {
         call: Option<PendingCall<'a>>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        deferred_correction_id: Option<&'a str>,
     },
 }
 
@@ -147,7 +154,13 @@ fn pending(session: &Session) -> Option<Pending<'_>> {
                 .into_iter()
                 .collect(),
         }),
-        Status::NeedsReconciliation => Some(Pending::Reconciliation { call: call() }),
+        Status::NeedsReconciliation => Some(Pending::Reconciliation {
+            call: call(),
+            deferred_correction_id: session
+                .deferred_steering
+                .as_ref()
+                .map(|correction| correction.id.as_str()),
+        }),
         _ => None,
     }
 }
@@ -161,11 +174,11 @@ pub(super) struct Stream {
 }
 
 impl Stream {
-    pub(super) fn new() -> Self {
+    pub(super) fn new(turn_id: &str) -> Self {
         Self {
             output: io::stdout(),
             session_id: None,
-            turn_id: uuid::Uuid::new_v4().to_string(),
+            turn_id: turn_id.into(),
             sequence: 0,
             artifacts: BTreeMap::new(),
         }
@@ -198,6 +211,7 @@ impl Stream {
 
     pub(super) fn event(&mut self, w: &Workspace, event: &Event) -> Result<()> {
         match event {
+            Event::Steering(feedback) => self.emit(Line::Steering { feedback }),
             Event::Execution(status) => self.emit(Line::StateChanged { status: *status }),
             Event::Progress { phase, message } => self.emit(Line::Progress {
                 phase: *phase,

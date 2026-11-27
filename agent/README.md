@@ -142,6 +142,7 @@ The [delivery views](Delivery-Workflows.md) show current workflow checks and mis
 | `/continue-independent` | Resume supported independent work; pending questions stay open |
 | `/sessions`, `/resume ID` | List or load durable conversations |
 | `/continue` | Explicitly continue a failed, cancelled, completed or limit-paused turn; current limits are checked again |
+| `/steer TEXT` | Send a text correction to the active Chat turn |
 | `/approve`, `/deny` | Legacy aliases for allowing once / denying and stopping the pending response |
 | `/reconcile actual outcome` | Record what happened to an interrupted operation without repeating it |
 | `/new` | Start a separate session, retaining the previous one |
@@ -221,14 +222,27 @@ pm-agent --vault /path/to/vault chat --json --session SESSION_ID
 | `turn.started` | `stage` when the session is available |
 | `turn.state_changed` | `status` when the runtime starts or records its outcome |
 | `turn.progress` | `phase` and a human-readable `message` |
+| `turn.steering` | `state` and a saved correction receipt, a deferred correction ID, or a rejection reason |
 | `assistant.text.delta` | `text`, in stream order |
 | `usage.updated` | `usage` with service-reported token counts, or null when unavailable |
-| `tool.updated` | `call_id`, `tool`, `state`, native PM `exit_code` when available, and `artifacts`. A `stopped` tool also includes the execution `status`. |
+| `tool.updated` | `call_id`, `tool`, `state`, native PM `exit_code` when available, and `artifacts`. A `stopped` tool includes the execution `status`. A `superseded` tool was withdrawn before dispatch. |
 | `turn.finished` | `status`, `run`, `pending`, `artifacts`, `diagnostic`, and the saved `goal` report when present |
 
 Use `turn.finished.status` to branch on `completed`, `failed`, `cancelled`, `limit_reached`, `waiting_clarification`, `waiting_approval`, `waiting_draft_review`, or `needs_reconciliation`. The pending object identifies the question paths, tool call, or exact draft preview for the associated pause. Reopening a saved clarification, approval, draft review, or reconciliation pause with a bare `--session ID` in JSON mode shows the saved state locally. Supply the corresponding `--answer`, `--approve`, `--apply-draft`, or `--reconcile` option to continue.
 
 `run` is the path of the available session Run. Artifact entries carry `kind`, a Vault-relative `path`, and the SHA-256 reported by the tool when available. They include saved drafts, question records, reports, work packets, and baseline manifests. A `result_recorded` tool event can carry a failing command exit code. The CLI exits `1` for invocation errors and `2` for a failed, interrupted, limited, or unreconciled execution. Completed runs and ordinary pauses exit `0`, as does a successful explicit `--deny` with status `cancelled`.
+
+## Correct a running Chat turn
+
+In the TUI, send `/steer TEXT` while Chat is working. In a CLI integration, start `chat --json --steer-stdin`, read the `turn_id` from `turn.started`, and send one newline-terminated JSON object on that process's stdin:
+
+```json
+{"turn_id":"CURRENT_TURN_ID","text":"Review the scope before proposing a draft."}
+```
+
+Corrections accept up to 16 KiB of text and one outstanding submission at a time. A stale turn ID or malformed frame produces `turn.steering` with state `rejected`. State `applied` identifies the saved correction source and any superseded calls or preview. Disregard earlier streamed text if it was superseded by the correction. Deferred corrections keep their original turn ID in the receipt even when applied during a later invocation.
+
+The runtime stops obsolete model work, withdraws undispatched calls and superseded previews, and retains recorded tool results. A tool whose outcome is unknown pauses for reconciliation. The `deferred` event and the saved pause's `pending.deferred_correction_id` identify the saved correction. Continue with `--reconcile` or `/reconcile` using the observed outcome. Existing clarification, approval, draft review and session limits still apply. [Terminal controls](Interaction.md#correct-a-running-turn)
 
 ## Save a task goal
 

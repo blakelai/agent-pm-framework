@@ -6,10 +6,14 @@ use pm_agent::{
     config::Config,
     provider::Event,
     runtime::{Runtime, Session, Status},
+    steering::{Feedback, Input, MAX_TEXT_BYTES, Turn},
     store::Store,
     workspace::{Workspace, WorkspaceLock},
 };
-use std::{io::Write, path::Path};
+use std::{
+    io::{BufRead, Read, Write},
+    path::Path,
+};
 use tokio_util::sync::CancellationToken;
 
 #[derive(Args)]
@@ -39,11 +43,15 @@ pub struct ChatArgs {
     /// Stream versioned execution events as JSON Lines on stdout.
     #[arg(long)]
     json: bool,
+    /// Receive correction frames as JSONL on stdin while this Chat turn runs.
+    #[arg(long, requires = "json", conflicts_with = "deny")]
+    steer_stdin: bool,
 }
 
 pub async fn run(args: &ChatArgs, vault: &Path, config: Option<&Path>) -> Result<i32> {
-    let mut json = args.json.then(json_lines::Stream::new);
-    match run_chat(args, vault, config, &mut json).await {
+    let turn = Turn::default();
+    let mut json = args.json.then(|| json_lines::Stream::new(turn.id()));
+    match run_chat(args, vault, config, &mut json, &turn).await {
         Ok(code) => Ok(code),
         Err(error) => match &mut json {
             Some(stream) => {
@@ -60,6 +68,7 @@ async fn run_chat(
     vault: &Path,
     config: Option<&Path>,
     json: &mut Option<json_lines::Stream>,
+    turn: &Turn,
 ) -> Result<i32> {
     let workspace = Workspace::open(vault)?;
     let default_config = workspace.path(".pm-agent")?.join("config.toml");
@@ -176,7 +185,15 @@ async fn run_chat(
     if !(args.approve && session.status == Status::WaitingApproval
         || session.status == Status::WaitingDraftReview)
     {
-        stream_run(&runtime, &mut session, approved, json).await?;
+        stream_run(
+            &runtime,
+            &mut session,
+            approved,
+            json,
+            turn,
+            args.steer_stdin,
+        )
+        .await?;
     } else if json.is_none()
         && let Some(error) = &session.error
     {
@@ -196,6 +213,8 @@ async fn stream_run(
     session: &mut Session,
     approved: Option<String>,
     json: &mut Option<json_lines::Stream>,
+    turn: &Turn,
+    steer_stdin: bool,
 ) -> Result<()> {
     let cancel = CancellationToken::new();
     let signal = cancel.clone();
@@ -204,7 +223,17 @@ async fn stream_run(
         signal.cancel();
     });
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
-    let operation = runtime.run(session, approved, &tx, &cancel);
+    if steer_stdin {
+        let (turn, tx) = (turn.clone(), tx.clone());
+        // An open pipe must never delay Chat exit. This process owns the reader.
+        std::thread::Builder::new()
+            .name("chat-steering".into())
+            .spawn(move || {
+                let input = std::io::stdin();
+                receive_corrections(input.lock(), &turn, &tx);
+            })?;
+    }
+    let operation = runtime.run_with_turn(session, approved, &tx, &cancel, turn);
     tokio::pin!(operation);
     let result = loop {
         tokio::select! {
@@ -224,6 +253,54 @@ async fn stream_run(
         print_event(&runtime.workspace, json, event)?;
     }
     result
+}
+
+fn receive_corrections(
+    mut reader: impl BufRead,
+    turn: &Turn,
+    events: &tokio::sync::mpsc::UnboundedSender<Event>,
+) {
+    // JSON escaping can expand each UTF-8 byte to six input bytes plus frame metadata.
+    const MAX_FRAME: usize = 6 * MAX_TEXT_BYTES + 1024;
+    let reject = |reason: String| {
+        events
+            .send(Event::Steering(Feedback::Rejected { reason }))
+            .is_ok()
+    };
+    let mut frame = Vec::new();
+    while !events.is_closed() {
+        frame.clear();
+        let n = match (&mut reader)
+            .take((MAX_FRAME + 1) as u64)
+            .read_until(b'\n', &mut frame)
+        {
+            Ok(n) => n,
+            Err(_) => {
+                reject("Could not read correction input".into());
+                break;
+            }
+        };
+        if n == 0 {
+            break;
+        }
+        if n > MAX_FRAME {
+            if !reject("Correction frame exceeds the size limit".into()) {
+                break;
+            }
+            if frame.last() != Some(&b'\n') && reader.skip_until(b'\n').is_err() {
+                break;
+            }
+            continue;
+        }
+        let result = serde_json::from_slice::<Input>(&frame)
+            .map_err(|_| anyhow::anyhow!("Expected one JSON correction with turn_id and text"))
+            .and_then(|input| turn.submit(input));
+        if let Err(error) = result
+            && !reject(error.to_string())
+        {
+            break;
+        }
+    }
 }
 
 fn print_event(

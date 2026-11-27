@@ -58,6 +58,12 @@ Exit during active Chat work requests cancellation and waits for the recorded ou
 
 Cancellation shows a pending state until the runtime records an outcome. A tool with an uncertain outcome still requires reconciliation; returning focus never implies cancellation, rollback or tool completion.
 
+## Correct a running turn
+
+Type `/steer TEXT` in the composer and press Enter while Chat is working. Ordinary text stays in the composer while a turn runs. Corrections are text-only and leave pending attachments in the composer. Chat shows when the correction is queued, applied or saved pending reconciliation. If the turn ends before accepting the correction, its text remains available in Chat.
+
+A correction can supersede incomplete model output, undispatched tool calls and a draft proposal before it is written. A revised PRD goes through source review and receives a fresh preview. If the correction interrupts an already dispatched tool with an unknown outcome, record the actual result with `/reconcile` before work continues. Once the approval or draft picker is visible, it follows the normal confirm or discard controls. [CLI correction frames](README.md#correct-a-running-chat-turn)
+
 ## Clipboard images
 
 Ctrl+V in the composer reads the system clipboard once on a background worker. A decoded image becomes a pending PNG attachment, with its number and dimensions shown above the text inside the gray composer. If no image is available, readable clipboard text is inserted at the cursor without submission. The application never polls or overwrites the clipboard. It does not fetch remote image URLs or interpret clipboard filenames as image bytes.

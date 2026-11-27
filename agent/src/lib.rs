@@ -34,6 +34,7 @@ pub mod schedule;
 pub mod skills;
 mod source_navigation;
 pub mod sources;
+pub mod steering;
 pub mod storage;
 pub mod store;
 pub mod tools;

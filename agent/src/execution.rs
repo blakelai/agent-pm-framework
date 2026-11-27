@@ -32,6 +32,7 @@ pub enum ToolState {
     Running,
     ApprovalRequired,
     ResultRecorded,
+    Superseded,
     Stopped(Status),
     Failed,
 }
@@ -43,6 +44,7 @@ impl fmt::Display for ToolState {
             Self::Running => "Running",
             Self::ApprovalRequired => "Approval required",
             Self::ResultRecorded => "Result recorded",
+            Self::Superseded => "Superseded by correction",
             Self::Stopped(status) => return write!(formatter, "Stopped — {status:?}"),
             Self::Failed => "Failed",
         })

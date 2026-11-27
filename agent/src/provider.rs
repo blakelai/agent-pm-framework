@@ -18,6 +18,7 @@ pub enum Event {
         message: String,
     },
     Execution(Status),
+    Steering(crate::steering::Feedback),
     InputAccepted(Vec<String>),
     Text(String),
     Reasoning(String),

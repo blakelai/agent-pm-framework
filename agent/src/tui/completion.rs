@@ -23,6 +23,7 @@ pub const COMMANDS: &[(&str, &str)] = &[
     ("/sessions", "List saved sessions"),
     ("/resume", "Resume a saved session ID"),
     ("/continue", "Continue a paused session"),
+    ("/steer", "Correct the active Chat turn: /steer TEXT"),
     (
         "/continue-independent",
         "Continue only supported independent work",
@@ -67,7 +68,7 @@ pub fn skills(catalog: &Catalog) -> Vec<Item> {
         .collect()
 }
 
-pub fn suggest(editor: &Editor, skills: &[Item]) -> Option<Popup> {
+pub fn suggest(editor: &Editor, skills: &[Item], active_turn: bool) -> Option<Popup> {
     let before = editor.text.get(..editor.cursor)?;
     let start = before
         .rfind(char::is_whitespace)
@@ -128,6 +129,7 @@ pub fn suggest(editor: &Editor, skills: &[Item]) -> Option<Popup> {
         } else {
             COMMANDS
                 .iter()
+                .filter(|(value, _)| active_turn || *value != "/steer")
                 .map(|(value, description)| Item {
                     value: (*value).into(),
                     description: (*description).into(),
@@ -236,18 +238,18 @@ mod tests {
         let mut e = Editor::default();
         e.insert("$ri analyse 中文");
         e.cursor = 3;
-        suggest(&e, &skills).unwrap().insert(&mut e);
+        suggest(&e, &skills, false).unwrap().insert(&mut e);
         assert_eq!(e.text, "$risk-review analyse 中文");
         e.clear();
         e.insert("Source says $ri");
-        assert!(suggest(&e, &skills).is_none());
+        assert!(suggest(&e, &skills, false).is_none());
         e.clear();
         e.insert("$pm-review $ri");
-        assert_eq!(suggest(&e, &skills).unwrap().range.start, 11);
+        assert_eq!(suggest(&e, &skills, false).unwrap().range.start, 11);
         e.clear();
         e.insert("/sta prd");
         e.cursor = 4;
-        let mut p = suggest(&e, &skills).unwrap();
+        let mut p = suggest(&e, &skills, false).unwrap();
         p.selected = p.items.iter().position(|i| i.value == "/stage").unwrap();
         p.insert(&mut e);
         assert_eq!(e.text, "/stage prd");

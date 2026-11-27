@@ -595,6 +595,277 @@ async fn manual_cancellation_stops_long_running_chat_and_preserves_completed_too
     server.abort();
 }
 
+fn submit_correction(turn: &pm_agent::steering::Turn, text: &str) {
+    turn.submit(pm_agent::steering::Input {
+        turn_id: turn.id().into(),
+        text: text.into(),
+    })
+    .unwrap();
+}
+
+#[tokio::test]
+async fn steering_replaces_a_confirmed_preview_before_dispatch_and_requires_new_review() {
+    let (_dir, w) = fixture();
+    let quoted = "Integer durations from 1 through 7 are valid.";
+    let args = grounding_args(&w, quoted);
+    let path = args["path"].as_str().unwrap().to_owned();
+    let review = supported_review(
+        "01_Sources/Assets/grounding.txt",
+        args["content"].as_str().unwrap(),
+        quoted,
+    );
+    let (url, _, requests, server) = server(vec![
+        chat(
+            "",
+            vec![call(0, "old-preview", "write_draft", args.clone())],
+        ),
+        review.clone(),
+        chat("", vec![call(0, "old-preview", "write_draft", args)]),
+        review,
+    ])
+    .await;
+    let cfg = config(url, Protocol::ChatCompletions);
+    let rt = Runtime::open_chat(w.clone(), cfg.clone()).await.unwrap();
+    let mut s = Session::new(&cfg, "prd").unwrap();
+    rt.input(&mut s, "Propose the PRD.").unwrap();
+    let (tx, mut rx) = events();
+    let cancel = CancellationToken::new();
+    rt.run(&mut s, None, &tx, &cancel).await.unwrap();
+    assert_eq!(s.status, Status::WaitingDraftReview);
+    let old = s.draft_preview.as_ref().unwrap().id.clone();
+    rt.confirm_draft(&mut s, &old).unwrap();
+    let turn = pm_agent::steering::Turn::default();
+    submit_correction(&turn, "Reconsider the proposal before writing.");
+    rt.run_with_turn(&mut s, None, &tx, &cancel, &turn)
+        .await
+        .unwrap();
+    assert_eq!(s.status, Status::WaitingDraftReview, "{:?}", s.error);
+    assert_ne!(s.draft_preview.as_ref().unwrap().id, old);
+    assert_eq!(s.draft_reviews.len(), 2);
+    assert!(rt.confirm_draft(&mut s, &old).is_err());
+    assert!(!w.path(&path).unwrap().exists());
+    assert!(rt.store.calls(&s.id).unwrap().is_empty());
+    let saved: Session = rt.store.load(&s.id).unwrap();
+    let receipt = &saved.steering[0];
+    assert_eq!(receipt.superseded_preview.as_deref(), Some(old.as_str()));
+    assert_eq!(receipt.superseded_calls, ["old-preview"]);
+    assert_eq!(
+        w.read(&receipt.source).unwrap(),
+        "Reconsider the proposal before writing."
+    );
+    assert!(
+        w.read(&s.run_path())
+            .unwrap()
+            .contains(&receipt.correction_id)
+    );
+    let request = requests.lock().unwrap()[2].to_string();
+    assert!(request.contains("superseded_by_correction"));
+    assert!(request.contains("Reconsider the proposal"));
+    assert!(!request.contains("draft_saved"));
+    assert!(std::iter::from_fn(|| rx.try_recv().ok()).any(|event| matches!(event,
+        Event::Tool { state: pm_agent::execution::ToolState::Superseded, call, .. } if call.id == "old-preview")));
+    server.abort();
+}
+
+#[tokio::test]
+async fn steering_during_dispatched_tool_is_saved_until_reconciliation_and_never_replays_it() {
+    use std::{
+        sync::atomic::{AtomicUsize, Ordering},
+        time::Duration,
+    };
+    type StateData = (Arc<AtomicUsize>, Arc<tokio::sync::Notify>);
+    async fn handler(
+        State((calls, sent)): State<StateData>,
+        Json(message): Json<Value>,
+    ) -> axum::response::Response {
+        if message.get("id").is_none() {
+            return StatusCode::ACCEPTED.into_response();
+        }
+        let result = match message["method"].as_str().unwrap() {
+            "initialize" => {
+                json!({"protocolVersion":message["params"]["protocolVersion"],"capabilities":{"tools":{}},"serverInfo":{"name":"fixture","version":"1"}})
+            }
+            "tools/list" => {
+                json!({"tools":[{"name":"echo","inputSchema":{"type":"object","properties":{"text":{"type":"string"}},"required":["text"]}}]})
+            }
+            "tools/call" => {
+                calls.fetch_add(1, Ordering::SeqCst);
+                sent.notify_one();
+                std::future::pending().await
+            }
+            _ => unreachable!(),
+        };
+        Json(json!({"jsonrpc":"2.0","id":message["id"],"result":result})).into_response()
+    }
+    let (_dir, w) = fixture();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let mcp_url = format!("http://{}/mcp", listener.local_addr().unwrap());
+    let calls = Arc::new(AtomicUsize::new(0));
+    let sent = Arc::new(tokio::sync::Notify::new());
+    let app = Router::new()
+        .route("/mcp", post(handler))
+        .with_state((calls.clone(), sent.clone()));
+    let mcp_server = tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+    let (url, _, requests, model_server) = server(vec![
+        chat(
+            "",
+            vec![
+                call(
+                    0,
+                    "unknown",
+                    "mcp_fixture_echo",
+                    json!({"text":"Synthetic action"}),
+                ),
+                call(
+                    1,
+                    "later",
+                    "read_document",
+                    json!({"path":"00_Governance/Settings.md"}),
+                ),
+            ],
+        ),
+        chat("Continued with corrected scope.", vec![]),
+    ])
+    .await;
+    let mut cfg = config(url, Protocol::ChatCompletions);
+    cfg.mcp.insert(
+        "fixture".into(),
+        McpConfig::Http {
+            url: mcp_url,
+            bearer_token_env: None,
+            allowed_tools: None,
+        },
+    );
+    let rt = Runtime::open(w.clone(), cfg.clone()).await.unwrap();
+    let mut s = Session::new(&cfg, "workflow").unwrap();
+    rt.input(&mut s, "Use the local synthetic MCP fixture.")
+        .unwrap();
+    let (tx, mut rx) = events();
+    let cancel = CancellationToken::new();
+    rt.run(&mut s, None, &tx, &cancel).await.unwrap();
+    assert_eq!(s.status, Status::WaitingApproval);
+    rt.decision(&mut s, true).unwrap();
+    let turn = pm_agent::steering::Turn::default();
+    let (result, ()) = tokio::time::timeout(Duration::from_secs(8), async {
+        tokio::join!(
+            rt.run_with_turn(&mut s, Some("unknown".into()), &tx, &cancel, &turn),
+            async {
+                sent.notified().await;
+                submit_correction(&turn, "Continue with local analysis only.");
+            }
+        )
+    })
+    .await
+    .unwrap();
+    result.unwrap();
+    assert_eq!(s.status, Status::NeedsReconciliation);
+    assert_eq!(rt.store.calls(&s.id).unwrap()[0].status, "started");
+    assert!(s.steering.is_empty());
+    let correction_id = s.deferred_steering.as_ref().unwrap().id.clone();
+    let paused = chat_json_output(
+        json_chat(&w)
+            .args(["--session", &s.id])
+            .output()
+            .await
+            .unwrap(),
+        2,
+        "needs_reconciliation",
+    );
+    assert_eq!(
+        paused.last().unwrap()["pending"]["deferred_correction_id"],
+        correction_id
+    );
+    assert_eq!(requests.lock().unwrap().len(), 1);
+    assert!(std::iter::from_fn(|| rx.try_recv().ok()).any(|event| matches!(event,
+        Event::Steering(pm_agent::steering::Feedback::Deferred { correction_id: id, .. }) if id == correction_id)));
+    drop(rt);
+    let rt = Runtime::open(w.clone(), cfg).await.unwrap();
+    let mut s: Session = rt.store.load(&s.id).unwrap();
+    rt.reconcile(&mut s, "Fixture service confirms receipt.")
+        .unwrap();
+    rt.run(&mut s, None, &tx, &cancel).await.unwrap();
+    assert_eq!(s.status, Status::Completed, "{:?}", s.error);
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+    assert_eq!(rt.store.calls(&s.id).unwrap()[0].status, "reconciled");
+    assert!(rt.store.call_result(&s.id, "later").unwrap().is_none());
+    assert!(s.deferred_steering.is_none());
+    assert_eq!(s.steering[0].correction_id, correction_id);
+    assert_eq!(s.steering[0].turn_id, turn.id());
+    assert_eq!(s.steering[0].superseded_calls, ["later"]);
+    let request = requests.lock().unwrap()[1].to_string();
+    assert!(request.contains("Fixture service confirms receipt"));
+    assert!(request.contains("Continue with local analysis only"));
+    assert!(request.contains("superseded_by_correction"));
+    model_server.abort();
+    mcp_server.abort();
+}
+
+#[tokio::test]
+async fn steering_interrupts_read_only_grounding_without_reconciliation_or_draft_write() {
+    use std::time::Duration;
+    let (_dir, w) = fixture();
+    let args = grounding_args(&w, "Integer durations from 1 through 7 are valid.");
+    let path = args["path"].as_str().unwrap().to_owned();
+    let reviewing = Arc::new(tokio::sync::Notify::new());
+    async fn handler(
+        State((args, reviewing)): State<(Value, Arc<tokio::sync::Notify>)>,
+        Json(request): Json<Value>,
+    ) -> impl IntoResponse {
+        if request["tools"][0]["function"]["name"] == "submit_grounding_review" {
+            reviewing.notify_one();
+            std::future::pending::<()>().await;
+        }
+        let response = if request["messages"]
+            .to_string()
+            .contains("Pause drafting and summarize.")
+        {
+            chat("Drafting paused.", vec![])
+        } else {
+            chat("", vec![call(0, "obsolete-draft", "write_draft", args)])
+        };
+        ([("content-type", "text/event-stream")], response)
+    }
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let cfg = config(
+        format!("http://{}/v1", listener.local_addr().unwrap()),
+        Protocol::ChatCompletions,
+    );
+    let app = Router::new()
+        .route("/v1/chat/completions", post(handler))
+        .with_state((args, reviewing.clone()));
+    let server = tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+    let rt = Runtime::open_chat(w.clone(), cfg.clone()).await.unwrap();
+    let mut s = Session::new(&cfg, "prd").unwrap();
+    rt.input(&mut s, "Create a draft.").unwrap();
+    let turn = pm_agent::steering::Turn::default();
+    let (tx, _rx) = events();
+    let cancel = CancellationToken::new();
+    let (result, ()) = tokio::time::timeout(Duration::from_secs(8), async {
+        tokio::join!(rt.run_with_turn(&mut s, None, &tx, &cancel, &turn), async {
+            reviewing.notified().await;
+            submit_correction(&turn, "Pause drafting and summarize.");
+        })
+    })
+    .await
+    .unwrap();
+    result.unwrap();
+    assert_eq!(s.status, Status::Completed, "{:?}", s.error);
+    assert_eq!(s.draft_reviews[0].state, "superseded");
+    assert!(!w.path(&path).unwrap().exists());
+    assert!(s.draft_preview.is_none() && s.deferred_steering.is_none());
+    assert_eq!(s.steering[0].superseded_calls, ["obsolete-draft"]);
+    assert!(rt.store.calls(&s.id).unwrap().is_empty());
+    assert!(matches!(
+        s.request_ledger.unwrap().requests[1].state,
+        pm_agent::budget::State::Cancelled
+    ));
+    server.abort();
+}
+
 #[tokio::test]
 async fn budget_reported_threshold_uses_exact_totals_and_allows_completed_final_text() {
     for protocol in [Protocol::ChatCompletions, Protocol::Responses] {
@@ -1690,6 +1961,133 @@ async fn chat_json_flushes_text_before_provider_finishes_and_records_interrupt()
             .is_file()
     );
     task.abort();
+}
+
+#[tokio::test]
+async fn chat_json_steering_rejects_stale_ids_and_replaces_streams_for_both_protocols() {
+    use futures_util::StreamExt;
+    use std::{io, process::Stdio, time::Duration};
+    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+    type StateData = (Protocol, Requests);
+
+    async fn handler(
+        State((protocol, requests)): State<StateData>,
+        Json(body): Json<Value>,
+    ) -> impl IntoResponse {
+        let first = {
+            let mut requests = requests.lock().unwrap();
+            requests.push(body);
+            requests.len() == 1
+        };
+        let body = if first {
+            let partial = match protocol {
+                Protocol::ChatCompletions => {
+                    json!({"choices":[{"delta":{"content":"Obsolete stream"},"finish_reason":null}]})
+                }
+                Protocol::Responses => {
+                    json!({"type":"response.output_text.delta","delta":"Obsolete stream"})
+                }
+            };
+            let chunk = format!("data: {partial}\n\n");
+            axum::body::Body::from_stream(
+                futures_util::stream::once(async { Ok::<_, io::Error>(chunk) })
+                    .chain(futures_util::stream::pending()),
+            )
+        } else {
+            let completed = match protocol {
+                Protocol::ChatCompletions => chat("Corrected response.", vec![]),
+                Protocol::Responses => format!(
+                    "data: {}\n\ndata: {}\n\n",
+                    json!({"type":"response.output_text.delta","delta":"Corrected response."}),
+                    json!({"type":"response.completed","response":{"status":"completed","output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Corrected response."}]}]}})
+                ),
+            };
+            axum::body::Body::from(completed)
+        };
+        ([("content-type", "text/event-stream")], body)
+    }
+
+    for protocol in [Protocol::ChatCompletions, Protocol::Responses] {
+        let (_dir, w) = fixture();
+        let requests = Arc::new(Mutex::new(vec![]));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let cfg = config(
+            format!("http://{}/v1", listener.local_addr().unwrap()),
+            protocol.clone(),
+        );
+        let app = Router::new()
+            .route("/v1/chat/completions", post(handler))
+            .route("/v1/responses", post(handler))
+            .with_state((protocol, requests.clone()));
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        atomic_write(
+            &w.path(".pm-agent/config.toml").unwrap(),
+            toml::to_string(&cfg).unwrap().as_bytes(),
+        )
+        .unwrap();
+        let mut child = json_chat(&w)
+            .args(["--steer-stdin", "Start the original task."])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .kill_on_drop(true)
+            .spawn()
+            .unwrap();
+        let mut stdin = child.stdin.take().unwrap();
+        let mut reader = BufReader::new(child.stdout.take().unwrap()).lines();
+        let output = tokio::time::timeout(Duration::from_secs(10), async {
+            let mut output = String::new();
+            let mut turn_id = None;
+            while let Some(line) = reader.next_line().await.unwrap() {
+                let value = serde_json::from_str::<Value>(&line).unwrap();
+                output.push_str(&line);
+                output.push('\n');
+                if value["type"] == "turn.started" {
+                    turn_id = value["turn_id"].as_str().map(String::from);
+                }
+                if value["text"] == "Obsolete stream" {
+                    stdin.write_all(b"{\"turn_id\":\"stale-turn\",\"text\":\"Ignore this stale correction\"}\n").await.unwrap();
+                }
+                if value["type"] == "turn.steering" && value["state"] == "rejected" {
+                    assert!(value["reason"].as_str().unwrap().contains("Stale turn ID"));
+                    let frame = json!({"turn_id":turn_id,"text":"Use the corrected scope."});
+                    stdin.write_all(format!("{frame}\n").as_bytes()).await.unwrap();
+                }
+            }
+            assert!(child.wait().await.unwrap().success(), "{output}");
+            output
+        }).await.expect("Steered Chat should finish while stdin and the original SSE response remain open");
+        let lines = parse_chat_json(&output, "completed");
+        let receipt = &lines
+            .iter()
+            .find(|line| line["type"] == "turn.steering" && line["state"] == "applied")
+            .unwrap()["receipt"];
+        assert_eq!(receipt["turn_id"], lines[0]["turn_id"]);
+        assert!(
+            lines
+                .iter()
+                .any(|line| line["text"] == "Corrected response.")
+        );
+        let store =
+            pm_agent::store::Store::open(&w.path(".pm-agent/runtime.sqlite3").unwrap()).unwrap();
+        let saved: Session = store
+            .load(lines[0]["session_id"].as_str().unwrap())
+            .unwrap();
+        let history = serde_json::to_string(&saved.history).unwrap();
+        assert!(history.contains("Use the corrected scope."));
+        assert!(
+            !history.contains("Obsolete stream")
+                && !history.contains("Ignore this stale correction")
+        );
+        assert_eq!(saved.steering.len(), 1);
+        assert_eq!(saved.request_ledger.unwrap().requests.len(), 2);
+        let requests = requests.lock().unwrap();
+        assert_eq!(requests.len(), 2);
+        assert!(requests[1].to_string().contains("Use the corrected scope."));
+        server.abort();
+    }
 }
 
 #[tokio::test]

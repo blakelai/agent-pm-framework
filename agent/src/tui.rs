@@ -183,6 +183,7 @@ pub async fn run(workspace: Workspace, config_path: PathBuf, lock: WorkspaceLock
                         app.notice(&format!("Input was not accepted; attachments retained: {error}\n\n{text}"));
                     },
                 }
+                app.finish_steering();
                 refresh(&workspace,&mut app,&mut store);
                 if exit_when_idle && !failed { break; }
                 exit_when_idle = false;
@@ -366,6 +367,25 @@ pub async fn run(workspace: Workspace, config_path: PathBuf, lock: WorkspaceLock
                             Err(e)=>{app.input.insert(&input);app.notice(&format!("Error: {}", crate::diagnostics::format_error(&e)));},
                         }
                     },
+                    Command::Steer { turn_id, input } => {
+                        let result=app.active_turn.as_ref().context("No active Chat turn").and_then(|turn|
+                            turn.submit(crate::steering::Input {
+                                turn_id: turn_id.clone(),
+                                text: input.strip_prefix("/steer").unwrap_or_default().trim_start().into(),
+                            })
+                        );
+                        match result {
+                            Ok(())=>{
+                                app.user_message(&input);
+                                app.queued_correction=Some((turn_id,input));
+                                app.notice("Correction queued for the next execution boundary.");
+                            },
+                            Err(error)=>{
+                                app.input.insert(&input);
+                                app.notice(&format!("Error: {error}"));
+                            },
+                        }
+                    },
                 }
             },
         }
@@ -466,6 +486,8 @@ fn decide_tool(
     let done = done.clone();
     let cancel = CancellationToken::new();
     let signal = cancel.clone();
+    let turn = crate::steering::Turn::default();
+    app.active_turn = Some(turn.clone());
     tokio::spawn(async move {
         let result = async {
             let runtime = Runtime::open_chat(workspace, config).await?;
@@ -489,7 +511,9 @@ fn decide_tool(
                 }
                 return Ok(());
             }
-            runtime.run(&mut session, approved, &tx, &signal).await
+            runtime
+                .run_with_turn(&mut session, approved, &tx, &signal, &turn)
+                .await
         }
         .await;
         let _ = done.send(match result {
@@ -509,6 +533,9 @@ fn dispatch(
     tx: &mpsc::UnboundedSender<Event>,
     done: &mpsc::UnboundedSender<Outcome>,
 ) -> Result<Option<CancellationToken>> {
+    if input == "/steer" || input.starts_with("/steer ") {
+        bail!("Use /steer TEXT while a Chat turn is running");
+    }
     let input = if input.starts_with('/') {
         input.trim_end().to_owned()
     } else {
@@ -846,6 +873,8 @@ fn dispatch(
     let done = done.clone();
     let cancel = CancellationToken::new();
     let signal = cancel.clone();
+    let turn = crate::steering::Turn::default();
+    app.active_turn = Some(turn.clone());
     tokio::spawn(async move {
         let mut input_accepted = false;
         let result = async {
@@ -877,7 +906,9 @@ fn dispatch(
                     images.iter().map(|image| image.id.clone()).collect(),
                 ));
             }
-            runtime.run(&mut session, None, &tx, &signal).await
+            runtime
+                .run_with_turn(&mut session, None, &tx, &signal, &turn)
+                .await
         }
         .await;
         let _ = done.send(match result {

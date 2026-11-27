@@ -8,6 +8,7 @@ use crate::{
     mcp::Mcp,
     provider::{Call, Event, Provider, ToolSpec},
     skills::{self, Activation, Catalog, FileStamp},
+    steering::{Correction, Feedback, Receipt, Turn},
     store::Store,
     tools,
     workspace::{Workspace, atomic_write, hash, note, parse_note},
@@ -68,6 +69,10 @@ pub struct Session {
     pub draft_preview: Option<DraftPreview>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub goal: Option<Goal>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub steering: Vec<Receipt>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub deferred_steering: Option<Correction>,
 }
 pub const STAGES: &[(&str, &str, &str)] = &[
     ("workflow", "pm-workflow", ""),
@@ -125,6 +130,8 @@ impl Session {
             pending_approval: None,
             draft_preview: None,
             goal: None,
+            steering: vec![],
+            deferred_steering: None,
         })
     }
 }
@@ -575,6 +582,34 @@ impl Runtime {
         events: &UnboundedSender<Event>,
         cancel: &CancellationToken,
     ) -> Result<()> {
+        self.run_with_turn(s, approved_call, events, cancel, &Turn::default())
+            .await
+    }
+
+    pub async fn run_with_turn(
+        &self,
+        s: &mut Session,
+        approved_call: Option<String>,
+        events: &UnboundedSender<Event>,
+        cancel: &CancellationToken,
+        turn: &Turn,
+    ) -> Result<()> {
+        turn.claim()?;
+        let result = self
+            .run_controlled(s, approved_call, events, cancel, turn)
+            .await;
+        turn.close();
+        result
+    }
+
+    async fn run_controlled(
+        &self,
+        s: &mut Session,
+        mut approved_call: Option<String>,
+        events: &UnboundedSender<Event>,
+        cancel: &CancellationToken,
+        turn: &Turn,
+    ) -> Result<()> {
         ensure!(
             s.provider_fingerprint == fingerprint(&self.config)?,
             "Provider profile changed; start a new session to avoid invalid protocol replay"
@@ -588,28 +623,56 @@ impl Runtime {
         s.error = None;
         self.save(s)?;
         let _ = events.send(Event::Execution(s.status));
-        let result = self.run_loop(s, approved_call, events, cancel).await;
-        if let Err(e) = result {
-            let diagnostic = crate::diagnostics::format_error(&e);
-            s.error = Some(diagnostic.clone());
-            if s.status != Status::NeedsReconciliation {
-                s.status = if cancel.is_cancelled() {
-                    if let Some(preview) = &mut s.draft_preview {
-                        preview.confirmed_at = None;
-                    }
-                    Status::Cancelled
-                } else {
-                    Status::Failed
-                };
+        if let Some(correction) = s.deferred_steering.take() {
+            let feedback = self.apply_steering(s, correction, events)?;
+            let _ = events.send(Event::Steering(feedback));
+            approved_call = None;
+        }
+        while s.status == Status::Running {
+            let steering = turn.signal();
+            if let Err(e) = self
+                .run_loop(s, approved_call.take(), events, cancel, &steering)
+                .await
+            {
+                let diagnostic = crate::diagnostics::format_error(&e);
+                s.error = Some(diagnostic.clone());
+                if s.status != Status::NeedsReconciliation {
+                    s.status = if cancel.is_cancelled() {
+                        if let Some(preview) = &mut s.draft_preview {
+                            preview.confirmed_at = None;
+                        }
+                        Status::Cancelled
+                    } else {
+                        Status::Failed
+                    };
+                }
+                if let Some(call) = s.pending.first() {
+                    let _ = events.send(Event::Tool {
+                        call: call.clone(),
+                        state: ToolState::Stopped(s.status),
+                        result: None,
+                    });
+                }
+                let _ = events.send(Event::Notice(format!("{:?}: {}", s.status, diagnostic)));
             }
-            if let Some(call) = s.pending.first() {
-                let _ = events.send(Event::Tool {
-                    call: call.clone(),
-                    state: ToolState::Stopped(s.status),
-                    result: None,
-                });
+            let Some(correction) = turn.take_or_close() else {
+                break;
+            };
+            let feedback = self.apply_steering(s, correction, events)?;
+            if !matches!(
+                s.status,
+                Status::Running
+                    | Status::Completed
+                    | Status::WaitingApproval
+                    | Status::WaitingDraftReview
+            ) {
+                turn.close();
+                let _ = events.send(Event::Steering(feedback));
+                break;
             }
-            let _ = events.send(Event::Notice(format!("{:?}: {}", s.status, diagnostic)));
+            s.status = Status::Running;
+            turn.resume();
+            let _ = events.send(Event::Steering(feedback));
         }
         let mut goal_completed = false;
         if s.status == Status::Completed
@@ -652,13 +715,119 @@ impl Runtime {
         let _ = events.send(Event::Execution(s.status));
         Ok(())
     }
+
+    fn apply_steering(
+        &self,
+        s: &mut Session,
+        mut correction: Correction,
+        events: &UnboundedSender<Event>,
+    ) -> Result<Feedback> {
+        // Accepted provider completions need one output per tool call in either protocol.
+        let saved = s
+            .pending
+            .iter()
+            .map(|call| self.store.call_result(&s.id, &call.id))
+            .collect::<Result<Vec<_>>>()?;
+        if s.status == Status::NeedsReconciliation
+            || saved
+                .iter()
+                .flatten()
+                .any(|(state, _)| !matches!(state.as_str(), "completed" | "reconciled"))
+        {
+            s.status = Status::NeedsReconciliation;
+            if let Some(preview) = s.draft_preview.take() {
+                correction.superseded_preview = Some(preview.id);
+            }
+            s.pending_approval = None;
+            let event = Feedback::Deferred {
+                correction_id: correction.id.clone(),
+                turn_id: correction.turn_id.clone(),
+            };
+            s.deferred_steering = Some(correction);
+            self.save(s)?;
+            return Ok(event);
+        }
+
+        let source = format!("01_Sources/Assets/USER-{}.txt", correction.id);
+        let path = self.workspace.path(&source)?;
+        if path.exists() {
+            ensure!(
+                self.workspace.read(&source)? == correction.text,
+                "Saved correction source changed"
+            );
+        } else {
+            crate::workspace::atomic_create(&path, correction.text.as_bytes())?;
+        }
+        let digest = hash(correction.text.as_bytes());
+        let superseded_preview = s
+            .draft_preview
+            .take()
+            .map(|preview| preview.id)
+            .or(correction.superseded_preview);
+        s.pending_approval = None;
+        s.last_output.clear();
+        let mut superseded_calls = vec![];
+        let mut updates = vec![];
+        for (call, saved) in s.pending.drain(..).zip(saved) {
+            let (state, output) = if let Some((_, output)) = saved {
+                (ToolState::ResultRecorded, output.unwrap_or_default())
+            } else {
+                superseded_calls.push(call.id.clone());
+                (
+                    ToolState::Superseded,
+                    json!({"status":"superseded_by_correction","correction_id":correction.id})
+                        .to_string(),
+                )
+            };
+            self.provider.append_tool(&mut s.history, &call, &output);
+            updates.push(Event::Tool {
+                call,
+                state,
+                result: Some(output),
+            });
+        }
+        s.history.push(crate::chat_images::message(format!(
+            "[Application control: User correction for the active turn. This changes instructions only. Existing tool authorization, preview review, goals, and clarification still apply.]\n\n{}\n\n[Application source locator: {source}; SHA256: {digest}; answer target: none]",
+            correction.text,
+        ), &[]));
+        let receipt = Receipt {
+            correction_id: correction.id,
+            turn_id: correction.turn_id,
+            received_at: correction.received_at,
+            source,
+            sha256: digest,
+            requests_before_correction: s
+                .request_ledger
+                .as_ref()
+                .map_or(0, |ledger| ledger.requests.len()),
+            superseded_calls,
+            superseded_preview,
+        };
+        s.steering.push(receipt.clone());
+        if matches!(
+            s.status,
+            Status::Completed | Status::WaitingApproval | Status::WaitingDraftReview
+        ) {
+            s.status = Status::Running;
+            s.error = None;
+        }
+        self.save(s)?;
+        for event in updates {
+            let _ = events.send(event);
+        }
+        Ok(Feedback::Applied { receipt })
+    }
     async fn run_loop(
         &self,
         s: &mut Session,
         mut approved: Option<String>,
         events: &UnboundedSender<Event>,
         cancel: &CancellationToken,
+        steering: &CancellationToken,
     ) -> Result<()> {
+        if steering.is_cancelled() {
+            return Ok(());
+        }
         if self.pause_for_limit(s, events)? {
             return Ok(());
         }
@@ -697,10 +866,17 @@ impl Runtime {
             if cancel.is_cancelled() {
                 bail!("Cancelled");
             }
+            if steering.is_cancelled() {
+                return Ok(());
+            }
             if self.pause_for_limit(s, events)? {
                 return Ok(());
             }
             while !s.pending.is_empty() {
+                ensure!(!cancel.is_cancelled(), "Cancelled before the next tool");
+                if steering.is_cancelled() {
+                    return Ok(());
+                }
                 let call = s.pending[0].clone();
                 let _ = events.send(Event::Tool {
                     call: call.clone(),
@@ -852,11 +1028,16 @@ impl Runtime {
                             continue;
                         }
                     };
-                    let Some(review) = self.review_draft(s, &call, &packet, events, cancel).await?
+                    let Some(review) = self
+                        .review_draft(s, &call, &packet, events, cancel, steering)
+                        .await?
                     else {
                         return Ok(());
                     };
                     ensure!(!cancel.is_cancelled(), "Cancelled before draft write");
+                    if steering.is_cancelled() {
+                        return Ok(());
+                    }
                     if self.pause_for_limit(s, events)? {
                         return Ok(());
                     }
@@ -926,6 +1107,10 @@ impl Runtime {
                 } else {
                     None
                 };
+                if steering.is_cancelled() {
+                    return Ok(());
+                }
+                ensure!(!cancel.is_cancelled(), "Cancelled before tool dispatch");
                 if let Some(grant) = needs_approval {
                     s.pending_approval = Some(grant);
                     s.status = Status::WaitingApproval;
@@ -958,27 +1143,45 @@ impl Runtime {
                     self.save(s)?;
                     return Ok(());
                 }
-                self.store
-                    .begin_call(&s.id, &call.id, &call.name, &call.arguments)?;
-                let _ = events.send(Event::Tool {
-                    call: call.clone(),
-                    state: ToolState::Running,
-                    result: None,
-                });
                 let validation_inputs = s
                     .goal
                     .as_ref()
                     .and_then(|goal| goal.validation_inputs(&self.workspace, &call, &args));
+                let mut dispatched = false;
                 let operation = async {
-                    if call.name == "resolve_clarification" {
+                    self.store
+                        .begin_call(&s.id, &call.id, &call.name, &call.arguments)?;
+                    dispatched = true;
+                    let _ = events.send(Event::Tool {
+                        call: call.clone(),
+                        state: ToolState::Running,
+                        result: None,
+                    });
+                    let result = if call.name == "resolve_clarification" {
                         self.resolve(s, &args)
                     } else if call.name.starts_with("mcp_") {
                         self.mcp.call(&call.name, args.clone()).await
                     } else {
                         tools::execute(&self.workspace, &call.name, &args).await
-                    }
+                    };
+                    Ok::<_, anyhow::Error>(result)
                 };
-                let result = tokio::select! {_=cancel.cancelled()=>{s.status=Status::NeedsReconciliation;bail!("Cancelled during a tool call; inspect its outcome before continuing");},r=operation=>r};
+                let result = tokio::select! {
+                    biased;
+                    _=cancel.cancelled()=>{
+                        if dispatched {
+                            s.status=Status::NeedsReconciliation;
+                            bail!("Cancelled during a tool call. Inspect its outcome before continuing");
+                        }
+                        bail!("Cancelled before tool dispatch");
+                    },
+                    _=steering.cancelled()=>{
+                        if !dispatched { return Ok(()); }
+                        s.status=Status::NeedsReconciliation;
+                        bail!("Correction arrived after tool dispatch. Reconcile its outcome before continuing");
+                    },
+                    r=operation=>r?,
+                };
                 // External/PM errors can occur after side effects. Do not automatically replay.
                 if let Err(error) = &result
                     && (call.name.starts_with("mcp_") || call.name == "pm")
@@ -1024,6 +1227,9 @@ impl Runtime {
                 s.draft_preview = None;
                 self.save(s)?;
             }
+            if steering.is_cancelled() {
+                return Ok(());
+            }
             ensure!(
                 serde_json::to_vec(&s.history)?.len() < 700_000,
                 "Session context limit reached; start a new scoped session. No history was silently dropped."
@@ -1047,10 +1253,15 @@ impl Runtime {
                 phase: Phase::WaitingForModel,
                 message: "Waiting for model response".into(),
             });
-            let result = self
-                .provider
-                .complete(&system, &wire_history, &specs, events, cancel)
-                .await;
+            let result = tokio::select! {
+                biased;
+                _ = steering.cancelled() => {
+                    s.request_ledger.as_mut().unwrap().finish(crate::budget::State::Cancelled, None);
+                    self.save(s)?;
+                    return Ok(());
+                }
+                result = self.provider.complete(&system, &wire_history, &specs, events, cancel) => result,
+            };
             let state = if result.is_ok() {
                 crate::budget::State::Completed
             } else if cancel.is_cancelled() {
@@ -1113,13 +1324,19 @@ impl Runtime {
         packet: &grounding::Packet,
         events: &UnboundedSender<Event>,
         cancel: &CancellationToken,
+        steering: &CancellationToken,
     ) -> Result<Option<grounding::Review>> {
         let digest = packet.fingerprint()?;
-        if let Some(previous) =
-            s.draft_reviews.iter().rev().find(|r| {
-                r.call_id == call.id && r.packet_sha256 == digest && r.state == "completed"
-            })
-        {
+        let reviewed_after = s
+            .steering
+            .last()
+            .map_or(0, |receipt| receipt.requests_before_correction);
+        if let Some(previous) = s.draft_reviews.iter().rev().find(|r| {
+            r.call_id == call.id
+                && r.packet_sha256 == digest
+                && r.state == "completed"
+                && r.request_number > reviewed_after
+        }) {
             return Ok(previous.review.clone());
         }
         if self.pause_for_limit(s, events)? {
@@ -1163,16 +1380,17 @@ impl Runtime {
         // Review text is private audit data, never streamed into the user's answer.
         let history = vec![json!({"role":"user","content":serde_json::to_string(packet)?})];
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
-        let result = self
-            .provider
-            .complete(
-                grounding::POLICY,
-                &history,
-                &[grounding::spec()],
-                &tx,
-                cancel,
-            )
-            .await;
+        let specs = [grounding::spec()];
+        let result = tokio::select! {
+            biased;
+            _ = steering.cancelled() => {
+                s.request_ledger.as_mut().unwrap().finish(crate::budget::State::Cancelled, None);
+                s.draft_reviews.last_mut().unwrap().state = "superseded".into();
+                self.save(s)?;
+                return Ok(None);
+            }
+            result = self.provider.complete(grounding::POLICY, &history, &specs, &tx, cancel) => result,
+        };
         drop(tx);
         while let Ok(event) = rx.try_recv() {
             if matches!(event, Event::Usage(_)) {
@@ -1383,6 +1601,23 @@ impl Runtime {
         if !applied.is_empty() {
             body.push_str("\n## Applied draft previews\n\n");
             body.push_str(&applied);
+        }
+        if !s.steering.is_empty() || s.deferred_steering.is_some() {
+            body.push_str("\n## In-flight corrections\n\n");
+            for receipt in &s.steering {
+                body.push_str(&format!(
+                    "- Correction {} for turn {}. Source {} at SHA256 {}. Superseded calls {}. Superseded preview {}.\n",
+                    receipt.correction_id, receipt.turn_id, receipt.source, receipt.sha256,
+                    receipt.superseded_calls.join(", "),
+                    receipt.superseded_preview.as_deref().unwrap_or("none"),
+                ));
+            }
+            if let Some(correction) = &s.deferred_steering {
+                body.push_str(&format!(
+                    "- Correction {} for turn {} is saved pending tool reconciliation.\n",
+                    correction.id, correction.turn_id
+                ));
+            }
         }
         if let Some(goal) = &s.goal {
             body.push_str("\n## Persistent task goal\n\n");
