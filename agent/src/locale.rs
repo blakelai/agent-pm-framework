@@ -85,6 +85,7 @@ pub(crate) fn language_tag(raw: &str) -> Result<String> {
 pub(crate) struct Catalog {
     pub language: String,
     templates: BTreeMap<String, Vec<Part>>,
+    pub source: (String, String),
 }
 impl Catalog {
     pub fn load(workspace: &Workspace) -> Result<Self> {
@@ -94,7 +95,8 @@ impl Catalog {
         } else {
             &language
         };
-        let path = workspace.path(&format!("tools/locales/{renderer}.json"))?;
+        let relative = format!("tools/locales/{renderer}.json");
+        let path = workspace.path(&relative)?;
         ensure!(
             path.is_file(),
             "No project-document renderer for {language}. Translate and review tools/locales/{language}.json before generating reports."
@@ -105,8 +107,8 @@ impl Catalog {
         );
         let base: BTreeMap<String, String> =
             serde_json::from_str(include_str!("../../tools/locales/en.json"))?;
-        let data: BTreeMap<String, String> =
-            serde_json::from_str(&std::fs::read_to_string(&path)?)?;
+        let text = std::fs::read_to_string(&path)?;
+        let data: BTreeMap<String, String> = serde_json::from_str(&text)?;
         ensure!(
             base.keys().eq(data.keys()) && data.values().all(|s| !s.trim().is_empty()),
             "Language catalog must contain exactly the English catalog keys with nonempty strings"
@@ -124,6 +126,7 @@ impl Catalog {
         Ok(Self {
             language,
             templates,
+            source: (relative, crate::workspace::hash(text.as_bytes())),
         })
     }
     pub fn text(&self, key: &str) -> Result<String> {

@@ -11,6 +11,7 @@ mod progress;
 mod questions;
 mod recovery;
 mod refresh;
+mod scenarios;
 mod tool_display;
 mod transcript;
 mod view;
@@ -239,6 +240,35 @@ pub async fn run(workspace: Workspace, config_path: PathBuf, lock: WorkspaceLock
                         if let Some(planner)=&mut app.planner {planner.replace(snapshot);} else {app.planner=Some(planner::Planner::new(snapshot));}
                     },
                     Command::ClosePlanning=>app.planner=None,
+                    Command::OpenScenarios=>if let Some(planner)=&mut app.planner {
+                        match crate::scenarios::list(&workspace) {
+                            Ok(ids)=>planner.scenarios=Some(scenarios::Browser::new(ids)),
+                            Err(e)=>planner.message=format!("Saved scenarios unavailable. {e:#}"),
+                        }
+                    },
+                    Command::CloseScenarios=>if let Some(planner)=&mut app.planner { planner.scenarios=None; },
+                    Command::LoadScenario(id)=>if let Some(panel)=app.planner.as_mut().and_then(|p|p.scenarios.as_mut()) {
+                        match crate::scenarios::load(&workspace,&id) {
+                            Ok(comparison)=>panel.load(comparison),
+                            Err(e)=>panel.message=format!("Scenario unavailable. {e:#}"),
+                        }
+                    },
+                    Command::ReviewScenario{comparison,scenario}=>if let Some(panel)=app.planner.as_mut().and_then(|p|p.scenarios.as_mut()) {
+                        match crate::scenarios::review(&workspace,&comparison,&scenario) {
+                            Ok(review)=>panel.review(review),
+                            Err(e)=>panel.message=format!("Review unavailable. {e:#}"),
+                        }
+                    },
+                    Command::ApplyScenario{comparison,scenario,review}=>{
+                        let result=crate::scenarios::apply(&workspace,&lock,&comparison,&scenario,&review);
+                        if result.is_ok() { refresh(&workspace,&mut app,&mut store); }
+                        if let Some(panel)=app.planner.as_mut().and_then(|p|p.scenarios.as_mut()) {
+                            panel.result(match result {
+                                Ok(value)=>value["warning"].as_str().map(String::from).unwrap_or_else(|| format!("Applied reviewed assignments · {}",value["audit_path"].as_str().unwrap_or_default())),
+                                Err(e)=>format!("Scenario could not be applied. {e:#}"),
+                            });
+                        }
+                    },
                     Command::Delivery=>{
                         let snapshot=crate::delivery::Snapshot::load(&workspace);
                         if let Some(delivery)=&mut app.delivery {delivery.replace(snapshot);} else {app.delivery=Some(delivery::Delivery::new(snapshot));}

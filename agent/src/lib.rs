@@ -31,6 +31,7 @@ pub mod provider;
 pub mod records;
 pub mod reviews;
 pub mod runtime;
+pub mod scenarios;
 pub mod schedule;
 pub mod skills;
 mod source_navigation;

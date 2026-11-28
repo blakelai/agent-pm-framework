@@ -132,6 +132,13 @@ pub struct Saved {
     pub warning: Option<String>,
 }
 
+pub(crate) struct ReviewedMove {
+    pub path: String,
+    pub before: String,
+    pub after: String,
+    pub warnings: Vec<String>,
+}
+
 fn fields(kind: &str) -> Vec<(&'static str, FieldType)> {
     use FieldType::*;
     let mut result = vec![("title", Text), ("owner", Text)];
@@ -576,11 +583,10 @@ impl Edit {
             content,
         ))
     }
-    pub fn preview(&self, w: &Workspace) -> Result<Preview> {
+    fn validated_candidate(&self, w: &Workspace) -> Result<(Document, String, Vec<String>)> {
         let (d, content) = self.candidate(w)?;
         unchanged(w, &d.path, self.original.as_deref())?;
         let mut warnings = vec![];
-        let mut planning_changes = vec![];
         validate_tables(&self.tables)?;
         if let Some(original) = &self.original {
             let (old, old_body) = records::parse_project_note(original)?;
@@ -701,6 +707,35 @@ impl Edit {
             ensure!(f.level != "ERROR", "{}: {}", f.code, f.message);
             warnings.push(format!("{}: {}", f.code, f.message));
         }
+        Ok((d, content, warnings))
+    }
+
+    pub(crate) fn review_move(&self, w: &Workspace) -> Result<ReviewedMove> {
+        let (document, _, warnings) = self.validated_candidate(w)?;
+        let before = self
+            .original
+            .as_ref()
+            .context("Scheduling requires an existing PBI")?;
+        let (mut metadata, body) = records::parse_project_note(before)?;
+        metadata["sprint"] = document.metadata["sprint"].clone();
+        ensure!(
+            document.kind == "pbi"
+                && metadata == document.metadata
+                && body.trim() == self.body.trim(),
+            "A scenario can change only the PBI's sprint assignment"
+        );
+        let after = preserve_move_bytes(before, &metadata)?;
+        Ok(ReviewedMove {
+            path: document.path,
+            before: before.clone(),
+            after,
+            warnings,
+        })
+    }
+
+    pub fn preview(&self, w: &Workspace) -> Result<Preview> {
+        let (d, content, mut warnings) = self.validated_candidate(w)?;
+        let mut planning_changes = vec![];
         if matches!(
             d.path.as_str(),
             "06_Delivery/People.md" | "06_Delivery/Iterations.md" | "06_Delivery/Planning.md"
@@ -780,6 +815,52 @@ impl Edit {
         })
     }
 }
+
+fn preserve_move_bytes(before: &str, metadata: &Value) -> Result<String> {
+    let open = before
+        .find('\n')
+        .context("Missing frontmatter line ending")?
+        + 1;
+    let newline = if before[..open].ends_with("\r\n") {
+        "\r\n"
+    } else {
+        "\n"
+    };
+    let mut end = open;
+    for line in before[open..].split_inclusive('\n') {
+        if line.trim_end_matches(['\r', '\n']) == "---" {
+            break;
+        }
+        end += line.len();
+    }
+    let head = &before[open..end];
+    let replacement = if head.trim_start().starts_with('{') {
+        format!("{}{newline}", serde_json::to_string(metadata)?)
+    } else {
+        let sprint = format!("sprint: {}{newline}", metadata["sprint"]);
+        let mut updated = String::new();
+        let mut replaced = false;
+        for line in head.split_inclusive('\n') {
+            if line.starts_with("sprint:") {
+                updated.push_str(&sprint);
+                replaced = true;
+            } else {
+                updated.push_str(line);
+            }
+        }
+        if !replaced {
+            updated.push_str(&sprint);
+        }
+        updated
+    };
+    let content = format!("{}{replacement}{}", &before[..open], &before[end..]);
+    ensure!(
+        records::parse_project_note(&content)?.0 == *metadata,
+        "Updated sprint could not be isolated safely"
+    );
+    Ok(content)
+}
+
 fn unchanged(w: &Workspace, path: &str, original: Option<&str>) -> Result<()> {
     match original {
         Some(old) => ensure!(
@@ -800,7 +881,7 @@ fn require_links(records: &records::Records, m: &Value, key: &str) -> Result<()>
     );
     Ok(())
 }
-fn context(w: &Workspace) -> Result<String> {
+pub(crate) fn context(w: &Workspace) -> Result<String> {
     let values = w
         .documents()?
         .into_iter()

@@ -77,6 +77,11 @@ enum Command {
         #[command(subcommand)]
         action: ReviewAction,
     },
+    /// Compare and apply reviewed planning simulations.
+    Scenario {
+        #[command(subcommand)]
+        action: ScenarioAction,
+    },
     /// Validate configuration and selected Chat prerequisites without contacting services.
     Doctor {
         #[arg(long, default_value = "workflow")]
@@ -91,6 +96,31 @@ enum Command {
         #[arg(long)]
         last: bool,
     },
+}
+#[derive(Subcommand)]
+enum ScenarioAction {
+    /// Compare assignment alternatives and save a pinned local simulation.
+    Compare {
+        specification: PathBuf,
+        #[arg(long)]
+        id: String,
+    },
+    /// Read a saved comparison.
+    Show { comparison: String },
+    /// Check one saved alternative for application and print the review hash.
+    Review {
+        comparison: String,
+        scenario: String,
+    },
+    /// Apply the exact reviewed assignments after rechecking all inputs.
+    Apply {
+        comparison: String,
+        scenario: String,
+        #[arg(long)]
+        expect_review: String,
+    },
+    /// Recover an interrupted scenario application with the local journal.
+    Recover,
 }
 #[derive(Args)]
 struct ReviewSelection {
@@ -440,6 +470,33 @@ async fn main() -> Result<()> {
         }
         Command::Doctor { .. } => unreachable!("Doctor runs before acquiring a writer"),
         Command::Chat(_) => unreachable!("Chat is dispatched with its own output mode"),
+        Command::Scenario { action } => {
+            use pm_agent::scenarios;
+            let outcome = match action {
+                ScenarioAction::Compare { specification, id } => {
+                    serde_json::to_value(scenarios::compare(
+                        &workspace,
+                        &lock,
+                        &id,
+                        scenarios::Spec::read(&specification)?,
+                    )?)?
+                }
+                ScenarioAction::Show { comparison } => {
+                    serde_json::to_value(scenarios::load(&workspace, &comparison)?)?
+                }
+                ScenarioAction::Review {
+                    comparison,
+                    scenario,
+                } => serde_json::to_value(scenarios::review(&workspace, &comparison, &scenario)?)?,
+                ScenarioAction::Apply {
+                    comparison,
+                    scenario,
+                    expect_review,
+                } => scenarios::apply(&workspace, &lock, &comparison, &scenario, &expect_review)?,
+                ScenarioAction::Recover => scenarios::recover(&workspace, &lock)?,
+            };
+            println!("{}", serde_json::to_string_pretty(&outcome)?);
+        }
         Command::ChangeReview { action } => match action {
             ReviewAction::Compare { selection } => {
                 let review = change_review::load(&workspace, &selection.into())?;
