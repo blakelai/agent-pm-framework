@@ -1,0 +1,17 @@
+---
+type: "glossary"
+id: "LANG-PILOT-PROCUREMENT"
+context: "procurement"
+version: 1
+doc_status: "draft"
+language: "zh-TW"
+title: "設備請購詞彙"
+---
+
+# 設備請購詞彙
+
+**請購單**是設備採購申請的記錄。 ^term-purchase-request
+
+**含稅總額**是請購單上以整數新臺幣記錄的金額。 ^term-total-twd
+
+來源為 [訪談欄位證據](../../01_Sources/Evidence/EVD-PILOT-INTAKE.md)。

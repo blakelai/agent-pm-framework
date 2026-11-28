@@ -1,0 +1,13 @@
+---
+type: "Reference"
+language: "zh-TW"
+title: "請購系統 OpenWiki"
+---
+
+# 請購系統 OpenWiki
+
+此 OpenWiki 是虛構請購系統的文件快照。
+
+- [核准路由](Approval-Routing.md)
+- [核准路由函式](../src/procurement.py)
+- [程式碼測試](../tests/test_procurement.py)

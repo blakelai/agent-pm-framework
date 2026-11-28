@@ -1,0 +1,15 @@
+---
+type: "brd"
+id: "BRD-PILOT-INTAKE"
+language: "zh-TW"
+title: "設備請購受理範圍"
+doc_status: "draft"
+version: 1
+owner: "採購流程產品負責人（合成）"
+contexts: ["procurement"]
+evidence: ["EVD-PILOT-INTAKE"]
+---
+
+# 設備請購受理範圍
+
+受理設備請購時，需要保留足以辨識請購單、申請部門及含稅總額的欄位。範圍以 [訪談欄位證據](../../01_Sources/Evidence/EVD-PILOT-INTAKE.md) 為依據。

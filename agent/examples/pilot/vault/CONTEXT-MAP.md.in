@@ -1,0 +1,11 @@
+---
+type: "Reference"
+language: "zh-TW"
+title: "請購試點領域地圖"
+---
+
+# 請購試點領域地圖
+
+| 領域 | 責任 | 詞彙來源 | 草稿負責人 |
+|---|---|---|---|
+| procurement | 設備請購的受理與核准路由 | [採購詞彙](02_Domain/procurement/CONTEXT.md) | 採購流程產品負責人（合成） |

@@ -1,0 +1,12 @@
+---
+type: "Reference"
+language: "zh-TW"
+title: "設備請購試點來源"
+---
+
+# 設備請購試點來源
+
+- [訪談欄位證據](Evidence/EVD-PILOT-INTAKE.md) 記錄請購欄位與金額表示方式。
+- [OpenWiki 證據](Evidence/EVD-PILOT-WIKI.md) 釘選文件門檻與行號。
+- [程式碼證據](Evidence/EVD-PILOT-CODE.md) 釘選程式常數與核准路由實作。
+- [Repository 登錄](../03_Systems/Repositories/REPO-PILOT-PROCUREMENT.md) 指向目前擷取的版本。

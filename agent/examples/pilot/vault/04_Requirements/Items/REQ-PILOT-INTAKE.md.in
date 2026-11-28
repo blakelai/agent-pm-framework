@@ -1,0 +1,17 @@
+---
+type: "requirement"
+id: "REQ-PILOT-INTAKE"
+requirement_kind: "DATA"
+language: "zh-TW"
+title: "記錄設備請購受理欄位"
+doc_status: "draft"
+version: 1
+owner: "採購流程產品負責人（合成）"
+contexts: ["procurement"]
+parents: ["PRD-PILOT-INTAKE"]
+evidence: ["EVD-PILOT-INTAKE"]
+---
+
+# 記錄設備請購受理欄位
+
+系統受理設備請購單時，須保存請購單號、申請部門及以整數新臺幣表示的含稅總額。驗收時比對已保存的紀錄與輸入。來源為 [訪談欄位證據](../../01_Sources/Evidence/EVD-PILOT-INTAKE.md)。

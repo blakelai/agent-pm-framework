@@ -1,0 +1,17 @@
+---
+type: "project"
+id: "PROJECT-PILOT-PROCUREMENT"
+language: "zh-TW"
+title: "設備請購試點"
+owner: "採購流程產品負責人（合成）"
+workflow_status: "draft"
+---
+
+# 設備請購試點
+
+這是 PM Agent 的合成試點。範圍包含設備請購欄位及核准路由分析。
+
+- 已知規則由合成訪談提供。見 [來源索引](../01_Sources/Source-Index.md)。
+- [系統分析](../03_Systems/Analysis/SYS-PILOT-PROCUREMENT.md) 保留 OpenWiki 與程式碼的門檻差異。
+- [核准政策問題](../07_Decisions/QUESTION-PILOT-ROUTING.md) 等待試點操作者提供合成政策答覆。
+- 排程、人力、對外整合與正式上線留待有資料時再評估。
