@@ -1,0 +1,22 @@
+---
+type: "pbi"
+id: "PBI-PILOT-INTAKE"
+language: "zh-TW"
+title: "記錄設備請購資料"
+doc_status: "draft"
+delivery_status: "proposed"
+work_type: "feature"
+owner: "採購流程產品負責人（合成）"
+contexts: ["procurement"]
+parents: ["PRD-PILOT-INTAKE"]
+evidence: ["EVD-PILOT-INTAKE"]
+satisfies: ["REQ-PILOT-INTAKE"]
+depends_on: []
+sprint: null
+---
+
+# 記錄設備請購資料
+
+- AC-01: 受理一筆已知單號、部門與含稅金額的請購單後，已保存紀錄的三個欄位須與輸入相同，金額單位為整數新臺幣。
+
+驗收設計見 [欄位測試案例](../08_Verification/Cases/TC-PILOT-INTAKE.md)。實作工時與交付依賴待確認。

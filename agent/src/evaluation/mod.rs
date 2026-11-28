@@ -162,7 +162,7 @@ fn manifest(root: &Path) -> Result<(Manifest, String)> {
     let bytes = read(root, "manifest.json")?;
     let m: Manifest = serde_json::from_slice(&bytes)?;
     ensure!(
-        m.format == FORMAT && m.synthetic && matches!(m.fixture_version, 1..=4),
+        m.format == FORMAT && m.synthetic && matches!(m.fixture_version, 1..=5),
         "Unsupported evaluation manifest"
     );
     ensure!(
@@ -290,7 +290,7 @@ fn prepare_local(
     let m = Manifest {
         format: FORMAT.into(),
         case,
-        fixture_version: 4,
+        fixture_version: 5,
         application_version: env!("CARGO_PKG_VERSION").into(),
         runner_sha256: runner_hash()?,
         synthetic: true,
@@ -510,7 +510,7 @@ pub async fn run(
     let error = result.err().map(|e| e.to_string());
     report.state = "finished".into();
     report.finished_at = Some(chrono::Utc::now().to_rfc3339());
-    report.session_status = Some(session.status.clone());
+    report.session_status = Some(session.status);
     report.usage = Some(crate::budget::summary(Some(&ledger)));
     let files = Workspace { root: root.clone() };
     for (path, bytes) in [

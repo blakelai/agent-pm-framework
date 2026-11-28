@@ -6,7 +6,7 @@ use crate::{
     workspace::{Document, Workspace},
 };
 use anyhow::{Context, Result, ensure};
-use std::collections::BTreeSet;
+use std::{borrow::Borrow, collections::BTreeSet};
 
 pub const PEOPLE: &str = "06_Delivery/People.md";
 pub const ITERATIONS: &str = "06_Delivery/Iterations.md";
@@ -167,10 +167,10 @@ pub fn propose(
 }
 
 /// Explicit before/after facts, without interpreting person-days as calendar dates.
-pub(crate) fn impact(before: Result<Forecast>, after: &Forecast) -> Vec<String> {
+pub(crate) fn impact(before: Result<impl Borrow<Forecast>>, after: &Forecast) -> Vec<String> {
     let mut lines = vec![format!("Proposed forecast as_of: {}", after.as_of)];
-    let before = match before {
-        Ok(f) => Some(f),
+    let before = match &before {
+        Ok(f) => Some(f.borrow()),
         Err(e) => {
             lines.push(format!("Previous forecast unavailable: {e:#}"));
             None

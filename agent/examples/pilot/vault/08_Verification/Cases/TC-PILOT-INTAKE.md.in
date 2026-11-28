@@ -1,0 +1,17 @@
+---
+type: "testcase"
+id: "TC-PILOT-INTAKE"
+language: "zh-TW"
+title: "比對設備請購受理欄位"
+workflow_status: "draft"
+owner: "採購流程產品負責人（合成）"
+requirements: ["REQ-PILOT-INTAKE"]
+---
+
+# 比對設備請購受理欄位
+
+1. 送出單號 PR-001、部門「資訊」、含稅總額新臺幣 28,000 元的虛構設備請購單。
+2. 讀取保存後的請購紀錄。
+3. 通過條件為三個欄位與輸入相同，金額為整數新臺幣 28,000 元。
+
+此處為 [原子需求](../../04_Requirements/Items/REQ-PILOT-INTAKE.md) 的測試設計。執行結果另行記錄。

@@ -22,11 +22,11 @@ E opens the [structured editor](Editing.md) for a supported project record. N st
 
 ## Reading and Markdown
 
-F8 or Impact / compare in a document's context menu opens the [read-only inspector](Inspection.md). Its three tabs show reference chains, an explicitly selected baseline diff and pinned-source versus latest-snapshot differences. Enter compares a selected baseline, O reads a candidate, R revalidates, F4 maximizes and Esc returns focus before closing. Mouse navigation and a detail scrollbar are available. External project changes clear results and require another recheck; no source sync or semantic invalidation is automatic.
+F8 or Impact / compare in a document's context menu opens the [read-only inspector](Inspection.md). Its four tabs show reference chains, an explicitly selected baseline diff, pinned-source versus latest-snapshot differences and version-pinned change review. In **4 Change review**, select an approved baseline and press Enter to review the active document. The preview shows mechanical findings, evidence and affected requirements, PBIs and tests. Use the CLI to save a report and semantic findings. O reads the document, R rechecks the selection, F4 maximizes and Esc returns focus before closing. Mouse navigation and a detail scrollbar are available. External project changes clear the open comparison. [Change review controls](Inspection.md#version-pinned-change-review)
 
 F7 or Delivery opens [Change, UAT, Release and Benefit workflows](Delivery-Workflows.md). Select a tab with 1–4, Alt+1–4 or a click; N creates a draft and E/right-click edits a supported record. Enter focuses details, Esc returns to the record list, and another Esc returns to Browse. Mouse scrolling and the detail scrollbar remain available; F6 toggles emoji. The same preview/save and discard controls apply. Current checks never create decisions or release events.
 
-F5 or the Planning button in Browse opens [interactive scheduling](Planning-View.md). Its Schedule, Capacity and Signals tabs support keyboard and mouse navigation. M/right-click proposes a PBI move and opens a reviewed editor; selecting an iteration alone never saves it. Esc closes the target picker first, then returns to Browse. Existing form discard controls apply to any proposed change. R refreshes the planning snapshot immediately; P/I/A edit People, Iterations and the forecast date.
+F5 or the Planning button in Browse opens [interactive scheduling](Planning-View.md). Its Schedule, Capacity and Signals tabs support keyboard and mouse navigation. M/right-click proposes a PBI move and opens a reviewed editor. S opens saved batch simulations. Select an alternative, press Enter to review it, and use Ctrl+S to apply the reviewed assignments. Esc backs out of the review or picker. R refreshes the planning snapshot, and P/I/A edit People, Iterations and the forecast date. [Planning scenarios](Planning-View.md#compare-planning-scenarios)
 
 The browser and transcript share a terminal Markdown renderer: headings, emphasis, lists, task markers, quotes, fenced/inline code, tables and links. Obsidian links navigate to an unambiguous local document. Links in code remain literal. Images and diagrams are not visually rendered; linked originals can be opened using the desktop application. Metadata is shown through Properties instead of raw frontmatter.
 
@@ -58,6 +58,12 @@ Exit during active Chat work requests cancellation and waits for the recorded ou
 
 Cancellation shows a pending state until the runtime records an outcome. A tool with an uncertain outcome still requires reconciliation; returning focus never implies cancellation, rollback or tool completion.
 
+## Correct a running turn
+
+Type `/steer TEXT` in the composer and press Enter while Chat is working. Ordinary text stays in the composer while a turn runs. Corrections are text-only and leave pending attachments in the composer. Chat shows when the correction is queued, applied or saved pending reconciliation. If the turn ends before accepting the correction, its text remains available in Chat.
+
+A correction can supersede incomplete model output, undispatched tool calls and a draft proposal before it is written. A revised PRD goes through source review and receives a fresh preview. If the correction interrupts an already dispatched tool with an unknown outcome, record the actual result with `/reconcile` before work continues. Once the approval or draft picker is visible, it follows the normal confirm or discard controls. [CLI correction frames](README.md#correct-a-running-chat-turn)
+
 ## Clipboard images
 
 Ctrl+V in the composer reads the system clipboard once on a background worker. A decoded image becomes a pending PNG attachment, with its number and dimensions shown above the text inside the gray composer. If no image is available, readable clipboard text is inserted at the cursor without submission. The application never polls or overwrites the clipboard. It does not fetch remote image URLs or interpret clipboard filenames as image bytes.
@@ -82,6 +88,16 @@ A selection binds the saved conversation and exact pending call. A changed pendi
 
 Conversation permissions are persisted with that session. Global permissions live in the separate user settings file described in [application setup](README.md#tool-approval-choices). Both apply to the current tool with different future arguments; PM permissions distinguish subcommands and MCP permissions bind server configuration and parameter schema. All existing execution and clarification checks still apply.
 
+## PRD draft review
+
+After source review supports a PRD draft, Chat displays the proposed changes, cited sources and hashes, applicable baseline manifests, and open questions. Page Up/Down scrolls the preview. Choose **Apply reviewed draft** to confirm this exact proposal or **Discard and stop** to drop it. Esc discards the preview. Restoring the conversation with `/resume ID` restores the pending preview and choices. The composer keeps unsent text and attachments during review.
+
+Before applying, the runtime checks the original document, source packet and applicable baseline versions and decisions again. Applicable baselines are captured manifests containing the PRD ID or referenced by cited project records and baseline files. If any inputs changed, use `/continue` to have the Agent reread them and propose a fresh preview. A successful write records the preview ID, confirmation time and saved document hash in the Run. Confirmation authorizes only this draft write and leaves human semantic review and project approval pending. [Source-to-claim review](Grounding.md)
+
+## Persistent task goals
+
+Use `/goal set 04_Requirements/PRD-APPROVAL.md --validate | Document the supported approval workflow` to save a single-draft goal in Chat. The `--validate` check is optional. `/goal` shows saved progress and receipts. `/continue` resumes the goal when the session is ready, and the normal question and review controls handle pauses. `/goal clear` releases the scope after pending tool decisions are handled. The CLI also supports goals with multiple draft targets. [Goal setup and completion](README.md#save-a-task-goal)
+
 ## Command and Skill suggestions
 
 Type `/` at the start of the composer to open command suggestions; continued typing filters them. `/stage ` offers workflow stages and `/pm ` offers the native command catalog. Type `$` as a leading activation token to filter valid project Skills by name. Multiple leading Skills are supported. A `$` inside ordinary prose does not activate a Skill or open its picker.
@@ -91,6 +107,8 @@ Use Up/Down or the wheel to select, then Tab, Enter or a left-click to insert th
 Skill discovery refreshes when entering a new `$` completion context. Invalid entries remain diagnosable through `/skills`; runtime validation checks the selected files again before any model request. Suggestions do not grant new tools or bypass approvals. Command arguments such as session IDs and paths are entered manually.
 
 ## Conversation and execution details
+
+The TUI progress row follows the same runtime statuses as the [CLI execution event stream](README.md#stream-chat-execution-events). Saved sessions restore their pending review or question state in the TUI.
 
 User messages and ordinary Agent replies remain expanded and use the shared Markdown renderer, with separate labels and spacing. Thinking, tool calls, diagnostics and activity notices start collapsed with at most three content rows, including the heading, after terminal-width wrapping. Previews omit blank rows and indicate shortened content with an ellipsis. Public thinking previews follow the latest two rendered rows; other previews show the first two detail rows. Left-click a heading to expand/collapse that entry; Ctrl+T expands all details if any are collapsed, otherwise collapses them. New entries follow that preference. These actions never invoke a tool, change an approval or cancel execution.
 
@@ -103,6 +121,8 @@ A progress row is pinned above the composer independently of transcript scrollin
 Thinking is displayed only when the service supplies it: Responses public `response.reasoning_summary_text.delta` events (or completed output summaries), and compatible Chat Completions `delta.reasoning_content` / `delta.reasoning` string fields. No thinking is inferred from ordinary answer text, tool calls or elapsed time. Opaque encrypted continuation items are retained for Responses history but never rendered. The internal grounding reviewer remains isolated from the conversation.
 
 Completed compatible-API reasoning is saved separately from the wire conversation; Responses summaries are replayed from their original output items. Old sessions without reasoning remain readable and do not acquire invented summaries. Loading a session reconstructs message roles, calls, results and pending status. Partial interrupted streams are display-only; the last incomplete provider response is not added to accepted history. The bounded transcript may omit older display text without truncating saved session history.
+
+When Chat compacts a long session for model replay, the transcript shows a notice. `/status` and the saved Run identify the checkpoint. The conversation display still reads the original local history, including recorded tool calls and results. [Long-session replay](Session-Limits.md#long-session-replay)
 
 Failures use a red, collapsed diagnostic heading. Click it or use Ctrl+T for literal multiline details: operation, available paths/configuration/server identity, original causes and relevant next steps. File paths retain punctuation instead of being parsed as Markdown. Execution failures saved in the session reappear on resume; older generic errors do not acquire invented paths. Startup failures before input acceptance remain current-conversation diagnostics. See [Chat troubleshooting](Troubleshooting.md) for offline checks and recovery directions.
 

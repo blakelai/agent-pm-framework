@@ -7,10 +7,11 @@ case "$archive" in /*) ;; *) printf '%s\n' 'Archive path must be absolute.' >&2;
 parent=$(dirname -- "$archive")
 name=$(basename -- "$archive")
 if command -v sha256sum >/dev/null 2>&1; then
-  (cd -- "$parent" && sha256sum -c "$name.sha256")
+  checksum=(sha256sum)
 else
-  (cd -- "$parent" && shasum -a 256 -c "$name.sha256")
+  checksum=(shasum -a 256)
 fi
+(cd -- "$parent" && "${checksum[@]}" -c "$name.sha256")
 scratch=$(mktemp -d)
 scratch=$(CDPATH= cd -- "$scratch" && pwd -P)
 trap 'rm -rf -- "$scratch"' EXIT
@@ -21,6 +22,19 @@ bash "$package/install.sh" --prefix "$prefix"
 bash "$package/install.sh" --prefix "$prefix"
 binary="$prefix/bin/pm-agent"
 test "$("$binary" --version)" = "pm-agent $(cat "$package/VERSION")"
+active_link=$(readlink "$binary")
+active_checksum=$("${checksum[@]}" "$binary")
+cp -R "$package" "$scratch/corrupted"
+printf '\nCorrupted package fixture.\n' >> "$scratch/corrupted/framework/agent/README.md"
+if bash "$scratch/corrupted/install.sh" --prefix "$prefix" > "$scratch/tamper.log" 2>&1; then
+  printf '%s\n' 'The installer accepted a corrupted package.' >&2
+  exit 1
+fi
+cat "$scratch/tamper.log"
+grep -Fxq 'Error: Package checksum validation failed.' "$scratch/tamper.log"
+test "$(readlink "$binary")" = "$active_link"
+test "$("${checksum[@]}" "$binary")" = "$active_checksum"
+printf '%s\n' 'Corrupted package rejected; the installed executable and active link were preserved.'
 cp -R "$package/framework" "$scratch/vault"
 test ! -e "$scratch/vault/.pm-agent"
 "$binary" --vault "$scratch/vault" storage inspect
@@ -41,4 +55,4 @@ done
 mkdir "$scratch/restored"
 "$binary" backup restore "$scratch/recovery.pmbak" --parent "$scratch/restored" --include-sessions
 test ! -e "$scratch/vault/.pm-agent/config.toml"
-printf '%s\n' 'Package checks passed: checksum, install/reinstall, native CLI, offline evaluation, clean starter, Skills, storage, backup and restore.'
+printf '%s\n' 'Package checks passed: checksum, install/reinstall, corruption rejection, native CLI, offline evaluation, clean starter, Skills, storage, backup and restore.'

@@ -35,9 +35,9 @@ pub const TABS: &[(&str, &str)] = &[
     ("✅", "Verification"),
     ("🤖", "Agent Runs"),
 ];
-pub const HELP: &str = "# PM Agent\n\nF2 switches Browse / Chat. F1 opens help. Ctrl+Q exits when idle.\n\n## Browse\nAlt+1…9 selects a category; Alt+0 lists all categories. Alt+Left/Right cycles categories.\nEnter opens the selected document; Esc returns to the list. F3 collapses the list; F4 maximizes the document. F6 toggles emoji.\nTab switches focus. PgUp/PgDn scroll. Mouse wheel scrolls the pointed pane; drag the right scrollbar. Right-click opens actions. L shows document links. P shows properties. O opens the original in the desktop application. R refreshes immediately. Local knowledge files also refresh automatically every two seconds; drafts are retained and changed inputs require a new preview. E edits supported project fields; N creates a PBI, risk or decision. F5 or Planning opens the local planning view: 1 Schedule, 2 Capacity, 3 Signals; M proposes an iteration move; P/I/A edit allocations, iterations and forecast date; R refreshes; Esc returns. F7 or Delivery opens Changes, UAT, Releases and Benefits: 1-4/Alt+1-4 select tabs, N creates a draft, E edits, O opens the document, R refreshes, Enter focuses details, Esc returns.\n\nF8 or the document context menu opens Impact and Compare: 1 references, 2 baseline diff, 3 source diff; Enter explicitly compares a baseline; O opens a candidate; R revalidates; F4 maximizes; Esc returns. Changed project inputs clear results. Source comparisons use captured snapshots only.
+pub const HELP: &str = "# PM Agent\n\nF2 switches Browse / Chat. F1 opens help. Ctrl+Q exits when idle.\n\n## Browse\nAlt+1…9 selects a category; Alt+0 lists all categories. Alt+Left/Right cycles categories.\nEnter opens the selected document; Esc returns to the list. F3 collapses the list; F4 maximizes the document. F6 toggles emoji.\nTab switches focus. PgUp/PgDn scroll. Mouse wheel scrolls the pointed pane; drag the right scrollbar. Right-click opens actions. L shows document links. P shows properties. O opens the original in the desktop application. R refreshes immediately. Local knowledge files also refresh automatically every two seconds; drafts are retained and changed inputs require a new preview. E edits supported project fields; N creates a PBI, risk or decision. F5 or Planning opens the local planning view: 1 Schedule, 2 Capacity, 3 Signals; M proposes an iteration move; S opens planning scenarios; P/I/A edit allocations, iterations and forecast date; R refreshes; Esc returns. F7 or Delivery opens Changes, UAT, Releases and Benefits: 1-4/Alt+1-4 select tabs, N creates a draft, E edits, O opens the document, R refreshes, Enter focuses details, Esc returns.\n\nF8 or the document context menu opens Impact and Compare. Use 1 for references, 2 for baseline diff, 3 for source diff and 4 for change review. In change review, select an approved baseline and press Enter to compare the active document. O opens the document, R rechecks the selection, F4 maximizes and Esc returns. Changed project inputs clear results. Source comparisons use captured snapshots only.
 
-F11 opens Recovery: Alt+1/2/3 or mouse selects Backup/Check/Restore. Enter absolute paths; Tab selects fields and session inclusion. Ctrl+S reviews, then Ctrl+S executes writes. Esc/right-click backs out or requests cancellation. Unsent Chat input is preserved.\n\nF10 opens Materials: Enter/R checks the selected original and extracted text; 1/2/3/4 switch Overview/Text/Evidence/Reviews; V starts a review, E edits a draft; O opens a rechecked original, N opens the current note, [/] cycle claims, F4 maximizes.\n\nF9 opens Questions: scope, affected files, recorded answers and resolution checks. Enter focuses details; Esc returns; O opens the note; R refreshes.\n\n## Editing\nEnter/Tab edits fields; lists use one value per line. Use left/right to select enum values. Ctrl+S reviews changes, then Ctrl+S saves the reviewed result. Esc reverts the active field or returns from preview. Ctrl+D discards with confirmation.\n\n## Chat\nType immediately. Enter sends; Alt+Enter, Shift+Enter or Ctrl+J inserts a newline. Multiline paste never submits.\nThe conversation follows the latest output by default. Page Up or the mouse wheel scrolls back and pauses following; Back to bottom appears below the conversation. Esc, clicking the hint or scrolling to the bottom resumes following without cancelling the Agent. Click the conversation without leaving the input or pausing following. A separate Esc in the input while following cancels an active operation. When tool approval is needed, a picker replaces the input: 1 Allow once, 2 Allow for this conversation, 3 Always allow (global settings), 4 Deny and stop. Use arrows or 1–4 then Enter, or click an option. Esc in the picker denies and stops immediately; the text/image draft is retained. Ctrl+W deletes the word before the cursor. Ctrl+V pastes a clipboard image or text; Enter sends pending images. Ctrl+X removes the last image; clicking its chip removes it. Ctrl+C clears text and attachments. /exit or Ctrl+D with no input, attachment or clipboard read exits, stopping active work first.\nType / for commands or a leading $ for Skills; arrows select, Tab/Enter or click inserts, Esc closes. Up/Down at the first/last input line recalls history and restores the draft.\nTools, public thinking summaries and notices preview up to three terminal rows when collapsed. Click their headings or Ctrl+T for readable details. A progress row above the input shows the current action and elapsed time; Esc cancels from the input after closing popups or returning to the latest message.\n\n## Commands\n/help, /status, /budget, /probe [PROFILE], /probe last [PROFILE], /skills, /skills clear, /search TEXT, /stage prd, /language [TAG|auto], /pm plan, /sessions, /resume ID, /continue, /continue-independent, /answer QUESTION-ID TEXT, /approve, /deny, /reconcile ACTUAL_OUTCOME, /new, /exit, /quit.\n/budget shows configured session limits and saved request usage without a model request.\n/probe explicitly sends up to three synthetic requests (service charges may apply); /probe last reads local observations. Use a leading $skill-name to explicitly enable a project Skill. Skills remain selected in the session until cleared. Context values come only from the service; missing values remain unavailable.";
+F11 opens Recovery: Alt+1/2/3 or mouse selects Backup/Check/Restore. Enter absolute paths; Tab selects fields and session inclusion. Ctrl+S reviews, then Ctrl+S executes writes. Esc/right-click backs out or requests cancellation. Unsent Chat input is preserved.\n\nF10 opens Materials: Enter/R checks the selected original and extracted text; 1/2/3/4 switch Overview/Text/Evidence/Reviews; V starts a review, E edits a draft; O opens a rechecked original, N opens the current note, [/] cycle claims, F4 maximizes.\n\nF9 opens Questions: scope, affected files, recorded answers and resolution checks. Enter focuses details; Esc returns; O opens the note; R refreshes.\n\n## Editing\nEnter/Tab edits fields; lists use one value per line. Use left/right to select enum values. Ctrl+S reviews changes, then Ctrl+S saves the reviewed result. Esc reverts the active field or returns from preview. Ctrl+D discards with confirmation.\n\n## Chat\nType immediately. Enter sends; Alt+Enter, Shift+Enter or Ctrl+J inserts a newline. Multiline paste never submits.\nThe conversation follows the latest output by default. Page Up or the mouse wheel scrolls back and pauses following; Back to bottom appears below the conversation. Esc, clicking the hint or scrolling to the bottom resumes following without cancelling the Agent. Click the conversation without leaving the input or pausing following. A separate Esc in the input while following cancels an active operation. When tool approval is needed, a picker replaces the input: 1 Allow once, 2 Allow for this conversation, 3 Always allow (global settings), 4 Deny and stop. Use arrows or 1–4 then Enter, or click an option. Esc in the picker denies and stops immediately; the text/image draft is retained. Ctrl+W deletes the word before the cursor. Ctrl+V pastes a clipboard image or text; Enter sends pending images. Ctrl+X removes the last image; clicking its chip removes it. Ctrl+C clears text and attachments. /exit or Ctrl+D with no input, attachment or clipboard read exits, stopping active work first.\nType / for commands or a leading $ for Skills; arrows select, Tab/Enter or click inserts, Esc closes. Up/Down at the first/last input line recalls history and restores the draft.\nTools, public thinking summaries and notices preview up to three terminal rows when collapsed. Click their headings or Ctrl+T for readable details. A progress row above the input shows the current action and elapsed time; Esc cancels from the input after closing popups or returning to the latest message.\n\n## Commands\n/help, /status, /budget, /goal, /probe [PROFILE], /probe last [PROFILE], /skills, /skills clear, /search TEXT, /stage prd, /language [TAG|auto], /pm plan, /sessions, /resume ID, /continue, /steer TEXT, /continue-independent, /answer QUESTION-ID TEXT, /approve, /deny, /reconcile ACTUAL_OUTCOME, /new, /exit, /quit.\n/budget shows configured session limits and saved request usage without a model request.\n/probe explicitly sends up to three synthetic requests (service charges may apply); /probe last reads local observations. Use a leading $skill-name to explicitly enable a project Skill. Skills remain selected in the session until cleared. Context values come only from the service; missing values remain unavailable.";
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Mode {
@@ -58,6 +58,10 @@ pub enum Command {
     RecoveryJob(super::recovery::Job),
     None,
     Submit(String),
+    Steer {
+        turn_id: String,
+        input: String,
+    },
     Approve(super::approval_prompt::Selection),
     Cancel,
     Quit,
@@ -73,6 +77,18 @@ pub enum Command {
     CloseEdit,
     Planning,
     ClosePlanning,
+    OpenScenarios,
+    CloseScenarios,
+    LoadScenario(String),
+    ReviewScenario {
+        comparison: String,
+        scenario: String,
+    },
+    ApplyScenario {
+        comparison: String,
+        scenario: String,
+        review: String,
+    },
     Delivery,
     CloseDelivery,
     Questions,
@@ -181,6 +197,8 @@ pub struct App {
     /// Override the configured default for new sessions in this TUI.
     pub response_language: Option<Option<String>>,
     pub busy: bool,
+    pub(super) active_turn: Option<crate::steering::Turn>,
+    pub(super) queued_correction: Option<(String, String)>,
     pub(super) progress: Progress,
     pub model: String,
     pub usage: Option<Usage>,
@@ -238,6 +256,8 @@ impl App {
             stage: "workflow".into(),
             response_language: None,
             busy: false,
+            active_turn: None,
+            queued_correction: None,
             progress: Progress::default(),
             model: "not configured".into(),
             usage: None,
@@ -419,7 +439,38 @@ impl App {
     }
     pub(super) fn provider_event(&mut self, event: crate::provider::Event) {
         match event {
-            crate::provider::Event::Progress(text) => self.progress.update(text),
+            crate::provider::Event::Progress { message, .. } => self.progress.update(message),
+            crate::provider::Event::Execution(status) => self.progress.observe(status),
+            crate::provider::Event::ContextCompacted(report) => self.notice(&format!(
+                "Model context compacted. {} older items remain in local history.",
+                report.archived_items,
+            )),
+            crate::provider::Event::Steering(feedback) => {
+                self.messages.boundary();
+                let turn_id = match &feedback {
+                    crate::steering::Feedback::Applied { receipt } => Some(&receipt.turn_id),
+                    crate::steering::Feedback::Deferred { turn_id, .. } => Some(turn_id),
+                    crate::steering::Feedback::Rejected { .. } => None,
+                };
+                if self
+                    .queued_correction
+                    .as_ref()
+                    .is_some_and(|(expected, _)| Some(expected) == turn_id)
+                {
+                    self.queued_correction = None;
+                }
+                match feedback {
+                    crate::steering::Feedback::Applied { .. } => {
+                        self.notice("Correction applied. Earlier model output may be superseded.");
+                    }
+                    crate::steering::Feedback::Deferred { .. } => {
+                        self.notice(
+                            "Correction saved. Reconcile the dispatched tool before continuing.",
+                        );
+                    }
+                    crate::steering::Feedback::Rejected { reason } => self.notice(&reason),
+                }
+            }
             crate::provider::Event::InputAccepted(ids) => {
                 self.attachments.retain(|image| !ids.contains(&image.id))
             }
@@ -436,25 +487,13 @@ impl App {
                 state,
                 result,
             } => {
-                if state == "Approval required" {
-                    self.progress
-                        .pause("Waiting for approval · choose an option below");
-                } else if let Some(result) = &result {
-                    let value =
-                        serde_json::from_str::<serde_json::Value>(result).unwrap_or_default();
-                    if matches!(
-                        value["status"].as_str(),
-                        Some("waiting_for_user" | "blocked_by_grounding")
-                    ) {
-                        self.progress
-                            .pause("Waiting for your answer · review Questions");
-                    } else {
-                        self.progress.update("Processing tool results");
-                    }
+                if result.is_some() {
+                    self.progress.update("Processing tool results");
                 } else {
                     self.progress.update(tool_display::action(&call));
                 }
-                self.messages.tool(&call, &state, result.as_deref());
+                self.messages
+                    .tool(&call, &state.to_string(), result.as_deref());
             }
             crate::provider::Event::Notice(text) => self.notice(&text),
             crate::provider::Event::Usage(usage) => {
@@ -468,13 +507,35 @@ impl App {
     pub(super) fn start_operation(&mut self) {
         self.busy = true;
         self.progress.start();
+        self.refresh_completion();
+    }
+    pub(super) fn finish_steering(&mut self) {
+        if let Some(turn) = self.active_turn.take() {
+            turn.close();
+        }
+        if let Some((_, input)) = self.queued_correction.take() {
+            if self.input.text.is_empty() {
+                self.input.insert(&input);
+            }
+            self.notice("Correction was not accepted before the turn ended. Text remains in Chat.");
+        }
+        self.refresh_completion();
     }
     pub(super) fn update_approval(&mut self, session: &Session) {
-        self.approval = if session.status == crate::runtime::Status::WaitingApproval {
-            session
-                .pending
-                .first()
-                .map(|call| super::approval_prompt::Prompt::new(session.id.clone(), call.clone()))
+        self.approval = if matches!(
+            session.status,
+            crate::runtime::Status::WaitingApproval | crate::runtime::Status::WaitingDraftReview
+        ) {
+            session.pending.first().map(|call| {
+                super::approval_prompt::Prompt::new(
+                    session.id.clone(),
+                    call.clone(),
+                    session
+                        .draft_preview
+                        .as_ref()
+                        .map(|preview| preview.id.clone()),
+                )
+            })
         } else {
             None
         };
@@ -488,6 +549,13 @@ impl App {
         self.messages.sync_tools(&session);
         self.messages.boundary();
         self.status = format!("{:?} — session {}", session.status, session.id);
+        if let Some(goal) = &session.goal {
+            self.status.push_str(if goal.is_active() {
+                " · Goal active"
+            } else {
+                " · Goal completion recorded"
+            });
+        }
         self.usage = session.usage.clone();
         self.update_approval(&session);
         self.session = Some(session);
@@ -499,6 +567,7 @@ impl App {
             session_id: prompt.session_id,
             call: prompt.call,
             decision,
+            preview_id: prompt.preview_id,
         })
     }
     pub(super) fn start_clipboard(&mut self) -> u64 {
@@ -578,7 +647,7 @@ impl App {
             && self.menu.is_none()
             && self.dismissed_completion.as_ref() != Some(&signature)
         {
-            completion::suggest(&self.input, &self.completions)
+            completion::suggest(&self.input, &self.completions, self.active_turn.is_some())
         } else {
             None
         };
@@ -612,7 +681,7 @@ impl App {
         }
     }
     pub fn status_details(&self) -> String {
-        format!(
+        let mut details = format!(
             "# Session\n\nModel: {}\n\nState: {}\n\nSession: {}\n\nResponse language: {}\n\n{}\n\nSelected Skills: {}\n\n{}\n\n{}",
             self.model,
             if self.busy { "running" } else { "idle" },
@@ -637,7 +706,16 @@ impl App {
             self.refresh_error
                 .as_deref()
                 .unwrap_or(&self.refresh_status)
-        )
+        );
+        if let Some(checkpoint) = self
+            .session
+            .as_ref()
+            .and_then(|session| session.context_checkpoint.as_ref())
+        {
+            details.push_str("\n\n");
+            details.push_str(&checkpoint.markdown());
+        }
+        details
     }
     fn switch(&mut self, mode: Mode) {
         if self.mode == mode {
@@ -1528,7 +1606,25 @@ impl App {
                         self.status =
                             "Waiting for clipboard content; Ctrl+C discards the draft".into();
                     } else if self.busy {
-                        self.status = "Running — draft retained; Esc cancels".into();
+                        if let Some(turn) = &self.active_turn {
+                            if self
+                                .input
+                                .text
+                                .strip_prefix("/steer")
+                                .is_some_and(|tail| tail.starts_with(char::is_whitespace))
+                            {
+                                self.follow = true;
+                                self.history.remember(&self.input.text);
+                                return Command::Steer {
+                                    turn_id: turn.id().into(),
+                                    input: self.input.take(),
+                                };
+                            }
+                            self.status =
+                                "Running · /steer TEXT corrects the turn · Esc cancels".into();
+                        } else {
+                            self.status = "Running · draft retained · Esc cancels".into();
+                        }
                     } else if !self.input.text.trim().is_empty() || !self.attachments.is_empty() {
                         self.follow = true;
                         self.history.remember(&self.input.text);
@@ -2266,7 +2362,10 @@ mod tests {
         a.append(&"Earlier reply\n\n".repeat(40));
         a.input.insert("Unsent 中文 draft");
         a.start_operation();
-        a.provider_event(ProviderEvent::Progress("Waiting for model response".into()));
+        a.provider_event(ProviderEvent::Progress {
+            phase: crate::execution::Phase::WaitingForModel,
+            message: "Waiting for model response".into(),
+        });
         draw(&mut a, 90, 24);
         a.follow = false;
         a.transcript_scroll = 0;
@@ -2277,7 +2376,7 @@ mod tests {
         };
         a.provider_event(ProviderEvent::Tool {
             call: call.clone(),
-            state: "Running".into(),
+            state: crate::execution::ToolState::Running,
             result: None,
         });
         let buffer = draw(&mut a, 90, 24);
@@ -2301,7 +2400,7 @@ mod tests {
                 .any(|l| l.to_string().contains("Waiting for model response"))
         );
 
-        a.provider_event(ProviderEvent::Tool {call,state:"Result recorded".into(),result:Some(json!([{"title":"付款流程","path":"付款.md"},{"title":"Refund rules","path":"refund.md"},{"title":"Gateway integration","path":"gateway.md"},{"title":"Receipts","path":"receipts.md"}]).to_string())});
+        a.provider_event(ProviderEvent::Tool {call,state:crate::execution::ToolState::ResultRecorded,result:Some(json!([{"title":"付款流程","path":"付款.md"},{"title":"Refund rules","path":"refund.md"},{"title":"Gateway integration","path":"gateway.md"},{"title":"Receipts","path":"receipts.md"}]).to_string())});
         a.follow = true;
         let collapsed = draw(&mut a, 90, 24);
         let visible = buffer_text(&collapsed);
@@ -2331,8 +2430,13 @@ mod tests {
             )
             .unwrap();
         }
+        a.provider_event(ProviderEvent::Execution(
+            crate::runtime::Status::WaitingClarification,
+        ));
+        assert!(buffer_text(&draw(&mut a, 90, 24)).contains("Waiting for your answer"));
         a.progress.cancel();
         a.provider_event(ProviderEvent::Text("Late response text".into()));
+        a.provider_event(ProviderEvent::Execution(crate::runtime::Status::Cancelled));
         assert!(buffer_text(&draw(&mut a, 90, 24)).contains("Stopping"));
         a.progress.session(&crate::runtime::Status::WaitingApproval);
         a.busy = false;
@@ -2618,6 +2722,31 @@ mod tests {
     }
     fn key(app: &mut App, code: KeyCode) -> Command {
         app.event(Event::Key(KeyEvent::new(code, KeyModifiers::NONE)))
+    }
+
+    #[test]
+    fn busy_chat_sends_only_explicit_corrections_to_its_active_turn() {
+        let mut app = App::new(vec![]);
+        app.switch(Mode::Chat);
+        app.start_operation();
+        let turn = crate::steering::Turn::default();
+        let turn_id = turn.id().to_owned();
+        app.active_turn = Some(turn);
+        app.input.insert("A normal draft");
+        assert_eq!(key(&mut app, KeyCode::Enter), Command::None);
+        assert_eq!(app.input.take(), "A normal draft");
+        app.input.insert("/steer Revise the scope");
+        assert_eq!(
+            key(&mut app, KeyCode::Enter),
+            Command::Steer {
+                turn_id: turn_id.clone(),
+                input: "/steer Revise the scope".into()
+            }
+        );
+        app.queued_correction = Some((turn_id, "/steer Revise the scope".into()));
+        app.finish_steering();
+        assert_eq!(app.input.text, "/steer Revise the scope");
+        assert!(app.active_turn.is_none());
     }
     fn draw(app: &mut App, width: u16, height: u16) -> ratatui::buffer::Buffer {
         let mut terminal =
@@ -2978,6 +3107,39 @@ mod tests {
         let session: Session=serde_json::from_value(serde_json::json!({"id":"approval-fixture","status":"waiting_approval","provider_fingerprint":"fixture","history":[],"pending":[{"id":"permission","name":"pm","arguments":"{\"command\":\"settings\",\"args\":[\"--document-language\",\"zh-TW\"]}"}],"questions":[],"last_output":"","error":null,"stage":"workflow"})).unwrap();
         app.finish_session(session);
         app
+    }
+    #[test]
+    fn draft_review_restores_the_visible_diff_and_binds_the_apply_choice() {
+        let mut app = approval_chat();
+        let session: Session = serde_json::from_value(serde_json::json!({
+            "id":"draft-fixture", "status":"waiting_draft_review", "provider_fingerprint":"fixture",
+            "history":[], "pending":[{"id":"draft-call","name":"write_draft","arguments":"{}"}],
+            "questions":[], "last_output":"", "error":null, "stage":"prd",
+            "draft_preview":{"id":"preview-123","path":"PRD.md","packet_sha256":"packet","call_sha256":"call","baselines_sha256":"baseline",
+                "text":"PRD.md\n\nProposed changes\n-    1  Before\n+    1  After\n\nCited evidence\n- Source.md\n\nOpen questions\nNone recorded."}
+        })).unwrap();
+        app.resume_chat(&session);
+        let text = buffer_text(&draw(&mut app, 100, 38));
+        for expected in [
+            "Draft preview",
+            "Proposed changes",
+            "Before",
+            "After",
+            "Source.md",
+            "Open questions",
+            "Apply reviewed draft",
+            "Discard and stop",
+        ] {
+            assert!(text.contains(expected), "Missing {expected}: {text}");
+        }
+        assert!(!text.contains("Always allow"));
+        let Command::Approve(selection) = key(&mut app, KeyCode::Enter) else {
+            panic!("Expected a draft review selection");
+        };
+        assert_eq!(selection.preview_id.as_deref(), Some("preview-123"));
+        assert_eq!(selection.call.id, "draft-call");
+        assert_eq!(selection.decision, crate::approval::Decision::Once);
+        assert_eq!(app.input.text, "Unsent 中文 draft");
     }
     #[test]
     fn approval_composer_preserves_drafts_and_exposes_all_four_explicit_decisions() {

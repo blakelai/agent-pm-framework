@@ -221,6 +221,7 @@ pub(crate) fn create_locked(
     cancel: &CancellationToken,
 ) -> Result<Report> {
     lock.verify(workspace)?;
+    crate::scenarios::require_no_pending_apply(workspace)?;
     cancelled(cancel)?;
     let parent = output
         .parent()

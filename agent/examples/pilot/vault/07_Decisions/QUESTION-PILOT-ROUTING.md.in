@@ -1,0 +1,17 @@
+---
+type: "question"
+id: "QUESTION-PILOT-ROUTING"
+language: "zh-TW"
+title: "請確認未來設備請購的第二次核准規則"
+workflow_status: "open"
+clarification_schema: "clarification-v1"
+blocking_scope: "records"
+affected_ids: []
+affected_paths: ["04_Requirements/PRD/PRD-PILOT-ROUTING.md", "04_Requirements/Items/REQ-PILOT-ROUTING.md", "05_Backlog/PBI-PILOT-ROUTING.md", "08_Verification/Cases/TC-PILOT-ROUTING.md"]
+owner: "採購流程產品負責人（合成）"
+due_date: null
+---
+
+# 請確認未來設備請購的第二次核准規則
+
+[系統分析](../03_Systems/Analysis/SYS-PILOT-PROCUREMENT.md) 記錄兩份不同的現行門檻。請提供未來門檻、等於門檻時是否需要二次核准、核准人及先後順序。

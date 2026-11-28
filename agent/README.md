@@ -109,7 +109,7 @@ See the [interaction contract](Interaction.md) for focus priority, terminal comp
 
 Clipboard images require a local desktop clipboard and a service/model accepting image inputs. Enter submits pending images, with or without text; they become hash-checked source assets that persist with the session. New sources still require review. Ctrl+D exits only when there is no text, image or clipboard read in progress. See [clipboard images](Interaction.md#clipboard-images) for removal, limits, Linux compositor support and provider behavior.
 
-F8 or the document context menu opens [Impact and Compare](Inspection.md). Follow recorded reference chains, explicitly select a baseline to compare, or compare repository evidence against the latest synchronized snapshot. Changes clear stale results; R revalidates. Missing inputs remain visible and no business state is inferred from text differences.
+F8 or the document context menu opens [Impact and Compare](Inspection.md). Follow recorded reference chains, explicitly select a baseline to compare, or compare repository evidence against the latest synchronized snapshot. **4 Change review** compares the active document with an approved baseline and shows pinned evidence, affected requirements, PBIs and tests. Changes clear stale results and R revalidates. Use `change-review compare` and `change-review record` to select captured versions and save a report with operator-supplied semantic findings. [Version-pinned change review](Inspection.md#version-pinned-change-review)
 
 [Automatic refresh](Automatic-Refresh.md) detects local knowledge edits every two seconds without a model call. Browse, Planning and Delivery update while retaining selection and drafts. Changed inputs invalidate an open form's preview; unreadable files show an error and retry automatically. Historical reports are not regenerated.
 
@@ -119,7 +119,7 @@ F10 or the document context menu opens the [Materials workbench](Materials.md) f
 
 Views include BRD, PRD/REQ, domain knowledge, systems, questions, people/schedules, backlog, progress/risks, verification and Agent runs. They show real Markdown records and metadata. Requirement views recognize document types even outside conventional subfolders. Templates appear in All, not project-specific views. Empty views remain empty; no progress, people or risk scores are synthesized for presentation.
 
-The [planning view](Planning-View.md) filters actual PBIs by iteration, shows capacity and remaining demand by role, and exposes supplied allocations across projects. M proposes a PBI move; review its before/after planning impact before saving. P, I and A open the existing allocation, iteration and forecast-date editors. Missing inputs keep calculations unavailable, and refreshing the view never replaces a historical forecast report.
+The planning view filters PBIs by iteration and shows supplied allocations, capacity and demand. M proposes one PBI move. S compares saved batch simulations and opens the selected alternative for review and application. Use `scenario compare` to create the simulations. P, I and A open allocation, iteration and forecast-date editors. [Planning view and scenario commands](Planning-View.md#compare-planning-scenarios)
 
 The [delivery views](Delivery-Workflows.md) show current workflow checks and missing inputs. N creates a draft in the selected workflow; E edits it through the same review/save controls. UAT uses approved requirement versions and actual tests, release requires matching UAT and operational evidence, and benefit measurements preserve supplied baselines and observation windows. Recorded outcomes remain historical; these screens do not approve or deploy automatically.
 
@@ -142,6 +142,7 @@ The [delivery views](Delivery-Workflows.md) show current workflow checks and mis
 | `/continue-independent` | Resume supported independent work; pending questions stay open |
 | `/sessions`, `/resume ID` | List or load durable conversations |
 | `/continue` | Explicitly continue a failed, cancelled, completed or limit-paused turn; current limits are checked again |
+| `/steer TEXT` | Send a text correction to the active Chat turn |
 | `/approve`, `/deny` | Legacy aliases for allowing once / denying and stopping the pending response |
 | `/reconcile actual outcome` | Record what happened to an interrupted operation without repeating it |
 | `/new` | Start a separate session, retaining the previous one |
@@ -202,6 +203,71 @@ Reusable PM permissions are specific to the subcommand, such as `pm settings`; t
 Global permissions are stored in `$XDG_CONFIG_HOME/pm-agent/config.toml`, or `~/.config/pm-agent/config.toml` when XDG_CONFIG_HOME is unset. `PM_AGENT_GLOBAL_CONFIG` can select a different absolute file path. This user file is separate from the Vault's provider configuration and stores tool identities and binding hashes, without credentials or tool arguments. Remove a saved entry, or set `tool_approvals = []`, to revoke global permission. Global permission changes take effect on subsequent calls; isolated evaluations do not use or save global permissions. A failed settings write leaves the call pending so another choice can be made.
 
 Legacy `/approve` and CLI `chat --approve` allow once. `/deny` and CLI `chat --session ID --deny` stop the response; denial works using saved local state even if provider configuration is unavailable. Restoring a waiting session reopens the picker.
+
+## Review a PRD draft in Chat
+
+Chat pauses a supported PRD draft before writing. Review the proposed changes, cited evidence and open questions in the transcript, then choose **Apply reviewed draft** or **Discard and stop**. The CLI prints the same preview and its ID. Reopen it with `chat --session ID`, apply it with `chat --session ID --apply-draft PREVIEW_ID`, or discard it with `chat --session ID --deny`. Changes to the target, evidence or applicable baseline require a fresh preview. [Terminal draft review](Interaction.md#prd-draft-review)
+
+## Stream Chat execution events
+
+Use `chat --json` to consume execution events as newline-delimited JSON on stdout. Each line includes `schema_version` (currently `1`), `type`, `session_id`, `turn_id`, and `sequence`. A turn identifies one CLI invocation. Resuming keeps the session ID and starts a new turn with sequence `1`. A startup failure before the application loads or creates a session uses a null session ID. Command-line parsing errors appear on stderr.
+
+```sh
+pm-agent --vault /path/to/vault chat --json --stage prd "Review the supplied scope."
+pm-agent --vault /path/to/vault chat --json --session SESSION_ID
+```
+
+| Event | Fields beyond the common envelope |
+|---|---|
+| `turn.started` | `stage` when the session is available |
+| `turn.state_changed` | `status` when the runtime starts or records its outcome |
+| `turn.progress` | `phase` and a human-readable `message` |
+| `turn.steering` | `state` and a saved correction receipt, a deferred correction ID, or a rejection reason |
+| `context.compacted` | `archived_items`, `retained_items`, `archive_sha256`, `reference_count`, `previous_bytes`, and `compacted_bytes` when the local checkpoint is created or extended |
+| `assistant.text.delta` | `text`, in stream order |
+| `usage.updated` | `usage` with service-reported token counts, or null when unavailable |
+| `tool.updated` | `call_id`, `tool`, `state`, native PM `exit_code` when available, and `artifacts`. A `stopped` tool includes the execution `status`. A `superseded` tool was withdrawn before dispatch. |
+| `turn.finished` | `status`, `run`, `pending`, `artifacts`, `diagnostic`, and the saved `goal` report when present |
+
+Use `turn.finished.status` to branch on `completed`, `failed`, `cancelled`, `limit_reached`, `waiting_clarification`, `waiting_approval`, `waiting_draft_review`, or `needs_reconciliation`. The pending object identifies the question paths, tool call, or exact draft preview for the associated pause. Reopening a saved clarification, approval, draft review, or reconciliation pause with a bare `--session ID` in JSON mode shows the saved state locally. Supply the corresponding `--answer`, `--approve`, `--apply-draft`, or `--reconcile` option to continue.
+
+`run` is the path of the available session Run. Artifact entries carry `kind`, a Vault-relative `path`, and the SHA-256 reported by the tool when available. They include saved drafts, question records, reports, work packets, and baseline manifests. A `result_recorded` tool event can carry a failing command exit code. The CLI exits `1` for invocation errors and `2` for a failed, interrupted, limited, or unreconciled execution. Completed runs and ordinary pauses exit `0`, as does a successful explicit `--deny` with status `cancelled`.
+
+## Correct a running Chat turn
+
+In the TUI, send `/steer TEXT` while Chat is working. In a CLI integration, start `chat --json --steer-stdin`, read the `turn_id` from `turn.started`, and send one newline-terminated JSON object on that process's stdin:
+
+```json
+{"turn_id":"CURRENT_TURN_ID","text":"Review the scope before proposing a draft."}
+```
+
+Corrections accept up to 16 KiB of text and one outstanding submission at a time. A stale turn ID or malformed frame produces `turn.steering` with state `rejected`. State `applied` identifies the saved correction source and any superseded calls or preview. Disregard earlier streamed text if it was superseded by the correction. Deferred corrections keep their original turn ID in the receipt even when applied during a later invocation.
+
+The runtime stops obsolete model work, withdraws undispatched calls and superseded previews, and retains recorded tool results. A tool whose outcome is unknown pauses for reconciliation. The `deferred` event and the saved pause's `pending.deferred_correction_id` identify the saved correction. Continue with `--reconcile` or `/reconcile` using the observed outcome. Existing clarification, approval, draft review and session limits still apply. [Terminal controls](Interaction.md#correct-a-running-turn)
+
+## Continue a long Chat session
+
+When serialized conversation replay reaches 700,000 bytes, Chat automatically creates or extends a local context checkpoint. It sends selected verbatim excerpts, exact recorded version references, current unresolved questions and recent complete tool exchanges. It keeps the original conversation, including older provider items, in the session database. The same session and checkpoint can be resumed after restart.
+
+Checkpoint references include structured snapshot and source locators, baseline manifest hashes, and recorded reconciliation outcomes with their call identities. Pending tools still go through review, approval or reconciliation before a model request. Recent images keep their normal verification and payload rules. Archived images are represented by saved file references and hashes. The checkpoint uses local bytes, requires no extra model request, and stops with a diagnostic if the active input or required reference inventory cannot fit. [Replay and storage details](Session-Limits.md#long-session-replay)
+
+## Save a task goal
+
+Set a goal explicitly with an objective and one or more exact draft paths. Add `--validate` when completion requires a successful native `pm validate` against the saved drafts.
+
+```sh
+pm-agent --vault /path/to/vault goal set --stage prd \
+  --objective "Document the supported approval workflow" \
+  --draft 04_Requirements/PRD-APPROVAL.md --validate
+pm-agent --vault /path/to/vault chat --session SESSION_ID
+pm-agent --vault /path/to/vault goal status --session SESSION_ID --json
+```
+
+Repeat `--draft` to include up to 16 paths. To attach a goal to an existing session, use `goal set --session ID` with the same objective and draft options. Each session holds one goal. `goal clear --session ID` releases its scope when pending tool decisions have been handled. Setting a new goal reads the selected provider profile for session setup. Inspecting or clearing an existing goal uses saved local state.
+
+Each explicit continuation supplies the saved objective, draft scope, and current evidence to the Agent. Draft writes are limited to the active goal's target paths and still go through source review, clarification, and any required confirmation. The runtime records actual draft SHA-256 hashes and tool call IDs. A validation criterion requires exit code zero from Vault-wide `pm validate` after all selected drafts have been saved. Its receipt includes the actual report, report hash, and draft versions checked.
+
+Read `goal.status` separately from the Chat turn status. An `active` goal can survive a completed turn, interruption, or pending decision. A goal becomes `completed` when its receipts are current and required clarification has cleared. If a recorded draft or required report later changes, inspection shows `stale` and retains the original completion timestamp. Goal completion covers the selected drafts and checks. [TUI goal commands](Interaction.md#persistent-task-goals)
 
 ## MCP tools
 

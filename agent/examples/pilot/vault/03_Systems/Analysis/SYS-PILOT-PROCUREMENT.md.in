@@ -1,0 +1,17 @@
+---
+type: "system_analysis"
+id: "SYS-PILOT-PROCUREMENT"
+language: "zh-TW"
+title: "請購核准路由現況"
+doc_status: "draft"
+version: 1
+---
+
+# 請購核准路由現況
+
+| 證據 | 觀察 |
+|---|---|
+| [OpenWiki](../../01_Sources/Evidence/EVD-PILOT-WIKI.md) | 記載含稅總額高於新臺幣 100,000 元時須二次核准。 |
+| [程式碼](../../01_Sources/Evidence/EVD-PILOT-CODE.md) | approval_route 在高於新臺幣 50,000 元時回傳第二個核准角色。 |
+
+在新臺幣 50,001 至 100,000 元之間，文件與這份實作的預期結果不同。正式環境版本尚未確認。未來政策由 [待釐清問題](../../07_Decisions/QUESTION-PILOT-ROUTING.md) 追蹤。

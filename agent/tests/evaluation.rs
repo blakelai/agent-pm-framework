@@ -471,7 +471,18 @@ async fn preparations_are_isolated_versioned_localized_and_unexecuted() {
             let manifest: Value =
                 serde_json::from_slice(&std::fs::read(path.join("manifest.json")).unwrap())
                     .unwrap();
-            assert_eq!(manifest["fixture_version"], 4);
+            assert_eq!(manifest["fixture_version"], 5);
+            let interview =
+                std::fs::read_to_string(path.join("vault/01_Sources/Assets/interview.txt"))
+                    .unwrap();
+            if case.id == "draft-stages" {
+                assert!(interview.contains("There are no established aliases"));
+                assert!(interview.contains("fictional Access Product Owner is assigned"));
+                assert!(interview.contains("actual delivery dependencies are unknown"));
+                assert!(!interview.contains("owner names, effort"));
+            } else {
+                assert!(!interview.contains("fictional Access Product Owner is assigned"));
+            }
             assert!(
                 manifest["inputs"]
                     .as_object()

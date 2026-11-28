@@ -11,6 +11,7 @@ mod progress;
 mod questions;
 mod recovery;
 mod refresh;
+mod scenarios;
 mod tool_display;
 mod transcript;
 mod view;
@@ -183,6 +184,7 @@ pub async fn run(workspace: Workspace, config_path: PathBuf, lock: WorkspaceLock
                         app.notice(&format!("Input was not accepted; attachments retained: {error}\n\n{text}"));
                     },
                 }
+                app.finish_steering();
                 refresh(&workspace,&mut app,&mut store);
                 if exit_when_idle && !failed { break; }
                 exit_when_idle = false;
@@ -238,6 +240,35 @@ pub async fn run(workspace: Workspace, config_path: PathBuf, lock: WorkspaceLock
                         if let Some(planner)=&mut app.planner {planner.replace(snapshot);} else {app.planner=Some(planner::Planner::new(snapshot));}
                     },
                     Command::ClosePlanning=>app.planner=None,
+                    Command::OpenScenarios=>if let Some(planner)=&mut app.planner {
+                        match crate::scenarios::list(&workspace) {
+                            Ok(ids)=>planner.scenarios=Some(scenarios::Browser::new(ids)),
+                            Err(e)=>planner.message=format!("Saved scenarios unavailable. {e:#}"),
+                        }
+                    },
+                    Command::CloseScenarios=>if let Some(planner)=&mut app.planner { planner.scenarios=None; },
+                    Command::LoadScenario(id)=>if let Some(panel)=app.planner.as_mut().and_then(|p|p.scenarios.as_mut()) {
+                        match crate::scenarios::load(&workspace,&id) {
+                            Ok(comparison)=>panel.load(comparison),
+                            Err(e)=>panel.message=format!("Scenario unavailable. {e:#}"),
+                        }
+                    },
+                    Command::ReviewScenario{comparison,scenario}=>if let Some(panel)=app.planner.as_mut().and_then(|p|p.scenarios.as_mut()) {
+                        match crate::scenarios::review(&workspace,&comparison,&scenario) {
+                            Ok(review)=>panel.review(review),
+                            Err(e)=>panel.message=format!("Review unavailable. {e:#}"),
+                        }
+                    },
+                    Command::ApplyScenario{comparison,scenario,review}=>{
+                        let result=crate::scenarios::apply(&workspace,&lock,&comparison,&scenario,&review);
+                        if result.is_ok() { refresh(&workspace,&mut app,&mut store); }
+                        if let Some(panel)=app.planner.as_mut().and_then(|p|p.scenarios.as_mut()) {
+                            panel.result(match result {
+                                Ok(value)=>value["warning"].as_str().map(String::from).unwrap_or_else(|| format!("Applied reviewed assignments · {}",value["audit_path"].as_str().unwrap_or_default())),
+                                Err(e)=>format!("Scenario could not be applied. {e:#}"),
+                            });
+                        }
+                    },
                     Command::Delivery=>{
                         let snapshot=crate::delivery::Snapshot::load(&workspace);
                         if let Some(delivery)=&mut app.delivery {delivery.replace(snapshot);} else {app.delivery=Some(delivery::Delivery::new(snapshot));}
@@ -366,6 +397,25 @@ pub async fn run(workspace: Workspace, config_path: PathBuf, lock: WorkspaceLock
                             Err(e)=>{app.input.insert(&input);app.notice(&format!("Error: {}", crate::diagnostics::format_error(&e)));},
                         }
                     },
+                    Command::Steer { turn_id, input } => {
+                        let result=app.active_turn.as_ref().context("No active Chat turn").and_then(|turn|
+                            turn.submit(crate::steering::Input {
+                                turn_id: turn_id.clone(),
+                                text: input.strip_prefix("/steer").unwrap_or_default().trim_start().into(),
+                            })
+                        );
+                        match result {
+                            Ok(())=>{
+                                app.user_message(&input);
+                                app.queued_correction=Some((turn_id,input));
+                                app.notice("Correction queued for the next execution boundary.");
+                            },
+                            Err(error)=>{
+                                app.input.insert(&input);
+                                app.notice(&format!("Error: {error}"));
+                            },
+                        }
+                    },
                 }
             },
         }
@@ -398,8 +448,12 @@ fn finish_chat_outcome(
     mut session: Session,
     stop_requested: bool,
 ) {
-    // Esc may arrive after the worker saved WaitingApproval but before the UI receives it.
-    let error = if stop_requested && session.status == Status::WaitingApproval {
+    // Esc may arrive after the worker saved a pending decision and before the UI receives it.
+    let error = if stop_requested
+        && matches!(
+            session.status,
+            Status::WaitingApproval | Status::WaitingDraftReview
+        ) {
         session
             .pending
             .first()
@@ -434,40 +488,62 @@ fn decide_tool(
     );
     let mut session: Session = store.load(&selection.session_id)?;
     anyhow::ensure!(
-        session.status == Status::WaitingApproval
-            && session.pending.first() == Some(&selection.call),
+        matches!(
+            session.status,
+            Status::WaitingApproval | Status::WaitingDraftReview
+        ) && session.pending.first() == Some(&selection.call)
+            && session.draft_preview.as_ref().map(|preview| &preview.id)
+                == selection.preview_id.as_ref(),
         "Pending tool changed; review the current approval request"
     );
     if selection.decision == crate::approval::Decision::Deny {
         let result = crate::approval::deny(workspace, store, &mut session, &selection.call);
         app.finish_session(session);
         result?;
-        app.notice("Tool use denied; Agent response stopped.");
+        app.notice(if selection.preview_id.is_some() {
+            "Draft preview discarded; Agent response stopped."
+        } else {
+            "Tool use denied; Agent response stopped."
+        });
         return Ok(None);
     }
     let config = Config::load(config_path)?;
     let workspace = workspace.clone();
     let expected = selection.call.clone();
     let decision = selection.decision;
+    let preview_id = selection.preview_id.clone();
     let tx = tx.clone();
     let done = done.clone();
     let cancel = CancellationToken::new();
     let signal = cancel.clone();
+    let turn = crate::steering::Turn::default();
+    app.active_turn = Some(turn.clone());
     tokio::spawn(async move {
         let result = async {
-            let runtime = Runtime::open(workspace, config).await?;
+            let runtime = Runtime::open_chat(workspace, config).await?;
             anyhow::ensure!(
                 !signal.is_cancelled(),
                 "Cancelled before recording the tool approval"
             );
-            let approved = runtime.decide_approval(&mut session, &expected, decision)?;
+            let approved = if let Some(preview_id) = preview_id {
+                anyhow::ensure!(
+                    decision == crate::approval::Decision::Once,
+                    "Confirm this draft once after reviewing its preview"
+                );
+                runtime.confirm_draft(&mut session, &preview_id)?;
+                None
+            } else {
+                runtime.decide_approval(&mut session, &expected, decision)?
+            };
             if session.status == Status::WaitingApproval {
                 if let Some(error) = &session.error {
                     let _ = tx.send(Event::Notice(error.clone()));
                 }
                 return Ok(());
             }
-            runtime.run(&mut session, approved, &tx, &signal).await
+            runtime
+                .run_with_turn(&mut session, approved, &tx, &signal, &turn)
+                .await
         }
         .await;
         let _ = done.send(match result {
@@ -487,6 +563,9 @@ fn dispatch(
     tx: &mpsc::UnboundedSender<Event>,
     done: &mpsc::UnboundedSender<Outcome>,
 ) -> Result<Option<CancellationToken>> {
+    if input == "/steer" || input.starts_with("/steer ") {
+        bail!("Use /steer TEXT while a Chat turn is running");
+    }
     let input = if input.starts_with('/') {
         input.trim_end().to_owned()
     } else {
@@ -512,6 +591,7 @@ fn dispatch(
             session_id: id,
             call,
             decision,
+            preview_id: None,
         };
         return decide_tool(workspace, config_path, app, store, &selection, tx, done);
     }
@@ -568,6 +648,61 @@ fn dispatch(
         );
         return Ok(None);
     }
+    if input == "/goal" {
+        let goal = app
+            .session
+            .as_ref()
+            .and_then(|session| session.goal.as_ref());
+        app.append(
+            &goal
+                .map(|goal| goal.report(workspace).markdown())
+                .unwrap_or_else(|| "No saved task goal.".into()),
+        );
+        return Ok(None);
+    }
+    if let Some(spec) = input.strip_prefix("/goal set ") {
+        let (target, objective) = spec
+            .split_once('|')
+            .context("Use /goal set PATH [--validate] | OBJECTIVE")?;
+        let target = target.trim();
+        let (target, require_validation) = match target.strip_suffix(" --validate") {
+            Some(path) => (path.trim_end(), true),
+            None => (target, false),
+        };
+        let mut session = if let Some(session) = &app.session {
+            session.clone()
+        } else {
+            let mut config = Config::read(config_path)?;
+            if let Some(language) = &app.response_language {
+                config.response_language = language.clone();
+            }
+            Session::new(&config, &app.stage)?
+        };
+        crate::goals::set(
+            workspace,
+            &mut session,
+            crate::goals::Criteria {
+                objective: objective.trim().into(),
+                drafts: vec![target.into()],
+                require_validation,
+            },
+        )?;
+        store.save(&session.id, &session)?;
+        app.session = Some(session);
+        app.notice("Task goal saved. Use /goal to inspect it or /continue to work on it.");
+        return Ok(None);
+    }
+    if input == "/goal clear" {
+        let mut session = app
+            .session
+            .clone()
+            .context("No saved session to clear a goal from")?;
+        crate::goals::clear(&mut session)?;
+        store.save(&session.id, &session)?;
+        app.session = Some(session);
+        app.notice("Task goal cleared.");
+        return Ok(None);
+    }
     if input == "/help" {
         app.append(&format!("\n{HELP}\n"));
         return Ok(None);
@@ -610,10 +745,14 @@ fn dispatch(
     }
     if let Some(id) = input.strip_prefix("/resume ") {
         let s: Session = store.load(id.trim())?;
-        app.status = format!(
-            "Loaded {:?}; /continue or answer its pending question",
-            s.status
-        );
+        app.status = if s.status == Status::WaitingDraftReview {
+            "Loaded the pending PRD draft preview".into()
+        } else {
+            format!(
+                "Loaded {:?}; /continue or answer its pending question",
+                s.status
+            )
+        };
         app.stage = s.stage.clone();
         app.usage = s.usage.clone();
         app.resume_chat(&s);
@@ -686,7 +825,7 @@ fn dispatch(
             };
             let _ = tx.send(Event::Tool {
                 call: call.clone(),
-                state: "Running".into(),
+                state: crate::execution::ToolState::Running,
                 result: None,
             });
             let operation = tools::run_pm(&workspace, &command, &args);
@@ -707,7 +846,7 @@ fn dispatch(
                     let error = crate::diagnostics::format_error(&e);
                     let _ = tx.send(Event::Tool {
                         call,
-                        state: "Failed".into(),
+                        state: crate::execution::ToolState::Failed,
                         result: Some(serde_json::json!({"error": error}).to_string()),
                     });
                     Outcome::Error(error)
@@ -764,10 +903,12 @@ fn dispatch(
     let done = done.clone();
     let cancel = CancellationToken::new();
     let signal = cancel.clone();
+    let turn = crate::steering::Turn::default();
+    app.active_turn = Some(turn.clone());
     tokio::spawn(async move {
         let mut input_accepted = false;
         let result = async {
-            let runtime = Runtime::open(workspace, config).await?;
+            let runtime = Runtime::open_chat(workspace, config).await?;
             match action {
                 Action::Message(input) => {
                     runtime.input_with_images(&mut session, &input, &images)?
@@ -795,7 +936,9 @@ fn dispatch(
                     images.iter().map(|image| image.id.clone()).collect(),
                 ));
             }
-            runtime.run(&mut session, None, &tx, &signal).await
+            runtime
+                .run_with_turn(&mut session, None, &tx, &signal, &turn)
+                .await
         }
         .await;
         let _ = done.send(match result {
@@ -828,6 +971,7 @@ mod tests {
             session_id: session.id.clone(),
             call: session.pending[0].clone(),
             decision: crate::approval::Decision::Deny,
+            preview_id: None,
         };
         session.pending[0].arguments = "{\"changed\":true}".into();
         store.save(&session.id, &session).unwrap();
@@ -992,6 +1136,90 @@ model = "fixture"
         );
         assert!(!w.root.join("01_Sources/Assets").exists());
     }
+    #[test]
+    fn goal_commands_persist_operator_scope_and_work_without_starting_mcp() {
+        let dir = tempfile::tempdir().unwrap();
+        crate::workspace::atomic_write(
+            &dir.path().join("00_Governance/Project.md"),
+            b"---\ntype: project\ntitle: Synthetic\n---\n# Synthetic\n",
+        )
+        .unwrap();
+        let workspace = Workspace::open(dir.path()).unwrap();
+        let config = workspace.path(".pm-agent/config.toml").unwrap();
+        crate::workspace::atomic_write(
+            &config,
+            br#"
+provider = "fixture"
+[providers.fixture]
+protocol = "chat_completions"
+base_url = "http://127.0.0.1:9/v1"
+model = "fixture"
+[mcp.invalid]
+transport = "stdio"
+command = "this-command-must-not-run"
+"#,
+        )
+        .unwrap();
+        let store = Store::open(&workspace.path(".pm-agent/runtime.sqlite3").unwrap()).unwrap();
+        let mut app = App::new(vec![]);
+        app.stage = "prd".into();
+        app.input.insert("Preserved composer text");
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let (done, mut finished) = mpsc::unbounded_channel();
+        assert!(
+            dispatch(
+                &workspace,
+                &config,
+                &mut app,
+                &store,
+                "/goal set 04_Requirements/My Draft.md --validate | Draft the supplied behavior"
+                    .into(),
+                &tx,
+                &done
+            )
+            .unwrap()
+            .is_none()
+        );
+        let id = app.session.as_ref().unwrap().id.clone();
+        let saved: Session = store.load(&id).unwrap();
+        assert_eq!(saved.stage, "prd");
+        let saved_goal = saved.goal.unwrap();
+        let report = saved_goal.report(&workspace);
+        assert_eq!(report.criteria.drafts, ["04_Requirements/My Draft.md"]);
+        assert!(report.criteria.require_validation);
+        std::fs::remove_file(&config).unwrap();
+        assert!(
+            dispatch(
+                &workspace,
+                &config,
+                &mut app,
+                &store,
+                "/goal".into(),
+                &tx,
+                &done
+            )
+            .unwrap()
+            .is_none()
+        );
+        assert!(app.output.contains("Draft the supplied behavior"));
+        assert_eq!(app.input.text, "Preserved composer text");
+        assert!(
+            dispatch(
+                &workspace,
+                &config,
+                &mut app,
+                &store,
+                "/goal clear".into(),
+                &tx,
+                &done
+            )
+            .unwrap()
+            .is_none()
+        );
+        assert!(store.load::<Session>(&id).unwrap().goal.is_none());
+        assert!(rx.try_recv().is_err() && finished.try_recv().is_err());
+    }
+
     #[test]
     fn budget_query_is_local_and_preserves_chat_input_context_and_session() {
         let dir = tempfile::tempdir().unwrap();

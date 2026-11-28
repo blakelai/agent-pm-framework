@@ -25,15 +25,15 @@ pub const KINDS: &[&str] = &["glossary", "brd", "prd", "requirement", "pbi"];
 
 pub fn tasks() -> Vec<Task> {
     [
-        ("glossary", "language", "Create only the minimal Access bounded-context glossary supported by the interview and captured Wiki/code. Preserve canonical meanings and distinguish implementation observations from business needs."),
-        ("brd", "brd", "Read the actual glossary from the previous stage. Create only a BRD for the supplied narrow duration-validation slice. Preserve the reported problem, exclusions, source evidence and unknown benefits or ownership."),
+        ("glossary", "language", "Create only the minimal Access bounded-context glossary supported by the interview and captured Wiki/code. Preserve canonical meanings and the supplied terminology decisions. Distinguish implementation observations from business needs."),
+        ("brd", "brd", "Read the actual glossary from the previous stage. Create only a BRD for the supplied narrow duration-validation slice. Preserve the reported problem, exclusions, source evidence, supplied draft ownership and unknown benefits."),
         ("prd", "prd", "Read the actual glossary and BRD. Create only a PRD for the supplied duration-validation slice, linking its actual BRD ID. Describe observable product behavior without inventing additional scope or thresholds."),
         ("requirement", "prd", "Read the actual glossary, BRD and PRD. Create only the atomic duration-validation requirement, linking its actual PRD ID and preserving traceable evidence and testable conditions."),
-        ("pbi", "backlog", "Read the actual glossary, PRD and requirement. Create only an unscheduled PBI satisfying the actual requirement ID and sharing its PRD parent. Include testable acceptance criteria. Leave estimates, staffing, dates and owner decisions unknown."),
+        ("pbi", "backlog", "Read the actual glossary, PRD and requirement. Create only an unscheduled PBI satisfying the actual requirement ID and sharing its PRD parent. Use the supplied draft owner and include testable acceptance criteria. Keep estimates, staffing and dates unknown."),
         ("verification", "review", "Inspect the actual glossary, BRD, PRD, requirement and PBI. Run validate and coverage after any supported corrections and report all remaining gaps. Do not invent missing decisions, test results, approvals or readiness."),
     ].into_iter().map(|(id, stage, task)| Task {
         id:id.into(), stage:stage.into(),
-        prompt:format!("Synthetic staged evaluation only. This stage operates on the actual files retained from earlier stages; no earlier result is implied to be approved. Read Settings and the supplied interview at 01_Sources/Assets/interview.txt. Discover actual snapshot paths with list_source_files and existing draft IDs with list_documents. Use the configured document language. Do not contact external tools, change configuration or create later-stage drafts. {task} Run validate and report findings without inventing missing information. Finish this stage when its requested artifacts and checks are saved."),
+        prompt:format!("Synthetic staged evaluation only. This stage operates on the actual files retained from earlier stages; no earlier result is implied to be approved. Read Settings and the supplied interview at 01_Sources/Assets/interview.txt. Discover actual snapshot paths with list_source_files and existing draft IDs with list_documents. Use the configured document language. Do not contact external tools, change configuration or create later-stage drafts. {task} Apply the draft scope from the interview and record out-of-scope unknowns. Run validate and report findings without inventing missing information. Finish this stage when its requested artifacts and checks are saved."),
     }).collect()
 }
 
@@ -162,7 +162,7 @@ pub fn observe(
     Ok(Observation {
         id: task.id.clone(),
         session_id: session.id.clone(),
-        status: session.status.clone(),
+        status: session.status,
         outcome: outcome(&selected),
         checks: selected,
         usage: crate::budget::summary(session.request_ledger.as_ref()),

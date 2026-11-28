@@ -35,6 +35,7 @@ struct Destination {
 }
 
 pub struct Planner {
+    pub(super) scenarios: Option<super::scenarios::Browser>,
     snapshot: Snapshot,
     buckets: Vec<(String, Bucket)>,
     period: usize,
@@ -58,6 +59,7 @@ pub struct Planner {
 impl Planner {
     pub fn new(snapshot: Snapshot) -> Self {
         let mut s = Self {
+            scenarios: None,
             snapshot,
             buckets: vec![],
             period: 0,
@@ -94,6 +96,9 @@ impl Planner {
         }
     }
     pub fn replace(&mut self, snapshot: Snapshot) {
+        if let Some(panel) = &mut self.scenarios {
+            panel.invalidate();
+        }
         let bucket = self.buckets[self.period].1;
         let selected = self.selected_item().map(|d| d.path.clone());
         self.snapshot = snapshot;
@@ -183,6 +188,7 @@ impl Planner {
     }
     fn action(&mut self, c: char) -> Command {
         match c {
+            's' => return Command::OpenScenarios,
             'r' => return Command::Planning,
             'p' => return Command::Edit(schedule::PEOPLE.into()),
             'i' => return Command::Edit(schedule::ITERATIONS.into()),
@@ -204,6 +210,9 @@ impl Planner {
         Command::None
     }
     pub fn event(&mut self, event: Event) -> Command {
+        if let Some(panel) = &mut self.scenarios {
+            return panel.event(event);
+        }
         if let Some(p) = &mut self.picker {
             match event {
                 Event::Key(k) if k.kind == KeyEventKind::Press => match k.code {
@@ -484,6 +493,10 @@ impl Planner {
         text
     }
     pub fn draw(&mut self, f: &mut ratatui::Frame) {
+        if let Some(panel) = &mut self.scenarios {
+            panel.draw(f);
+            return;
+        }
         let area = f.area();
         let rows = Layout::default()
             .direction(Direction::Vertical)
@@ -638,7 +651,7 @@ impl Planner {
         self.actions.clear();
         let buttons = Layout::default()
             .direction(Direction::Horizontal)
-            .constraints([Constraint::Ratio(1, 6); 6])
+            .constraints([Constraint::Ratio(1, 7); 7])
             .split(rows[4]);
         for (n, (c, label)) in [
             ('m', "M Move"),
@@ -646,6 +659,7 @@ impl Planner {
             ('p', "P People"),
             ('i', "I Iterations"),
             ('a', "A Date"),
+            ('s', "S Scenarios"),
             ('x', "Esc Back"),
         ]
         .into_iter()

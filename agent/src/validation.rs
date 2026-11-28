@@ -966,17 +966,23 @@ pub(crate) fn inspect_candidate(
         );
         records.active.push(candidate.clone());
     }
-    let mut findings = Findings::default();
-    check_links(&records, candidate, &mut findings);
-    let contexts = glossaries(&records);
-    inspect_record(
+    Ok(candidate_findings(
         &records,
         candidate,
-        Some(&workspace.language()?),
-        &contexts,
-        &mut findings,
-    );
-    Ok(findings.0)
+        &workspace.language()?,
+    ))
+}
+
+pub(crate) fn candidate_findings(
+    records: &Records,
+    candidate: &Document,
+    language: &str,
+) -> Vec<Finding> {
+    let mut findings = Findings::default();
+    check_links(records, candidate, &mut findings);
+    let contexts = glossaries(records);
+    inspect_record(records, candidate, Some(language), &contexts, &mut findings);
+    findings.0
 }
 pub fn run(workspace: &Workspace, strict: bool) -> Result<Value> {
     let findings = inspect(workspace)?;

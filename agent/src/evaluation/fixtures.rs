@@ -105,11 +105,8 @@ pub fn seed(source: &Workspace, dest: &Workspace) -> Result<()> {
 }
 
 pub fn populate(root: &Path, w: &Workspace, case: &str, language: &str) -> Result<String> {
-    let case = if case == "draft-stages" {
-        "draft-chain"
-    } else {
-        case
-    };
+    let staged = case == "draft-stages";
+    let case = if staged { "draft-chain" } else { case };
     put_note(
         w,
         "00_Governance/Project.md",
@@ -144,6 +141,7 @@ pub fn populate(root: &Path, w: &Workspace, case: &str, language: &str) -> Resul
         json!({"type":"Reference","title":"Synthetic iterations","language":language}),
         "# Synthetic iterations\n\n| Sprint | Start | End | Goal |\n|---|---|---|---|\n",
     )?;
+    let access_interview;
     let source = match case {
         "missing-inputs" => {
             "SYNTHETIC INTERVIEW, not a real project. Employees request temporary application access. The approval threshold, approver, duration, delivery deadline, team availability and effort estimates have not been supplied. These inputs are required before defining the approval behavior or scheduling delivery.\n"
@@ -152,7 +150,18 @@ pub fn populate(root: &Path, w: &Workspace, case: &str, language: &str) -> Resul
             "SYNTHETIC CHANGE REQUEST, not a real project. Assess the current access-duration rule using both the registered OpenWiki and implementation snapshots. The desired future duration has not been decided. Neither source author has authority to choose a future business rule.\n"
         }
         "draft-chain" | "unsupported-claims" => {
-            "SYNTHETIC REQUIREMENTS INTERVIEW, not a real project. The Access context handles employee access requests. Canonical term: Access request means a request by one employee for temporary access to one application. The current process uses email; the problem is missing observable request status. Proposed scope: employees submit a request with employee ID, application ID and duration_days; the manager decides approve or reject and the employee can view pending, approved or rejected. For this exercise the sponsor explicitly supplies duration_days as an integer from 1 through 7 inclusive; reject zero, negative, fractional or greater values before creating a request. The existing system observations are available in the registered repository snapshot. Excluded: automatic account provisioning, migration, notifications and changes to authentication. Draft a narrow first slice for duration validation. Numeric business benefits, owner names, effort, staffing, dates, NFR thresholds and integrations are not supplied; retain them as unknown and leave this PBI unscheduled. No approval, readiness, baseline or release is authorized. These are draft discovery records for later human review.\n"
+            let (unknown_owner, addendum) = if staged {
+                (
+                    "",
+                    "\nFor this synthetic slice, the sponsor confirms that Access request is the sole canonical term. There are no established aliases, deprecated terms or cross-context mappings for it. The fictional Access Product Owner is assigned as the draft owner for the BRD, PRD, atomic requirement and PBI. This assignment does not imply staffing, readiness or approval. No dependencies have been identified for the slice, and actual delivery dependencies are unknown. No additional completion policy was supplied. For this draft-only slice, the sponsor asks to record remaining estimates, benefits, availability, dates and other delivery decisions as unknown and leave them outside the drafting scope.\n",
+                )
+            } else {
+                ("owner names, ", "")
+            };
+            access_interview = format!(
+                "SYNTHETIC REQUIREMENTS INTERVIEW, not a real project. The Access context handles employee access requests. Canonical term: Access request means a request by one employee for temporary access to one application. The current process uses email; the problem is missing observable request status. Proposed scope: employees submit a request with employee ID, application ID and duration_days; the manager decides approve or reject and the employee can view pending, approved or rejected. For this exercise the sponsor explicitly supplies duration_days as an integer from 1 through 7 inclusive; reject zero, negative, fractional or greater values before creating a request. The existing system observations are available in the registered repository snapshot. Excluded: automatic account provisioning, migration, notifications and changes to authentication. Draft a narrow first slice for duration validation. Numeric business benefits, {unknown_owner}effort, staffing, dates, NFR thresholds and integrations are not supplied; retain them as unknown and leave this PBI unscheduled. No approval, readiness, baseline or release is authorized. These are draft discovery records for later human review.\n{addendum}"
+            );
+            access_interview.as_str()
         }
         "capacity-forecast" => {
             "SYNTHETIC CAPACITY EXERCISE, not a real project. Use only the supplied People, Iterations, Planning and PBI files. PBI-EVAL-UNKNOWN remains unscheduled and has no estimate. Evaluate capacity and identify any shortage or unknown without changing assignments, estimates, dates or delivery status. These numbers and dates are fictional test inputs.\n"

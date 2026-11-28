@@ -41,6 +41,8 @@ Add `--include-sessions` to `backup create` to include the private SQLite runtim
 
 Creation obtains the normal workspace writer lock, inventories the supported scope, hashes each file and rechecks project bytes and inventory before publishing. A private temporary archive is published without overwriting any existing destination. An external editor does not participate in the lock: these checks reduce conflicts but do not create a transaction across all project files. Pause external editing for a coherent snapshot.
 
+If a planning scenario application was interrupted, use `scenario recover` before creating a backup so the archive captures a consistent schedule. [Scenario recovery](Planning-View.md#compare-planning-scenarios)
+
 `backup check` reads archive structure, limits, the manifest and every included file. It does not create runtime state or modify the archive. The JSON report contains the archive path, file count, total uncompressed bytes, format, session inclusion and canonical manifest SHA-256. A checksum proves correspondence with the supplied manifest, not authorship, business correctness or authenticity. SQLite schema/integrity checks also run when restoring sessions.
 
 ## Included scope

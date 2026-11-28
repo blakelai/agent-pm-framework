@@ -408,6 +408,12 @@ impl Workspace {
                 meta["doc_status"] == "draft",
                 "Only existing draft documents can be edited by the Agent"
             );
+            if meta["type"] == "prd" || m["type"] == "prd" {
+                ensure!(
+                    meta["type"] == m["type"] && meta["id"] == m["id"],
+                    "A PRD draft update must preserve its record type and ID"
+                );
+            }
             ensure!(
                 meta.get("baseline_id").is_none_or(Value::is_null),
                 "Pinned content requires a new versioned draft"
@@ -454,6 +460,17 @@ impl Workspace {
         Ok(output)
     }
 }
+pub(crate) fn atomic_create(path: &Path, bytes: &[u8]) -> Result<()> {
+    let parent = path.parent().context("Missing parent directory")?;
+    fs::create_dir_all(parent)?;
+    let mut temp = tempfile::NamedTempFile::new_in(parent)?;
+    temp.write_all(bytes)?;
+    temp.as_file().sync_all()?;
+    temp.persist_noclobber(path)
+        .context("Record already exists. Use a new ID to preserve history")?;
+    Ok(())
+}
+
 pub fn atomic_write(path: &Path, bytes: &[u8]) -> Result<()> {
     let parent = path.parent().context("Missing parent")?;
     fs::create_dir_all(parent).with_context(|| {

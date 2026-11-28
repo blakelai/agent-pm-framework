@@ -1,0 +1,16 @@
+---
+type: "prd"
+id: "PRD-PILOT-INTAKE"
+language: "zh-TW"
+title: "設備請購受理欄位"
+doc_status: "draft"
+version: 1
+owner: "採購流程產品負責人（合成）"
+contexts: ["procurement"]
+parents: ["BRD-PILOT-INTAKE"]
+evidence: ["EVD-PILOT-INTAKE"]
+---
+
+# 設備請購受理欄位
+
+設備請購單應保存請購單號、申請部門及以整數新臺幣記錄的含稅總額。欄位行為拆至 [原子需求](../Items/REQ-PILOT-INTAKE.md)。

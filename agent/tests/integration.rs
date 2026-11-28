@@ -246,8 +246,8 @@ async fn chat_activity_streams_preserve_service_reasoning_and_actual_tool_result
     let phases = entries
         .iter()
         .filter_map(|e| {
-            if let Event::Progress(text) = e {
-                Some(text.as_str())
+            if let Event::Progress { message, .. } = e {
+                Some(message.as_str())
             } else {
                 None
             }
@@ -271,7 +271,7 @@ async fn chat_activity_streams_preserve_service_reasoning_and_actual_tool_result
             .iter()
             .any(|e| matches!(e, Event::Text(text) if text.contains("SERVICE_REASONING")))
     );
-    assert!(entries.iter().any(|e| matches!(e, Event::Tool { call, state, result: None } if call.id == "inspect-call" && state == "Running")));
+    assert!(entries.iter().any(|e| matches!(e, Event::Tool { call, state: pm_agent::execution::ToolState::Running, result: None } if call.id == "inspect-call")));
     assert!(entries.iter().any(
         |e| matches!(e, Event::Tool { call, result: Some(_), .. } if call.id == "inspect-call")
     ));
@@ -590,6 +590,277 @@ async fn manual_cancellation_stops_long_running_chat_and_preserves_completed_too
     assert_eq!(ledger.requests.len(), 41);
     assert!(matches!(
         ledger.requests.last().unwrap().state,
+        pm_agent::budget::State::Cancelled
+    ));
+    server.abort();
+}
+
+fn submit_correction(turn: &pm_agent::steering::Turn, text: &str) {
+    turn.submit(pm_agent::steering::Input {
+        turn_id: turn.id().into(),
+        text: text.into(),
+    })
+    .unwrap();
+}
+
+#[tokio::test]
+async fn steering_replaces_a_confirmed_preview_before_dispatch_and_requires_new_review() {
+    let (_dir, w) = fixture();
+    let quoted = "Integer durations from 1 through 7 are valid.";
+    let args = grounding_args(&w, quoted);
+    let path = args["path"].as_str().unwrap().to_owned();
+    let review = supported_review(
+        "01_Sources/Assets/grounding.txt",
+        args["content"].as_str().unwrap(),
+        quoted,
+    );
+    let (url, _, requests, server) = server(vec![
+        chat(
+            "",
+            vec![call(0, "old-preview", "write_draft", args.clone())],
+        ),
+        review.clone(),
+        chat("", vec![call(0, "old-preview", "write_draft", args)]),
+        review,
+    ])
+    .await;
+    let cfg = config(url, Protocol::ChatCompletions);
+    let rt = Runtime::open_chat(w.clone(), cfg.clone()).await.unwrap();
+    let mut s = Session::new(&cfg, "prd").unwrap();
+    rt.input(&mut s, "Propose the PRD.").unwrap();
+    let (tx, mut rx) = events();
+    let cancel = CancellationToken::new();
+    rt.run(&mut s, None, &tx, &cancel).await.unwrap();
+    assert_eq!(s.status, Status::WaitingDraftReview);
+    let old = s.draft_preview.as_ref().unwrap().id.clone();
+    rt.confirm_draft(&mut s, &old).unwrap();
+    let turn = pm_agent::steering::Turn::default();
+    submit_correction(&turn, "Reconsider the proposal before writing.");
+    rt.run_with_turn(&mut s, None, &tx, &cancel, &turn)
+        .await
+        .unwrap();
+    assert_eq!(s.status, Status::WaitingDraftReview, "{:?}", s.error);
+    assert_ne!(s.draft_preview.as_ref().unwrap().id, old);
+    assert_eq!(s.draft_reviews.len(), 2);
+    assert!(rt.confirm_draft(&mut s, &old).is_err());
+    assert!(!w.path(&path).unwrap().exists());
+    assert!(rt.store.calls(&s.id).unwrap().is_empty());
+    let saved: Session = rt.store.load(&s.id).unwrap();
+    let receipt = &saved.steering[0];
+    assert_eq!(receipt.superseded_preview.as_deref(), Some(old.as_str()));
+    assert_eq!(receipt.superseded_calls, ["old-preview"]);
+    assert_eq!(
+        w.read(&receipt.source).unwrap(),
+        "Reconsider the proposal before writing."
+    );
+    assert!(
+        w.read(&s.run_path())
+            .unwrap()
+            .contains(&receipt.correction_id)
+    );
+    let request = requests.lock().unwrap()[2].to_string();
+    assert!(request.contains("superseded_by_correction"));
+    assert!(request.contains("Reconsider the proposal"));
+    assert!(!request.contains("draft_saved"));
+    assert!(std::iter::from_fn(|| rx.try_recv().ok()).any(|event| matches!(event,
+        Event::Tool { state: pm_agent::execution::ToolState::Superseded, call, .. } if call.id == "old-preview")));
+    server.abort();
+}
+
+#[tokio::test]
+async fn steering_during_dispatched_tool_is_saved_until_reconciliation_and_never_replays_it() {
+    use std::{
+        sync::atomic::{AtomicUsize, Ordering},
+        time::Duration,
+    };
+    type StateData = (Arc<AtomicUsize>, Arc<tokio::sync::Notify>);
+    async fn handler(
+        State((calls, sent)): State<StateData>,
+        Json(message): Json<Value>,
+    ) -> axum::response::Response {
+        if message.get("id").is_none() {
+            return StatusCode::ACCEPTED.into_response();
+        }
+        let result = match message["method"].as_str().unwrap() {
+            "initialize" => {
+                json!({"protocolVersion":message["params"]["protocolVersion"],"capabilities":{"tools":{}},"serverInfo":{"name":"fixture","version":"1"}})
+            }
+            "tools/list" => {
+                json!({"tools":[{"name":"echo","inputSchema":{"type":"object","properties":{"text":{"type":"string"}},"required":["text"]}}]})
+            }
+            "tools/call" => {
+                calls.fetch_add(1, Ordering::SeqCst);
+                sent.notify_one();
+                std::future::pending().await
+            }
+            _ => unreachable!(),
+        };
+        Json(json!({"jsonrpc":"2.0","id":message["id"],"result":result})).into_response()
+    }
+    let (_dir, w) = fixture();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let mcp_url = format!("http://{}/mcp", listener.local_addr().unwrap());
+    let calls = Arc::new(AtomicUsize::new(0));
+    let sent = Arc::new(tokio::sync::Notify::new());
+    let app = Router::new()
+        .route("/mcp", post(handler))
+        .with_state((calls.clone(), sent.clone()));
+    let mcp_server = tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+    let (url, _, requests, model_server) = server(vec![
+        chat(
+            "",
+            vec![
+                call(
+                    0,
+                    "unknown",
+                    "mcp_fixture_echo",
+                    json!({"text":"Synthetic action"}),
+                ),
+                call(
+                    1,
+                    "later",
+                    "read_document",
+                    json!({"path":"00_Governance/Settings.md"}),
+                ),
+            ],
+        ),
+        chat("Continued with corrected scope.", vec![]),
+    ])
+    .await;
+    let mut cfg = config(url, Protocol::ChatCompletions);
+    cfg.mcp.insert(
+        "fixture".into(),
+        McpConfig::Http {
+            url: mcp_url,
+            bearer_token_env: None,
+            allowed_tools: None,
+        },
+    );
+    let rt = Runtime::open(w.clone(), cfg.clone()).await.unwrap();
+    let mut s = Session::new(&cfg, "workflow").unwrap();
+    rt.input(&mut s, "Use the local synthetic MCP fixture.")
+        .unwrap();
+    let (tx, mut rx) = events();
+    let cancel = CancellationToken::new();
+    rt.run(&mut s, None, &tx, &cancel).await.unwrap();
+    assert_eq!(s.status, Status::WaitingApproval);
+    rt.decision(&mut s, true).unwrap();
+    let turn = pm_agent::steering::Turn::default();
+    let (result, ()) = tokio::time::timeout(Duration::from_secs(8), async {
+        tokio::join!(
+            rt.run_with_turn(&mut s, Some("unknown".into()), &tx, &cancel, &turn),
+            async {
+                sent.notified().await;
+                submit_correction(&turn, "Continue with local analysis only.");
+            }
+        )
+    })
+    .await
+    .unwrap();
+    result.unwrap();
+    assert_eq!(s.status, Status::NeedsReconciliation);
+    assert_eq!(rt.store.calls(&s.id).unwrap()[0].status, "started");
+    assert!(s.steering.is_empty());
+    let correction_id = s.deferred_steering.as_ref().unwrap().id.clone();
+    let paused = chat_json_output(
+        json_chat(&w)
+            .args(["--session", &s.id])
+            .output()
+            .await
+            .unwrap(),
+        2,
+        "needs_reconciliation",
+    );
+    assert_eq!(
+        paused.last().unwrap()["pending"]["deferred_correction_id"],
+        correction_id
+    );
+    assert_eq!(requests.lock().unwrap().len(), 1);
+    assert!(std::iter::from_fn(|| rx.try_recv().ok()).any(|event| matches!(event,
+        Event::Steering(pm_agent::steering::Feedback::Deferred { correction_id: id, .. }) if id == correction_id)));
+    drop(rt);
+    let rt = Runtime::open(w.clone(), cfg).await.unwrap();
+    let mut s: Session = rt.store.load(&s.id).unwrap();
+    rt.reconcile(&mut s, "Fixture service confirms receipt.")
+        .unwrap();
+    rt.run(&mut s, None, &tx, &cancel).await.unwrap();
+    assert_eq!(s.status, Status::Completed, "{:?}", s.error);
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+    assert_eq!(rt.store.calls(&s.id).unwrap()[0].status, "reconciled");
+    assert!(rt.store.call_result(&s.id, "later").unwrap().is_none());
+    assert!(s.deferred_steering.is_none());
+    assert_eq!(s.steering[0].correction_id, correction_id);
+    assert_eq!(s.steering[0].turn_id, turn.id());
+    assert_eq!(s.steering[0].superseded_calls, ["later"]);
+    let request = requests.lock().unwrap()[1].to_string();
+    assert!(request.contains("Fixture service confirms receipt"));
+    assert!(request.contains("Continue with local analysis only"));
+    assert!(request.contains("superseded_by_correction"));
+    model_server.abort();
+    mcp_server.abort();
+}
+
+#[tokio::test]
+async fn steering_interrupts_read_only_grounding_without_reconciliation_or_draft_write() {
+    use std::time::Duration;
+    let (_dir, w) = fixture();
+    let args = grounding_args(&w, "Integer durations from 1 through 7 are valid.");
+    let path = args["path"].as_str().unwrap().to_owned();
+    let reviewing = Arc::new(tokio::sync::Notify::new());
+    async fn handler(
+        State((args, reviewing)): State<(Value, Arc<tokio::sync::Notify>)>,
+        Json(request): Json<Value>,
+    ) -> impl IntoResponse {
+        if request["tools"][0]["function"]["name"] == "submit_grounding_review" {
+            reviewing.notify_one();
+            std::future::pending::<()>().await;
+        }
+        let response = if request["messages"]
+            .to_string()
+            .contains("Pause drafting and summarize.")
+        {
+            chat("Drafting paused.", vec![])
+        } else {
+            chat("", vec![call(0, "obsolete-draft", "write_draft", args)])
+        };
+        ([("content-type", "text/event-stream")], response)
+    }
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let cfg = config(
+        format!("http://{}/v1", listener.local_addr().unwrap()),
+        Protocol::ChatCompletions,
+    );
+    let app = Router::new()
+        .route("/v1/chat/completions", post(handler))
+        .with_state((args, reviewing.clone()));
+    let server = tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+    let rt = Runtime::open_chat(w.clone(), cfg.clone()).await.unwrap();
+    let mut s = Session::new(&cfg, "prd").unwrap();
+    rt.input(&mut s, "Create a draft.").unwrap();
+    let turn = pm_agent::steering::Turn::default();
+    let (tx, _rx) = events();
+    let cancel = CancellationToken::new();
+    let (result, ()) = tokio::time::timeout(Duration::from_secs(8), async {
+        tokio::join!(rt.run_with_turn(&mut s, None, &tx, &cancel, &turn), async {
+            reviewing.notified().await;
+            submit_correction(&turn, "Pause drafting and summarize.");
+        })
+    })
+    .await
+    .unwrap();
+    result.unwrap();
+    assert_eq!(s.status, Status::Completed, "{:?}", s.error);
+    assert_eq!(s.draft_reviews[0].state, "superseded");
+    assert!(!w.path(&path).unwrap().exists());
+    assert!(s.draft_preview.is_none() && s.deferred_steering.is_none());
+    assert_eq!(s.steering[0].superseded_calls, ["obsolete-draft"]);
+    assert!(rt.store.calls(&s.id).unwrap().is_empty());
+    assert!(matches!(
+        s.request_ledger.unwrap().requests[1].state,
         pm_agent::budget::State::Cancelled
     ));
     server.abort();
@@ -932,6 +1203,303 @@ fn config(url: String, protocol: Protocol) -> Config {
         )]),
     }
 }
+
+fn compact_fixture_exchange(
+    history: &mut Vec<Value>,
+    protocol: &Protocol,
+    id: &str,
+    output: Option<Value>,
+) {
+    let arguments =
+        json!({"path":"03_Systems/Snapshots/fixture-snapshot/files/requirements v2.md"})
+            .to_string();
+    match protocol {
+        Protocol::ChatCompletions => {
+            history.push(json!({"role":"assistant","content":"","tool_calls":[
+                {"id":id,"type":"function","function":{"name":"read_document","arguments":arguments}}]}));
+            if let Some(output) = output {
+                history.push(json!({"role":"tool","tool_call_id":id,"content":output.to_string()}));
+            }
+        }
+        Protocol::Responses => {
+            history.push(
+                json!({"type":"reasoning","encrypted_content":format!("opaque-{id}"),"summary":[]}),
+            );
+            history.push(json!({"type":"function_call","call_id":id,"name":"read_document","arguments":arguments}));
+            if let Some(output) = output {
+                history.push(
+                    json!({"type":"function_call_output","call_id":id,"output":output.to_string()}),
+                );
+            }
+        }
+    }
+}
+
+fn context_reply(protocol: &Protocol) -> String {
+    match protocol {
+        Protocol::ChatCompletions => chat("Scoped review continues.", vec![]),
+        Protocol::Responses => format!(
+            "data: {}\n\n",
+            json!({"type":"response.completed","response":{"status":"completed","output":[
+                {"type":"message","role":"assistant","content":[{"type":"output_text","text":"Scoped review continues."}]}]}})
+        ),
+    }
+}
+
+#[tokio::test]
+async fn context_compaction_replays_long_sessions_in_both_protocols_and_preserves_history() {
+    for protocol in [Protocol::ChatCompletions, Protocol::Responses] {
+        let (_dir, w) = fixture();
+        let reply = context_reply(&protocol);
+        let (url, _, requests, server) = server(vec![reply.clone(), reply.clone(), reply]).await;
+        let cfg = config(url, protocol.clone());
+        atomic_write(
+            &w.path(".pm-agent/config.toml").unwrap(),
+            toml::to_string(&cfg).unwrap().as_bytes(),
+        )
+        .unwrap();
+        let store =
+            pm_agent::store::Store::open(&w.path(".pm-agent/runtime.sqlite3").unwrap()).unwrap();
+        let mut session = Session::new(&cfg, "workflow").unwrap();
+        let question = "07_Decisions/QUESTION-COMPACTION.md";
+        let question_text = "Who owns the approval policy?";
+        let text = note(json!({"id":"QUESTION-COMPACTION","type":"question","title":question_text,"blocking_scope":"records",
+            "affected_ids":["REQ-EXPIRY"],"workflow_status":"open","language":"en"}), question_text).unwrap();
+        atomic_write(&w.path(question).unwrap(), text.as_bytes()).unwrap();
+        session.questions.push(pm_agent::runtime::Question {
+            path: question.into(),
+            question: question_text.into(),
+            answer: None,
+            resolved: false,
+        });
+        let snapshot_path = "03_Systems/Snapshots/fixture-snapshot/files/requirements v2.md";
+        let source_sha256 = "a".repeat(64);
+        let baseline_sha256 = "b".repeat(64);
+        let image_sha256 = "c".repeat(64);
+        let baseline_path = "00_Governance/Baselines/BASE-APPROVAL/manifest.json";
+        let old_content = format!(
+            "---\r\ntype: evidence\r\nrepo_id: fixture\r\nsnapshot_id: fixture-snapshot\r\nsource_sha256: {source_sha256}\r\nlocator: L5-L7\r\n---\r\n\r\nSTART {} END",
+            "obsolete transcript data ".repeat(32_000)
+        );
+        session.history.push(json!({"role":"user","content":[{"type":"text","text":"Read the captured approval policy."},
+            {"type":"pm_image","image":{"path":"01_Sources/Assets/older-fixture.png","sha256":image_sha256,"bytes":125}}]}));
+        compact_fixture_exchange(
+            &mut session.history,
+            &protocol,
+            "archived-call",
+            Some(json!({
+                "path":snapshot_path,"sha256":source_sha256,"content":old_content,
+                "baseline":{"baseline_id":"BASE-APPROVAL","manifest":baseline_path,"manifest_sha256":baseline_sha256},
+            })),
+        );
+        let archived = session.history.len();
+        session.history.push(json!({"role":"user","content":"Keep the approval owner open and continue independent review."}));
+        compact_fixture_exchange(
+            &mut session.history,
+            &protocol,
+            "recent-call",
+            Some(json!({"exact_result":"Keep this tool result verbatim"})),
+        );
+        let original = session.history.clone();
+        assert!(serde_json::to_vec(&original).unwrap().len() > 700_000);
+        store.save(&session.id, &session).unwrap();
+
+        let invoke = |independent| {
+            let mut command = json_chat(&w);
+            command.args(["--session", &session.id]);
+            if independent {
+                command.arg("--independent");
+            }
+            command
+        };
+        let first = chat_json_output(
+            invoke(false).output().await.unwrap(),
+            0,
+            "waiting_clarification",
+        );
+        let event = first
+            .iter()
+            .find(|event| event["type"] == "context.compacted")
+            .unwrap();
+        assert_eq!(event["archived_items"], archived);
+        assert!(event["previous_bytes"].as_u64().unwrap() >= 700_000);
+        assert!(event["compacted_bytes"].as_u64().unwrap() < 160_000);
+        assert_eq!(
+            event["archive_sha256"],
+            hash(&serde_json::to_vec(&original[..archived]).unwrap())
+        );
+        let saved: Session = store.load(&session.id).unwrap();
+        assert_eq!(&saved.history[..original.len()], original);
+        assert!(saved.context_checkpoint.is_some());
+        assert!(
+            w.read(&saved.run_path())
+                .unwrap()
+                .contains("Context compaction")
+        );
+
+        let resumed = chat_json_output(
+            invoke(true).output().await.unwrap(),
+            0,
+            "waiting_clarification",
+        );
+        assert!(
+            !resumed
+                .iter()
+                .any(|event| event["type"] == "context.compacted")
+        );
+        let mut saved: Session = store.load(&session.id).unwrap();
+        assert_eq!(&saved.history[..original.len()], original);
+        assert!(saved.questions[0].answer.is_none() && !saved.questions[0].resolved);
+        compact_fixture_exchange(
+            &mut saved.history,
+            &protocol,
+            "long-new-call",
+            Some(json!({
+                "snapshot_id":"fixture-snapshot-2","source_sha256":"d".repeat(64),"content":"later historical data ".repeat(40_000),
+            })),
+        );
+        store.save(&saved.id, &saved).unwrap();
+        let extended = chat_json_output(
+            invoke(true).output().await.unwrap(),
+            0,
+            "waiting_clarification",
+        );
+        assert!(
+            extended
+                .iter()
+                .any(|event| event["type"] == "context.compacted"
+                    && event["archived_items"].as_u64().unwrap() > archived as u64)
+        );
+        let saved: Session = store.load(&session.id).unwrap();
+        assert_eq!(&saved.history[..original.len()], original);
+        assert_eq!(saved.request_ledger.unwrap().requests.len(), 3);
+        let requests = requests.lock().unwrap();
+        assert_eq!(requests.len(), 3);
+        let (field, digest_index) = match protocol {
+            Protocol::ChatCompletions => ("messages", 1),
+            Protocol::Responses => ("input", 0),
+        };
+        for (index, request) in requests.iter().enumerate() {
+            let items = request[field].as_array().unwrap();
+            let content = items[digest_index]["content"].as_str().unwrap();
+            let (_, data) = content.split_once('\n').unwrap();
+            let digest: Value = serde_json::from_str(data).unwrap();
+            let refs = digest["references"].as_array().unwrap();
+            assert!(
+                refs.iter()
+                    .any(|pin| pin["snapshot_id"] == "fixture-snapshot"
+                        && pin["path"] == snapshot_path
+                        && pin["source_sha256"] == source_sha256
+                        && pin["locator"] == "L5-L7")
+            );
+            assert!(refs.iter().any(|pin| pin["baseline_id"] == "BASE-APPROVAL"
+                && pin["manifest"] == baseline_path
+                && pin["manifest_sha256"] == baseline_sha256));
+            assert!(
+                refs.iter()
+                    .any(|pin| pin["path"] == "01_Sources/Assets/older-fixture.png"
+                        && pin["sha256"] == image_sha256)
+            );
+            assert_eq!(
+                digest["continuation"]["unresolved_questions"][0]["question"],
+                question_text
+            );
+            assert_eq!(
+                digest["continuation"]["unresolved_questions"][0]["affected_ids"][0],
+                "REQ-EXPIRY"
+            );
+            assert_eq!(digest["continuation"]["pending_operations"], json!([]));
+            let wire = serde_json::to_string(items).unwrap();
+            assert!(
+                !wire.contains("obsolete transcript data")
+                    && !wire.contains("opaque-archived-call")
+            );
+            if index == 0 {
+                assert!(
+                    wire.contains("Keep this tool result verbatim") && wire.contains("recent-call")
+                );
+                if protocol == Protocol::Responses {
+                    assert!(wire.contains("opaque-recent-call"));
+                }
+            } else if index == 2 {
+                assert!(
+                    refs.iter()
+                        .any(|pin| pin["snapshot_id"] == "fixture-snapshot-2")
+                );
+            }
+        }
+        server.abort();
+    }
+}
+
+#[tokio::test]
+async fn context_compaction_requires_reconciliation_and_retains_the_exact_observed_outcome() {
+    let (_dir, w) = fixture();
+    let protocol = Protocol::ChatCompletions;
+    let (url, _, requests, server) = server(vec![context_reply(&protocol)]).await;
+    let cfg = config(url, protocol.clone());
+    let rt = Runtime::open_chat(w.clone(), cfg.clone()).await.unwrap();
+    let mut s = Session::new(&cfg, "workflow").unwrap();
+    rt.input(&mut s, "Check the pending operation without repeating it.")
+        .unwrap();
+    compact_fixture_exchange(
+        &mut s.history,
+        &protocol,
+        "archived",
+        Some(json!({"content":"past ".repeat(144_000)})),
+    );
+    compact_fixture_exchange(&mut s.history, &protocol, "unknown-operation", None);
+    let call = pm_agent::provider::Call {
+        id: "unknown-operation".into(),
+        name: "read_document".into(),
+        arguments: json!({"path":"03_Systems/Snapshots/fixture-snapshot/files/requirements v2.md"})
+            .to_string(),
+    };
+    s.pending.push(call.clone());
+    rt.store
+        .begin_call(&s.id, &call.id, &call.name, &call.arguments)
+        .unwrap();
+    rt.save(&s).unwrap();
+    let local_history = s.history.clone();
+    rt.run(&mut s, None, &events().0, &CancellationToken::new())
+        .await
+        .unwrap();
+    assert_eq!(s.status, Status::NeedsReconciliation);
+    assert_eq!(s.pending, [call]);
+    assert_eq!(s.history, local_history);
+    assert!(s.context_checkpoint.is_none() && requests.lock().unwrap().is_empty());
+
+    let result = format!(
+        "Operator located the completed operation. {}",
+        "observed ".repeat(18_000)
+    );
+    rt.reconcile(&mut s, &result).unwrap();
+    rt.run(&mut s, None, &events().0, &CancellationToken::new())
+        .await
+        .unwrap();
+    assert_eq!(s.status, Status::Completed, "{:?}", s.error);
+    assert_eq!(&s.history[..local_history.len()], local_history);
+    let calls = rt.store.calls(&s.id).unwrap();
+    assert_eq!(calls.len(), 1);
+    assert_eq!(calls[0].status, "reconciled");
+    let requests = requests.lock().unwrap();
+    assert_eq!(requests.len(), 1);
+    let content = requests[0]["messages"][1]["content"].as_str().unwrap();
+    let digest: Value = serde_json::from_str(content.split_once('\n').unwrap().1).unwrap();
+    assert!(
+        digest["references"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|record| record["call_id"] == "unknown-operation"
+                && record["status"] == "reconciled_by_user"
+                && record["observed_result"] == result
+                && record["operation"]["name"] == "read_document"
+                && record["operation"]["arguments"]
+                    == local_history.last().unwrap()["tool_calls"][0]["function"]["arguments"])
+    );
+    server.abort();
+}
 fn fixture() -> (tempfile::TempDir, Workspace) {
     let dir = tempfile::tempdir().unwrap();
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
@@ -959,6 +1527,864 @@ fn events() -> (
     tokio::sync::mpsc::UnboundedReceiver<Event>,
 ) {
     tokio::sync::mpsc::unbounded_channel()
+}
+
+fn json_chat(w: &Workspace) -> tokio::process::Command {
+    let mut command = tokio::process::Command::new(env!("CARGO_BIN_EXE_pm-agent"));
+    command
+        .arg("--vault")
+        .arg(&w.root)
+        .args(["chat", "--json"])
+        .env(
+            "PM_AGENT_GLOBAL_CONFIG",
+            w.root.join(".pm-agent/test-global.toml"),
+        );
+    command
+}
+
+fn chat_json_output(output: std::process::Output, code: i32, status: &str) -> Vec<Value> {
+    assert_eq!(
+        output.status.code(),
+        Some(code),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        output.stderr.is_empty(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    parse_chat_json(&String::from_utf8(output.stdout).unwrap(), status)
+}
+
+fn parse_chat_json(stdout: &str, status: &str) -> Vec<Value> {
+    assert!(stdout.ends_with('\n'));
+    let lines = stdout
+        .lines()
+        .map(|line| serde_json::from_str::<Value>(line).expect(line))
+        .collect::<Vec<_>>();
+    assert!(lines.len() >= 2);
+    let first = &lines[0];
+    assert_eq!(first["type"], "turn.started");
+    assert!(uuid::Uuid::parse_str(first["turn_id"].as_str().unwrap()).is_ok());
+    for (index, line) in lines.iter().enumerate() {
+        assert_eq!(line["schema_version"], 1);
+        assert_eq!(line["sequence"], index + 1);
+        assert_eq!(line["session_id"], first["session_id"]);
+        assert_eq!(line["turn_id"], first["turn_id"]);
+    }
+    assert_eq!(lines.last().unwrap()["type"], "turn.finished");
+    assert_eq!(lines.last().unwrap()["status"], status);
+    assert_eq!(
+        lines
+            .iter()
+            .filter(|line| line["type"] == "turn.finished")
+            .count(),
+        1
+    );
+    lines
+}
+
+fn goal_command(w: &Workspace) -> tokio::process::Command {
+    let mut command = tokio::process::Command::new(env!("CARGO_BIN_EXE_pm-agent"));
+    command.arg("--vault").arg(&w.root).arg("goal");
+    command
+}
+
+async fn goal_output(command: &mut tokio::process::Command) -> Value {
+    let output = command.output().await.unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    serde_json::from_slice(&output.stdout).unwrap()
+}
+
+#[tokio::test]
+async fn persistent_goal_completes_from_current_draft_and_later_native_validation() {
+    let (_dir, w) = fixture();
+    let source = "01_Sources/Assets/goal.txt";
+    let source_text = "The supplied reference describes the fixture review process.";
+    atomic_write(&w.path(source).unwrap(), source_text.as_bytes()).unwrap();
+    let target = "04_Requirements/GOAL-REFERENCE.md";
+    let outside = "04_Requirements/OUTSIDE-GOAL.md";
+    let draft = note(json!({"type":"Reference","id":"GOAL-REFERENCE","title":"Fixture review","language":"en","doc_status":"draft"}), "# Fixture review\n\nThe supplied reference describes the fixture review process.").unwrap();
+    let arguments = |path: &str| json!({"path": path,"content":draft,"expected_hash":null,"citations":[{"path":source,"sha256":hash(source_text.as_bytes())}]});
+    let (url, _, requests, task) = server(vec![
+        chat("I declare the goal complete.", vec![]),
+        chat(
+            "",
+            vec![
+                call(0, "outside", "write_draft", arguments(outside)),
+                call(
+                    1,
+                    "early-check",
+                    "pm",
+                    json!({"command":"validate","args":[]}),
+                ),
+                call(2, "goal-draft", "write_draft", arguments(target)),
+            ],
+        ),
+        supported_review(source, &draft, source_text),
+        chat("Draft written.", vec![]),
+        chat(
+            "",
+            vec![call(
+                0,
+                "failed-check",
+                "pm",
+                json!({"command":"validate","args":[]}),
+            )],
+        ),
+        chat("Validation found a fixture error.", vec![]),
+        chat(
+            "",
+            vec![call(
+                0,
+                "after-draft-check",
+                "pm",
+                json!({"command":"validate","args":[]}),
+            )],
+        ),
+        chat("Validation performed.", vec![]),
+    ])
+    .await;
+    let config_path = w.path(".pm-agent/config.toml").unwrap();
+    let cfg = config(url, Protocol::ChatCompletions);
+    let config_text = toml::to_string(&cfg).unwrap();
+    atomic_write(&config_path, config_text.as_bytes()).unwrap();
+    let set = goal_output(goal_command(&w).args([
+        "set",
+        "--stage",
+        "review",
+        "--objective",
+        "Record the fixture review and validate it.",
+        "--draft",
+        target,
+        "--validate",
+        "--json",
+    ]))
+    .await;
+    let id = set["session_id"].as_str().unwrap();
+    assert_eq!(set["goal"]["status"], "active");
+    assert!(requests.lock().unwrap().is_empty());
+
+    let first = chat_json_output(
+        json_chat(&w)
+            .args(["--session", id])
+            .output()
+            .await
+            .unwrap(),
+        0,
+        "completed",
+    );
+    assert_eq!(first.last().unwrap()["goal"]["status"], "active");
+    assert!(!w.path(target).unwrap().exists());
+    let second = chat_json_output(
+        json_chat(&w)
+            .args(["--session", id])
+            .output()
+            .await
+            .unwrap(),
+        0,
+        "completed",
+    );
+    let progress = &second.last().unwrap()["goal"];
+    assert_eq!(progress["status"], "active");
+    assert_eq!(progress["drafts"][0]["receipt"]["call_id"], "goal-draft");
+    assert_eq!(progress["drafts"][0]["current"], true);
+    assert_eq!(progress["validation"], Value::Null);
+    assert!(!w.path(outside).unwrap().exists());
+
+    std::fs::remove_file(&config_path).unwrap();
+    let offline = goal_output(goal_command(&w).args(["status", "--session", id, "--json"])).await;
+    assert_eq!(&offline["goal"], progress);
+    atomic_write(&config_path, config_text.as_bytes()).unwrap();
+    let bad = w.path("04_Requirements/INVALID-GOAL-FIXTURE.md").unwrap();
+    atomic_write(&bad, note(json!({"type":"prd","id":"INVALID-GOAL-FIXTURE","title":"An incomplete fixture","language":"en","version":1,"doc_status":"draft"}), "# An incomplete fixture").unwrap().as_bytes()).unwrap();
+    let failure = chat_json_output(
+        json_chat(&w)
+            .args(["--session", id])
+            .output()
+            .await
+            .unwrap(),
+        0,
+        "completed",
+    );
+    let failed_check = &failure.last().unwrap()["goal"];
+    assert_eq!(failed_check["status"], "active");
+    assert_eq!(
+        failed_check["validation"]["report"]["call_id"],
+        "failed-check"
+    );
+    assert_eq!(failed_check["validation"]["exit_code"], 1);
+    std::fs::remove_file(bad).unwrap();
+    let third = chat_json_output(
+        json_chat(&w)
+            .args(["--session", id])
+            .output()
+            .await
+            .unwrap(),
+        0,
+        "completed",
+    );
+    let complete = &third.last().unwrap()["goal"];
+    assert_eq!(complete["status"], "completed", "{complete}");
+    assert_eq!(
+        complete["validation"]["report"]["call_id"],
+        "after-draft-check"
+    );
+    assert_eq!(complete["validation"]["exit_code"], 0);
+    assert_eq!(
+        complete["validation"]["drafts"][0]["sha256"],
+        hash(w.read(target).unwrap().as_bytes())
+    );
+    let report = w
+        .read(third.last().unwrap()["run"].as_str().unwrap())
+        .unwrap();
+    assert!(
+        report.contains("Persistent task goal")
+            && report.contains("after-draft-check")
+            && report.contains("goal-draft")
+    );
+    {
+        let req = requests.lock().unwrap();
+        assert!(
+            req[0]["messages"][0]["content"]
+                .as_str()
+                .unwrap()
+                .contains("Record the fixture review and validate it.")
+        );
+        assert!(
+            req[3]["messages"]
+                .to_string()
+                .contains("blocked_by_goal_scope")
+        );
+        assert!(
+            req[4]["messages"][0]["content"]
+                .as_str()
+                .unwrap()
+                .contains("goal-draft")
+        );
+    }
+
+    let changed = format!("{}\nExternal edit.\n", w.read(target).unwrap());
+    atomic_write(&w.path(target).unwrap(), changed.as_bytes()).unwrap();
+    let stale = goal_output(goal_command(&w).args(["status", "--session", id, "--json"])).await;
+    assert_eq!(stale["goal"]["status"], "stale");
+    assert_eq!(stale["goal"]["completed_at"], complete["completed_at"]);
+    assert_eq!(stale["goal"]["validation_current"], false);
+    let cleared = goal_output(goal_command(&w).args(["clear", "--session", id, "--json"])).await;
+    assert_eq!(cleared["goal"], Value::Null);
+    let replacement = goal_output(goal_command(&w).args([
+        "set",
+        "--session",
+        id,
+        "--objective",
+        "Recheck the revised fixture.",
+        "--draft",
+        target,
+        "--json",
+    ]))
+    .await;
+    assert_ne!(replacement["goal"]["id"], complete["id"]);
+    assert_eq!(replacement["goal"]["drafts"][0]["receipt"], Value::Null);
+    task.abort();
+}
+
+#[tokio::test]
+async fn persistent_prd_goal_respects_tool_approval_clarification_and_draft_confirmation() {
+    let (_dir, w) = fixture();
+    let args = grounding_args(&w, "Integer durations from 1 through 7 are valid.");
+    let target = args["path"].as_str().unwrap().to_owned();
+    let source = args["citations"][0]["path"].as_str().unwrap();
+    let review = supported_review(
+        source,
+        args["content"].as_str().unwrap(),
+        &w.read(source).unwrap(),
+    );
+    let (url, queue, requests, task) = server(vec![
+        chat("",vec![call(0,"permission","pm",json!({"command":"settings","args":["--document-language","zh-TW"]}))]),
+        chat("",vec![call(0,"question","ask_clarification",json!({"question":"Which documented duration range applies?","body":"Confirm the applicable range before drafting.","blocking_scope":"records","affected_paths":[target]}))]),
+        chat("",vec![call(0,"blocked-draft","write_draft",args.clone())]),
+        chat("The draft depends on the open question.",vec![]),
+    ]).await;
+    let cfg = config(url, Protocol::ChatCompletions);
+    atomic_write(
+        &w.path(".pm-agent/config.toml").unwrap(),
+        toml::to_string(&cfg).unwrap().as_bytes(),
+    )
+    .unwrap();
+    let set = goal_output(goal_command(&w).args([
+        "set",
+        "--stage",
+        "prd",
+        "--objective",
+        "Draft the confirmed duration behavior.",
+        "--draft",
+        &target,
+        "--json",
+    ]))
+    .await;
+    let id = set["session_id"].as_str().unwrap();
+    let pause = chat_json_output(
+        json_chat(&w)
+            .args(["--session", id])
+            .output()
+            .await
+            .unwrap(),
+        0,
+        "waiting_approval",
+    );
+    assert_eq!(pause.last().unwrap()["goal"]["status"], "active");
+    let refused = goal_command(&w)
+        .args(["clear", "--session", id])
+        .output()
+        .await
+        .unwrap();
+    assert!(!refused.status.success());
+    let denied = chat_json_output(
+        json_chat(&w)
+            .args(["--session", id, "--deny"])
+            .output()
+            .await
+            .unwrap(),
+        0,
+        "cancelled",
+    );
+    assert_eq!(denied.last().unwrap()["goal"]["status"], "active");
+    assert_eq!(w.language().unwrap(), "en");
+
+    let blocked = chat_json_output(
+        json_chat(&w)
+            .args(["--session", id])
+            .output()
+            .await
+            .unwrap(),
+        0,
+        "waiting_clarification",
+    );
+    let question = blocked.last().unwrap()["pending"]["questions"][0]
+        .as_str()
+        .unwrap();
+    let independent = chat_json_output(
+        json_chat(&w)
+            .args(["--session", id, "--independent"])
+            .output()
+            .await
+            .unwrap(),
+        0,
+        "waiting_clarification",
+    );
+    assert_eq!(
+        independent.last().unwrap()["goal"]["drafts"][0]["receipt"],
+        Value::Null
+    );
+    assert!(!w.path(&target).unwrap().exists());
+
+    queue.lock().unwrap().extend([
+        chat("",vec![call(0,"resolve","resolve_clarification",json!({"path":question,"resolution":"The user's answer confirms the integer range from 1 through 7."})),call(1,"confirmed-draft","write_draft",args)]),
+        review,
+        chat("Draft applied.",vec![]),
+    ]);
+    let preview = chat_json_output(
+        json_chat(&w)
+            .args([
+                "--session",
+                id,
+                "--answer",
+                question,
+                "The documented range is 1 through 7.",
+            ])
+            .output()
+            .await
+            .unwrap(),
+        0,
+        "waiting_draft_review",
+    );
+    let before = preview.last().unwrap();
+    assert_eq!(before["goal"]["status"], "active");
+    assert_eq!(before["goal"]["drafts"][0]["receipt"], Value::Null);
+    assert!(!w.path(&target).unwrap().exists());
+    let preview_id = before["pending"]["preview_id"].as_str().unwrap();
+    let after = chat_json_output(
+        json_chat(&w)
+            .args(["--session", id, "--apply-draft", preview_id])
+            .output()
+            .await
+            .unwrap(),
+        0,
+        "completed",
+    );
+    assert_eq!(after.last().unwrap()["goal"]["status"], "completed");
+    assert_eq!(
+        after.last().unwrap()["goal"]["drafts"][0]["receipt"]["call_id"],
+        "confirmed-draft"
+    );
+    assert_eq!(requests.lock().unwrap().len(), 7);
+    task.abort();
+}
+
+#[tokio::test]
+async fn chat_json_correlates_tool_progress_provider_usage_and_written_reports() {
+    let (_dir, w) = fixture();
+    let source = "01_Sources/Assets/stream-fixture.txt";
+    atomic_write(&w.path(source).unwrap(), b"PRIVATE_SOURCE_FIXTURE").unwrap();
+    let text_response = format!(
+        "data: {}\n\ndata: [DONE]\n\n",
+        json!({
+            "choices": [{"delta":{"content":"檢查完成。\nReceipt.","reasoning_content":"PRIVATE_REASONING_FIXTURE"},"finish_reason":"stop"}],
+            "usage":{"prompt_tokens":15,"completion_tokens":8,"total_tokens":23}
+        })
+    );
+    let (url, _, _, task) = server(vec![
+        chat(
+            "",
+            vec![
+                call(0, "read", "read_document", json!({"path":source})),
+                call(1, "check", "pm", json!({"command":"validate","args":[]})),
+            ],
+        ),
+        text_response,
+    ])
+    .await;
+    let cfg = config(url, Protocol::ChatCompletions);
+    atomic_write(
+        &w.path(".pm-agent/config.toml").unwrap(),
+        toml::to_string(&cfg).unwrap().as_bytes(),
+    )
+    .unwrap();
+    let output = json_chat(&w)
+        .arg("Check the test Vault.")
+        .output()
+        .await
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        !stdout.contains("PRIVATE_SOURCE_FIXTURE") && !stdout.contains("PRIVATE_REASONING_FIXTURE")
+    );
+    let lines = chat_json_output(output, 0, "completed");
+    assert_eq!(lines[0]["stage"], "workflow");
+    assert!(lines[0]["session_id"].is_string());
+    assert!(
+        lines
+            .iter()
+            .any(|e| e["type"] == "turn.state_changed" && e["status"] == "running")
+    );
+    assert!(
+        lines
+            .iter()
+            .any(|e| e["type"] == "turn.progress" && e["phase"] == "waiting_for_model")
+    );
+    assert!(
+        lines
+            .iter()
+            .any(|e| e["type"] == "assistant.text.delta" && e["text"] == "檢查完成。\nReceipt.")
+    );
+    assert!(
+        lines
+            .iter()
+            .any(|e| e["type"] == "usage.updated" && e["usage"]["total_tokens"] == 23)
+    );
+    let states = lines
+        .iter()
+        .filter(|e| e["type"] == "tool.updated" && e["call_id"] == "check")
+        .map(|e| e["state"].as_str().unwrap())
+        .collect::<Vec<_>>();
+    assert_eq!(states, ["requested", "running", "result_recorded"]);
+    let finish = lines.last().unwrap();
+    assert!(w.path(finish["run"].as_str().unwrap()).unwrap().is_file());
+    assert_eq!(finish["pending"], Value::Null);
+    let report = &finish["artifacts"][0];
+    assert_eq!(report["kind"], "report");
+    assert_eq!(
+        report["sha256"],
+        hash(w.read(report["path"].as_str().unwrap()).unwrap().as_bytes())
+    );
+    task.abort();
+}
+
+#[tokio::test]
+async fn chat_json_surfaces_clarification_approval_and_offline_denial() {
+    let (_dir, w) = fixture();
+    let (url, _, req, task) = server(vec![
+        chat(
+            "",
+            vec![call(
+                0,
+                "ask",
+                "ask_clarification",
+                json!({"question":"Who owns review?","body":"A named reviewer is required."}),
+            )],
+        ),
+        chat(
+            "",
+            vec![call(
+                0,
+                "settings",
+                "pm",
+                json!({"command":"settings","args":["--document-language","zh-TW"]}),
+            )],
+        ),
+    ])
+    .await;
+    let cfg = config(url, Protocol::ChatCompletions);
+    let config_path = w.path(".pm-agent/config.toml").unwrap();
+    atomic_write(&config_path, toml::to_string(&cfg).unwrap().as_bytes()).unwrap();
+
+    let question = chat_json_output(
+        json_chat(&w)
+            .arg("Ask about the missing owner.")
+            .output()
+            .await
+            .unwrap(),
+        0,
+        "waiting_clarification",
+    );
+    let end = question.last().unwrap();
+    assert_eq!(end["pending"]["kind"], "clarification");
+    let question_path = end["pending"]["questions"][0].as_str().unwrap();
+    assert_eq!(end["artifacts"][0]["kind"], "question");
+    assert_eq!(end["artifacts"][0]["path"], question_path);
+    assert!(w.read(question_path).unwrap().contains("Who owns review?"));
+
+    let approval = chat_json_output(
+        json_chat(&w)
+            .arg("Change the staged workspace language.")
+            .output()
+            .await
+            .unwrap(),
+        0,
+        "waiting_approval",
+    );
+    let end = approval.last().unwrap();
+    let session = end["session_id"].as_str().unwrap();
+    assert_eq!(end["pending"]["kind"], "approval");
+    assert_eq!(end["pending"]["call"]["call_id"], "settings");
+    assert!(approval.iter().any(|e| e["state"] == "approval_required"));
+    assert!(!approval.iter().any(|e| e.to_string().contains("zh-TW")));
+    std::fs::remove_file(config_path).unwrap();
+    let inspected = chat_json_output(
+        json_chat(&w)
+            .args(["--session", session])
+            .output()
+            .await
+            .unwrap(),
+        0,
+        "waiting_approval",
+    );
+    assert_eq!(inspected.len(), 2);
+    assert_eq!(inspected[0]["session_id"], end["session_id"]);
+    assert_ne!(inspected[0]["turn_id"], end["turn_id"]);
+    let denied = chat_json_output(
+        json_chat(&w)
+            .args(["--session", session, "--deny"])
+            .output()
+            .await
+            .unwrap(),
+        0,
+        "cancelled",
+    );
+    assert_eq!(denied.last().unwrap()["run"], end["run"]);
+    assert_eq!(w.language().unwrap(), "en");
+    assert_eq!(req.lock().unwrap().len(), 2);
+    task.abort();
+}
+
+#[tokio::test]
+async fn chat_json_distinguishes_preflight_failure_provider_failure_limits_and_reconciliation() {
+    let (_dir, w) = fixture();
+    let config_path = w.path(".pm-agent/config.toml").unwrap();
+    let failed = chat_json_output(
+        json_chat(&w)
+            .arg("Check missing configuration.")
+            .output()
+            .await
+            .unwrap(),
+        1,
+        "failed",
+    );
+    assert_eq!(failed[0]["session_id"], Value::Null);
+    assert!(
+        failed[1]["diagnostic"]
+            .as_str()
+            .unwrap()
+            .contains("config.toml")
+    );
+    assert_eq!(failed[1]["run"], Value::Null);
+
+    let (url, _, req, task) = server(vec!["data: [DONE]\n\n".to_owned()]).await;
+    let mut cfg = config(url, Protocol::ChatCompletions);
+    let save_config = |cfg: &Config| {
+        atomic_write(&config_path, toml::to_string(cfg).unwrap().as_bytes()).unwrap()
+    };
+    save_config(&cfg);
+    let failure = chat_json_output(
+        json_chat(&w)
+            .arg("Check the truncated response.")
+            .output()
+            .await
+            .unwrap(),
+        2,
+        "failed",
+    );
+    assert!(
+        w.path(failure.last().unwrap()["run"].as_str().unwrap())
+            .unwrap()
+            .is_file()
+    );
+
+    cfg.session_limits.max_total_tokens = Some(0);
+    save_config(&cfg);
+    let limited = chat_json_output(
+        json_chat(&w)
+            .arg("Check the configured guard.")
+            .output()
+            .await
+            .unwrap(),
+        2,
+        "limit_reached",
+    );
+    assert!(
+        limited.last().unwrap()["diagnostic"]
+            .as_str()
+            .unwrap()
+            .contains("limit")
+    );
+
+    cfg.session_limits.max_total_tokens = None;
+    save_config(&cfg);
+    let mut interrupted = Session::new(&cfg, "workflow").unwrap();
+    interrupted.pending.push(pm_agent::provider::Call {
+        id: "interrupted".into(),
+        name: "pm".into(),
+        arguments: json!({"command":"validate","args":[]}).to_string(),
+    });
+    let store =
+        pm_agent::store::Store::open(&w.path(".pm-agent/runtime.sqlite3").unwrap()).unwrap();
+    store.save(&interrupted.id, &interrupted).unwrap();
+    let call = &interrupted.pending[0];
+    store
+        .begin_call(&interrupted.id, &call.id, &call.name, &call.arguments)
+        .unwrap();
+    let paused = chat_json_output(
+        json_chat(&w)
+            .args(["--session", &interrupted.id])
+            .output()
+            .await
+            .unwrap(),
+        2,
+        "needs_reconciliation",
+    );
+    assert_eq!(paused.last().unwrap()["pending"]["kind"], "reconciliation");
+    assert_eq!(
+        paused.last().unwrap()["pending"]["call"]["call_id"],
+        "interrupted"
+    );
+    assert_eq!(req.lock().unwrap().len(), 1);
+    task.abort();
+}
+
+#[tokio::test]
+async fn chat_json_flushes_text_before_provider_finishes_and_records_interrupt() {
+    use futures_util::StreamExt;
+    use std::{io, process::Stdio, time::Duration};
+    use tokio::io::{AsyncBufReadExt, BufReader};
+
+    let (_dir, w) = fixture();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let task = tokio::spawn(async move {
+        let app = Router::new().route("/v1/chat/completions", post(|| async {
+            let chunk = format!("data: {}\n\n",json!({"choices":[{"delta":{"content":"Before interrupt"},"finish_reason":null}]}));
+            let body = axum::body::Body::from_stream(futures_util::stream::once(async { Ok::<_,io::Error>(chunk) }).chain(futures_util::stream::pending()));
+            ([("content-type","text/event-stream")],body)
+        }));
+        axum::serve(listener, app).await.unwrap();
+    });
+    let mut cfg = config(format!("http://{addr}/v1"), Protocol::ChatCompletions);
+    cfg.providers.get_mut("fixture").unwrap().timeout_seconds = 20;
+    atomic_write(
+        &w.path(".pm-agent/config.toml").unwrap(),
+        toml::to_string(&cfg).unwrap().as_bytes(),
+    )
+    .unwrap();
+    let mut child = json_chat(&w)
+        .arg("Start a streaming reply.")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .kill_on_drop(true)
+        .spawn()
+        .unwrap();
+    let mut reader = BufReader::new(child.stdout.take().unwrap()).lines();
+    let mut output = String::new();
+    tokio::time::timeout(Duration::from_secs(8), async {
+        loop {
+            let line = reader.next_line().await.unwrap().unwrap();
+            output.push_str(&line);
+            output.push('\n');
+            if serde_json::from_str::<Value>(&line).unwrap()["type"] == "assistant.text.delta" {
+                break;
+            }
+        }
+    })
+    .await
+    .expect("JSONL should be flushed while the SSE response is open");
+    let pid = child.id().unwrap().to_string();
+    assert!(
+        tokio::process::Command::new("kill")
+            .args(["-INT", &pid])
+            .status()
+            .await
+            .unwrap()
+            .success()
+    );
+    let code = tokio::time::timeout(Duration::from_secs(8), async {
+        while let Some(line) = reader.next_line().await.unwrap() {
+            output.push_str(&line);
+            output.push('\n');
+        }
+        child.wait().await.unwrap().code()
+    })
+    .await
+    .unwrap();
+    assert_eq!(code, Some(2));
+    let lines = parse_chat_json(&output, "cancelled");
+    assert!(lines.iter().any(|e| e["text"] == "Before interrupt"));
+    assert!(
+        w.path(lines.last().unwrap()["run"].as_str().unwrap())
+            .unwrap()
+            .is_file()
+    );
+    task.abort();
+}
+
+#[tokio::test]
+async fn chat_json_steering_rejects_stale_ids_and_replaces_streams_for_both_protocols() {
+    use futures_util::StreamExt;
+    use std::{io, process::Stdio, time::Duration};
+    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+    type StateData = (Protocol, Requests);
+
+    async fn handler(
+        State((protocol, requests)): State<StateData>,
+        Json(body): Json<Value>,
+    ) -> impl IntoResponse {
+        let first = {
+            let mut requests = requests.lock().unwrap();
+            requests.push(body);
+            requests.len() == 1
+        };
+        let body = if first {
+            let partial = match protocol {
+                Protocol::ChatCompletions => {
+                    json!({"choices":[{"delta":{"content":"Obsolete stream"},"finish_reason":null}]})
+                }
+                Protocol::Responses => {
+                    json!({"type":"response.output_text.delta","delta":"Obsolete stream"})
+                }
+            };
+            let chunk = format!("data: {partial}\n\n");
+            axum::body::Body::from_stream(
+                futures_util::stream::once(async { Ok::<_, io::Error>(chunk) })
+                    .chain(futures_util::stream::pending()),
+            )
+        } else {
+            let completed = match protocol {
+                Protocol::ChatCompletions => chat("Corrected response.", vec![]),
+                Protocol::Responses => format!(
+                    "data: {}\n\ndata: {}\n\n",
+                    json!({"type":"response.output_text.delta","delta":"Corrected response."}),
+                    json!({"type":"response.completed","response":{"status":"completed","output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Corrected response."}]}]}})
+                ),
+            };
+            axum::body::Body::from(completed)
+        };
+        ([("content-type", "text/event-stream")], body)
+    }
+
+    for protocol in [Protocol::ChatCompletions, Protocol::Responses] {
+        let (_dir, w) = fixture();
+        let requests = Arc::new(Mutex::new(vec![]));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let cfg = config(
+            format!("http://{}/v1", listener.local_addr().unwrap()),
+            protocol.clone(),
+        );
+        let app = Router::new()
+            .route("/v1/chat/completions", post(handler))
+            .route("/v1/responses", post(handler))
+            .with_state((protocol, requests.clone()));
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        atomic_write(
+            &w.path(".pm-agent/config.toml").unwrap(),
+            toml::to_string(&cfg).unwrap().as_bytes(),
+        )
+        .unwrap();
+        let mut child = json_chat(&w)
+            .args(["--steer-stdin", "Start the original task."])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .kill_on_drop(true)
+            .spawn()
+            .unwrap();
+        let mut stdin = child.stdin.take().unwrap();
+        let mut reader = BufReader::new(child.stdout.take().unwrap()).lines();
+        let output = tokio::time::timeout(Duration::from_secs(10), async {
+            let mut output = String::new();
+            let mut turn_id = None;
+            while let Some(line) = reader.next_line().await.unwrap() {
+                let value = serde_json::from_str::<Value>(&line).unwrap();
+                output.push_str(&line);
+                output.push('\n');
+                if value["type"] == "turn.started" {
+                    turn_id = value["turn_id"].as_str().map(String::from);
+                }
+                if value["text"] == "Obsolete stream" {
+                    stdin.write_all(b"{\"turn_id\":\"stale-turn\",\"text\":\"Ignore this stale correction\"}\n").await.unwrap();
+                }
+                if value["type"] == "turn.steering" && value["state"] == "rejected" {
+                    assert!(value["reason"].as_str().unwrap().contains("Stale turn ID"));
+                    let frame = json!({"turn_id":turn_id,"text":"Use the corrected scope."});
+                    stdin.write_all(format!("{frame}\n").as_bytes()).await.unwrap();
+                }
+            }
+            assert!(child.wait().await.unwrap().success(), "{output}");
+            output
+        }).await.expect("Steered Chat should finish while stdin and the original SSE response remain open");
+        let lines = parse_chat_json(&output, "completed");
+        let receipt = &lines
+            .iter()
+            .find(|line| line["type"] == "turn.steering" && line["state"] == "applied")
+            .unwrap()["receipt"];
+        assert_eq!(receipt["turn_id"], lines[0]["turn_id"]);
+        assert!(
+            lines
+                .iter()
+                .any(|line| line["text"] == "Corrected response.")
+        );
+        let store =
+            pm_agent::store::Store::open(&w.path(".pm-agent/runtime.sqlite3").unwrap()).unwrap();
+        let saved: Session = store
+            .load(lines[0]["session_id"].as_str().unwrap())
+            .unwrap();
+        let history = serde_json::to_string(&saved.history).unwrap();
+        assert!(history.contains("Use the corrected scope."));
+        assert!(
+            !history.contains("Obsolete stream")
+                && !history.contains("Ignore this stale correction")
+        );
+        assert_eq!(saved.steering.len(), 1);
+        assert_eq!(saved.request_ledger.unwrap().requests.len(), 2);
+        let requests = requests.lock().unwrap();
+        assert_eq!(requests.len(), 2);
+        assert!(requests[1].to_string().contains("Use the corrected scope."));
+        server.abort();
+    }
 }
 
 #[tokio::test]
@@ -1019,7 +2445,7 @@ async fn tool_roundtrip_creates_a_sourced_draft_and_preserves_hashes() {
     .unwrap();
     let (url,_,requests,server)=server(vec![chat("",vec![call(0,"read","read_document",json!({"path":"00_Governance/Project.md"}))]),chat("",vec![call(0,"write","write_draft",json!({"path":"04_Requirements/PRD/PRD-TEST.md","content":draft,"expected_hash":null,"citations":[{"path":"00_Governance/Project.md","sha256":hash(source.as_bytes())}]}))]),supported_review("00_Governance/Project.md", &draft, &source),chat("Draft saved; semantic review remains necessary.",vec![])]).await;
     let cfg = config(url, Protocol::ChatCompletions);
-    let runtime = Runtime::open(w.clone(), cfg.clone()).await.unwrap();
+    let runtime = Runtime::open_chat(w.clone(), cfg.clone()).await.unwrap();
     let mut s = Session::new(&cfg, "prd").unwrap();
     runtime
         .input(&mut s, "Create a draft grounded in the charter.")
@@ -1028,13 +2454,41 @@ async fn tool_roundtrip_creates_a_sourced_draft_and_preserves_hashes() {
         .run(&mut s, None, &events().0, &CancellationToken::new())
         .await
         .unwrap();
-    assert_eq!(s.status, Status::Completed);
+    let path = "04_Requirements/PRD/PRD-TEST.md";
+    assert_eq!(s.status, Status::WaitingDraftReview);
+    assert!(!w.path(path).unwrap().exists());
+    assert_eq!(requests.lock().unwrap().len(), 3);
+    let preview = s.draft_preview.as_ref().unwrap();
+    assert!(preview.text.contains("+ "));
+    assert!(
+        preview
+            .text
+            .contains("The charter requires confirmed project inputs.")
+    );
+    assert!(preview.text.contains(&hash(source.as_bytes())));
+    assert!(preview.text.contains("Open questions\nNone recorded."));
+    let preview_id = preview.id.clone();
+    drop(runtime);
+    let runtime = Runtime::open_chat(w.clone(), cfg).await.unwrap();
+    let mut s: Session = runtime.store.load(&s.id).unwrap();
+    assert!(runtime.decision(&mut s, true).is_err());
+    assert!(runtime.confirm_draft(&mut s, "older-preview").is_err());
+    assert!(!w.path(path).unwrap().exists());
+    runtime.confirm_draft(&mut s, &preview_id).unwrap();
+    let mut s: Session = runtime.store.load(&s.id).unwrap();
+    runtime
+        .run(&mut s, None, &events().0, &CancellationToken::new())
+        .await
+        .unwrap();
+    assert_eq!(s.status, Status::Completed, "{:?}", s.error);
+    assert!(s.draft_preview.is_none());
     assert!(
         w.read("04_Requirements/PRD/PRD-TEST.md")
             .unwrap()
             .contains("evidence_paths")
     );
     let req = requests.lock().unwrap();
+    assert_eq!(req.len(), 4);
     assert!(
         req[1]["messages"]
             .as_array()
@@ -1042,6 +2496,199 @@ async fn tool_roundtrip_creates_a_sourced_draft_and_preserves_hashes() {
             .iter()
             .any(|m| m["role"] == "tool" && m["tool_call_id"] == "read")
     );
+    let run = w.read(&format!("90_Agent/Runs/RUN-{}.md", s.id)).unwrap();
+    assert!(run.contains("## Applied draft previews"));
+    assert!(run.contains(&preview_id));
+    assert!(run.contains(&hash(w.read(path).unwrap().as_bytes())));
+    server.abort();
+}
+
+#[tokio::test]
+async fn chat_draft_preview_rejects_changes_to_the_original_source_or_baseline() {
+    use pm_agent::{baselines, records::Records};
+
+    for changed in ["original", "source", "baseline", "baseline_decision"] {
+        let (_dir, w) = fixture();
+        let mut args = grounding_args(&w, "Integer durations from 1 through 7 are valid.");
+        let path = args["path"].as_str().unwrap().to_owned();
+        let source = args["citations"][0]["path"].as_str().unwrap().to_owned();
+        let original = note(json!({"id":"PRD-GROUND","type":"prd","title":"Grounding fixture","version":1,"doc_status":"draft","language":"en"}), "# Grounding fixture\n\nPrevious text.").unwrap();
+        atomic_write(&w.path(&path).unwrap(), original.as_bytes()).unwrap();
+        args["expected_hash"] = json!(hash(original.as_bytes()));
+        let baseline = baselines::capture(
+            &Records::load(&w).unwrap(),
+            "BL-PREVIEW",
+            &["PRD-GROUND".into()],
+        )
+        .unwrap();
+        let manifest = baseline["manifest"].as_str().unwrap();
+        let review = supported_review(
+            &source,
+            args["content"].as_str().unwrap(),
+            &w.read(&source).unwrap(),
+        );
+        let (url, _, requests, server) = server(vec![
+            chat("", vec![call(0, "draft", "write_draft", args)]),
+            review,
+        ])
+        .await;
+        let cfg = config(url, Protocol::ChatCompletions);
+        let rt = Runtime::open_chat(w.clone(), cfg.clone()).await.unwrap();
+        let mut s = Session::new(&cfg, "prd").unwrap();
+        rt.input(&mut s, "Propose the updated PRD.").unwrap();
+        rt.run(&mut s, None, &events().0, &CancellationToken::new())
+            .await
+            .unwrap();
+        assert_eq!(s.status, Status::WaitingDraftReview, "{:?}", s.error);
+        let preview = s.draft_preview.as_ref().unwrap();
+        assert!(preview.text.contains("Previous text."));
+        assert!(preview.text.contains("BL-PREVIEW"));
+        let preview_id = preview.id.clone();
+        rt.confirm_draft(&mut s, &preview_id).unwrap();
+        match changed {
+            "original" => atomic_write(
+                &w.path(&path).unwrap(),
+                format!("{original}\nExternal edit\n").as_bytes(),
+            )
+            .unwrap(),
+            "source" => {
+                atomic_write(&w.path(&source).unwrap(), b"Source changed after preview").unwrap()
+            }
+            "baseline" => {
+                let mut value: Value = serde_json::from_str(&w.read(manifest).unwrap()).unwrap();
+                value["created_at"] = json!("changed after preview");
+                atomic_write(
+                    &w.path(manifest).unwrap(),
+                    &serde_json::to_vec(&value).unwrap(),
+                )
+                .unwrap();
+            }
+            "baseline_decision" => {
+                let decision = note(json!({"id":"DEC-PREVIEW","type":"decision","title":"Baseline decision","decision_type":"baseline_approval","baseline_id":"BL-PREVIEW","baseline_sha256":baseline["manifest_sha256"],"workflow_status":"accepted","decided_by":"Synthetic fixture","decided_at":"2026-10-15T00:00:00Z","decision_evidence":"Fixture","language":"en"}), "# Baseline decision").unwrap();
+                atomic_write(
+                    &w.path("07_Decisions/DEC-PREVIEW.md").unwrap(),
+                    decision.as_bytes(),
+                )
+                .unwrap();
+            }
+            _ => unreachable!(),
+        }
+        let current = w.read(&path).unwrap();
+        rt.run(&mut s, None, &events().0, &CancellationToken::new())
+            .await
+            .unwrap();
+        assert_eq!(s.status, Status::Failed, "{changed}: {:?}", s.error);
+        assert!(
+            s.error
+                .as_deref()
+                .unwrap()
+                .contains("Draft preview is stale")
+        );
+        assert!(s.draft_preview.is_none() && s.pending.is_empty());
+        assert_eq!(w.read(&path).unwrap(), current);
+        assert!(rt.store.calls(&s.id).unwrap().is_empty());
+        assert_eq!(requests.lock().unwrap().len(), 2);
+        server.abort();
+    }
+}
+
+#[tokio::test]
+async fn chat_cli_reopens_and_applies_only_the_named_draft_preview() {
+    let (_dir, w) = fixture();
+    let args = grounding_args(&w, "Integer durations from 1 through 7 are valid.");
+    let path = args["path"].as_str().unwrap().to_owned();
+    let source = args["citations"][0]["path"].as_str().unwrap();
+    let review = supported_review(
+        source,
+        args["content"].as_str().unwrap(),
+        &w.read(source).unwrap(),
+    );
+    let (url, _, requests, server) = server(vec![
+        chat("", vec![call(0, "cli-draft", "write_draft", args)]),
+        review,
+        chat("Confirmed draft saved.", vec![]),
+    ])
+    .await;
+    let cfg = config(url, Protocol::ChatCompletions);
+    let config_path = w.path(".pm-agent/config.toml").unwrap();
+    atomic_write(&config_path, toml::to_string(&cfg).unwrap().as_bytes()).unwrap();
+    let chat_command = || {
+        let mut command = tokio::process::Command::new(env!("CARGO_BIN_EXE_pm-agent"));
+        command
+            .arg("--vault")
+            .arg(&w.root)
+            .arg("--config")
+            .arg(&config_path)
+            .arg("chat");
+        command
+    };
+    let proposed = chat_command()
+        .args(["--stage", "prd", "Propose a PRD draft."])
+        .output()
+        .await
+        .unwrap();
+    let preview_output = String::from_utf8(proposed.stderr).unwrap();
+    assert!(proposed.status.success(), "{preview_output}");
+    assert!(
+        preview_output.contains("Proposed changes") && preview_output.contains("--apply-draft")
+    );
+    let store =
+        pm_agent::store::Store::open(&w.path(".pm-agent/runtime.sqlite3").unwrap()).unwrap();
+    let (session_id, _) = store.sessions().unwrap().pop().unwrap();
+    let session: Session = store.load(&session_id).unwrap();
+    let preview = session.draft_preview.unwrap();
+
+    let reopened = chat_command()
+        .args(["--session", &session_id])
+        .output()
+        .await
+        .unwrap();
+    assert!(reopened.status.success());
+    assert!(
+        String::from_utf8(reopened.stderr)
+            .unwrap()
+            .contains(&preview.id)
+    );
+    let stream = chat_json_output(
+        json_chat(&w)
+            .args(["--session", &session_id])
+            .output()
+            .await
+            .unwrap(),
+        0,
+        "waiting_draft_review",
+    );
+    let pending = &stream.last().unwrap()["pending"];
+    assert_eq!(pending["kind"], "draft_review");
+    assert_eq!(pending["preview_id"], preview.id);
+    assert_eq!(pending["path"], path);
+    assert!(
+        pending["text"]
+            .as_str()
+            .unwrap()
+            .contains("Proposed changes")
+    );
+    let wrong = chat_command()
+        .args(["--session", &session_id, "--apply-draft", "wrong"])
+        .output()
+        .await
+        .unwrap();
+    assert!(!wrong.status.success());
+    assert!(!w.path(&path).unwrap().exists());
+    assert_eq!(requests.lock().unwrap().len(), 2);
+
+    let applied = json_chat(&w)
+        .args(["--session", &session_id, "--apply-draft", &preview.id])
+        .output()
+        .await
+        .unwrap();
+    let applied = chat_json_output(applied, 0, "completed");
+    let draft = &applied.last().unwrap()["artifacts"][0];
+    assert_eq!(draft["kind"], "draft");
+    assert_eq!(draft["path"], path);
+    assert_eq!(draft["sha256"], hash(w.read(&path).unwrap().as_bytes()));
+    assert!(w.path(&path).unwrap().is_file());
+    assert_eq!(requests.lock().unwrap().len(), 3);
     server.abort();
 }
 
@@ -1052,7 +2699,7 @@ async fn scoped_question_allows_explicit_independent_work_but_blocks_other_sessi
     atomic_write(&w.path(root).unwrap(),note(json!({"id":"REQ-SCOPED","type":"requirement","title":"Synthetic","language":"en","doc_status":"draft"}),"# Synthetic gap").unwrap().as_bytes()).unwrap();
     let (url,queue,_,server)=server(vec![chat("",vec![call(0,"ask-scope","ask_clarification",json!({"question":"Which rule applies?","body":"Supply the missing rule for REQ-SCOPED.","blocking_scope":"records","affected_ids":["REQ-SCOPED"]}))])]).await;
     let cfg = config(url, Protocol::ChatCompletions);
-    let rt = Runtime::open(w.clone(), cfg.clone()).await.unwrap();
+    let rt = Runtime::open_chat(w.clone(), cfg.clone()).await.unwrap();
     let mut s = Session::new(&cfg, "prd").unwrap();
     rt.input(&mut s, "Inspect the synthetic source.").unwrap();
     rt.run(&mut s, None, &events().0, &CancellationToken::new())
@@ -1075,6 +2722,15 @@ async fn scoped_question_allows_explicit_independent_work_but_blocks_other_sessi
         ),
         chat("Independent work saved; the rule remains unknown.", vec![]),
     ]);
+    rt.run(&mut s, None, &events().0, &CancellationToken::new())
+        .await
+        .unwrap();
+    assert_eq!(s.status, Status::WaitingDraftReview);
+    let preview = s.draft_preview.as_ref().unwrap();
+    assert!(preview.text.contains(&question));
+    assert!(preview.text.contains("Which rule applies?"));
+    let preview_id = preview.id.clone();
+    rt.confirm_draft(&mut s, &preview_id).unwrap();
     rt.run(&mut s, None, &events().0, &CancellationToken::new())
         .await
         .unwrap();

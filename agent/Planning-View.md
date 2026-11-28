@@ -21,6 +21,7 @@ The view reads the current project records and calculates a snapshot using the s
 | PgUp / PgDn, wheel, right scrollbar | Read longer details and allocation tables |
 | Enter in the PBI list | Return to the document browser and read the selected PBI |
 | M, right-click a PBI, or Move | Choose a proposed iteration assignment |
+| S, or Scenarios | Compare saved simulations and review one for application |
 | E / P / I / A, or footer buttons | Edit selected PBI / People / Iterations / forecast date |
 | R / Esc | Refresh from files / return to Browse |
 
@@ -41,8 +42,36 @@ Moving work uses the same [structured editor](Editing.md) checks as manual PBI e
 
 The selected PBI hash must still match the loaded view. The editor then checks project inputs again before saving. External changes require refresh, reconciliation or a new preview. These are optimistic checks, not a transaction with other editors. Completed/cancelled PBIs cannot be moved through the scheduling picker, and approved records retain their existing protection.
 
+## Compare planning scenarios
+
+Prepare a JSON file with two through eight alternatives. Each alternative contains one through twenty sprint moves for distinct active PBIs. Use a recorded sprint number or an explicit `null` to unschedule an item.
+
+```json
+{
+  "scenarios": [
+    {"id":"Swap","moves":[{"pbi":"PBI-A","sprint":2},{"pbi":"PBI-B","sprint":1}]},
+    {"id":"Defer","moves":[{"pbi":"PBI-B","sprint":null}]}
+  ]
+}
+```
+
+```sh
+pm-agent --vault . scenario compare alternatives.json --id NOV-PLAN
+pm-agent --vault . scenario show NOV-PLAN
+pm-agent --vault . scenario review NOV-PLAN Swap
+pm-agent --vault . scenario apply NOV-PLAN Swap --expect-review REVIEW_SHA256
+```
+
+All forecasts in a comparison use the same captured project, People, Iterations, Planning, Settings, locale and PBI versions. The report records each input path and SHA-256 and labels results as simulations. Each alternative includes role capacity and demand, PBI effort and assignments, and forecast signals such as later or unscheduled dependencies. A blocked alternative shows its diagnostic beside any valid alternatives. Saved comparisons in `.pm-agent/planning-scenarios/` retain the original results and require a new ID for a fresh comparison.
+
+Create the comparison with the CLI, then open **F5 Planning → S Scenarios**. Select a comparison with Enter and use Up/Down to switch alternatives. The detail shows the selected simulation against the recorded schedule. Enter opens an application review. Scroll with PgUp/PgDn and press Ctrl+S to apply that exact review. The CLI uses the `review_sha256` printed by `scenario review` for the same confirmation.
+
+The application review checks each PBI with the structured editor, verifies the combined forecast and rechecks the pinned planning and validation inputs before writing. If planning inputs changed, create a new comparison. If only validation inputs changed, inspect a fresh review. Applying the selected alternative updates sprint assignments and writes an English edit audit. The Plan-Report remains historical until `pm plan` is run.
+
+An interrupted batch keeps a local recovery journal. Run `scenario recover` to finalize an application whose audit was committed or restore the previous assignments. A conflicting external edit leaves recovery pending for reconciliation. Forecast recalculation, scenario application and Vault backup require a consistent schedule.
+
 ## Scope
 
-This view supports one reviewed PBI move at a time and typed editing of existing planning inputs. It does not optimize assignments, choose dates, split work, infer holidays, infer consumed effort or establish commitments. [Delivery workflows](Delivery-Workflows.md) provide separate Change/UAT/Release/Benefit screens. Bulk schedule scenarios, a calendar-duration Gantt model and broader live-project evaluation remain separate work.
+Planning supports individual reviewed moves, batch sprint scenarios and typed editing of existing planning inputs. Scenario capacity, dependency relationships, estimates and forecast dates come from the pinned records. Delivery workflows handle Change, UAT, Release and Benefit separately. Calendar-duration modelling and broader live-project evaluation remain future work. [Delivery workflows](Delivery-Workflows.md)
 
 See [planning rules](../06_Delivery/Planning.md), [interaction controls](Interaction.md) and [implementation milestones](Implementation.md).

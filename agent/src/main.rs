@@ -1,17 +1,18 @@
-use anyhow::{Context, Result, ensure};
-use clap::{Parser, Subcommand};
+mod chat_cli;
+
+use anyhow::{Result, ensure};
+use clap::{Args, Parser, Subcommand};
 use pm_agent::{
+    change_review,
     config::Config,
+    goals::{self, Criteria},
     provider::Event,
-    runtime::{Runtime, Session, Status},
+    runtime::Session,
     store::Store,
     tools, tui,
     workspace::{Workspace, WorkspaceLock},
 };
-use std::{
-    io::{IsTerminal, Write},
-    path::PathBuf,
-};
+use std::{io::IsTerminal, path::PathBuf};
 use tokio_util::sync::CancellationToken;
 
 #[derive(Parser)]
@@ -65,26 +66,21 @@ enum Command {
         args: Vec<String>,
     },
     /// Run or resume an Agent task; questions and approvals pause it durably.
-    Chat {
-        prompt: Option<String>,
-        #[arg(long, default_value = "workflow")]
-        stage: String,
-        #[arg(long = "skill")]
-        skills: Vec<String>,
-        #[arg(long)]
-        session: Option<String>,
-        #[arg(long, conflicts_with = "deny")]
-        approve: bool,
-        #[arg(long)]
-        deny: bool,
-        #[arg(long)]
-        reconcile: Option<String>,
-        /// Continue evidence-backed independent work without answering open questions.
-        #[arg(long, requires = "session", conflicts_with_all = ["prompt","answer","approve","deny","reconcile"])]
-        independent: bool,
-        /// Associate the prompt with this question ID or exact path.
-        #[arg(long, requires_all = ["session","prompt"], conflicts_with_all = ["approve","deny","reconcile"])]
-        answer: Option<String>,
+    Chat(chat_cli::ChatArgs),
+    /// Set or inspect evidence-backed goals for a saved Chat session.
+    Goal {
+        #[command(subcommand)]
+        action: GoalAction,
+    },
+    /// Compare controlled document versions and record version-pinned change reviews.
+    ChangeReview {
+        #[command(subcommand)]
+        action: ReviewAction,
+    },
+    /// Compare and apply reviewed planning simulations.
+    Scenario {
+        #[command(subcommand)]
+        action: ScenarioAction,
     },
     /// Validate configuration and selected Chat prerequisites without contacting services.
     Doctor {
@@ -99,6 +95,112 @@ enum Command {
         /// Show the latest local observation without making requests.
         #[arg(long)]
         last: bool,
+    },
+}
+#[derive(Subcommand)]
+enum ScenarioAction {
+    /// Compare assignment alternatives and save a pinned local simulation.
+    Compare {
+        specification: PathBuf,
+        #[arg(long)]
+        id: String,
+    },
+    /// Read a saved comparison.
+    Show { comparison: String },
+    /// Check one saved alternative for application and print the review hash.
+    Review {
+        comparison: String,
+        scenario: String,
+    },
+    /// Apply the exact reviewed assignments after rechecking all inputs.
+    Apply {
+        comparison: String,
+        scenario: String,
+        #[arg(long)]
+        expect_review: String,
+    },
+    /// Recover an interrupted scenario application with the local journal.
+    Recover,
+}
+#[derive(Args)]
+struct ReviewSelection {
+    /// Stable ID of the controlled document.
+    id: String,
+    /// Manifest with an accepted approval decision.
+    #[arg(long)]
+    baseline: String,
+    /// Captured candidate manifest. Omit to select the active document.
+    #[arg(long)]
+    candidate: Option<String>,
+    /// Additional evidence record IDs to include in the review.
+    #[arg(long)]
+    evidence: Vec<String>,
+}
+
+impl From<ReviewSelection> for change_review::Request {
+    fn from(selection: ReviewSelection) -> Self {
+        Self {
+            id: selection.id,
+            baseline: selection.baseline,
+            candidate: selection.candidate,
+            evidence: selection.evidence,
+        }
+    }
+}
+
+#[derive(Subcommand)]
+enum ReviewAction {
+    /// Read the diff, recorded references and mechanical findings as JSON.
+    Compare {
+        #[command(flatten)]
+        selection: ReviewSelection,
+    },
+    /// Save a new review report against an explicitly reviewed comparison basis.
+    Record {
+        #[command(flatten)]
+        selection: ReviewSelection,
+        #[arg(long)]
+        review_id: String,
+        /// Exact basis_sha256 returned by compare.
+        #[arg(long)]
+        expect: String,
+        /// File containing operator-supplied semantic findings as JSON.
+        #[arg(long)]
+        findings: Option<PathBuf>,
+    },
+}
+
+#[derive(Subcommand)]
+enum GoalAction {
+    /// Save a goal and its exact draft scope. Starts a new session when no ID is supplied.
+    Set {
+        #[arg(long)]
+        session: Option<String>,
+        #[arg(long, default_value = "workflow", conflicts_with = "session")]
+        stage: String,
+        #[arg(long)]
+        objective: String,
+        #[arg(long, required = true)]
+        draft: Vec<String>,
+        /// Require a successful native validation after saving the specified drafts.
+        #[arg(long)]
+        validate: bool,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Inspect a saved goal and the freshness of its receipts without loading a provider.
+    Status {
+        #[arg(long)]
+        session: String,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Clear the goal from a session with no pending tool decision.
+    Clear {
+        #[arg(long)]
+        session: String,
+        #[arg(long)]
+        json: bool,
     },
 }
 #[derive(Subcommand)]
@@ -158,6 +260,13 @@ enum BackupCommand {
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
+    if let Some(Command::Chat(args)) = &cli.command {
+        let code = chat_cli::run(args, &cli.vault, cli.config.as_deref()).await?;
+        if code != 0 {
+            std::process::exit(code);
+        }
+        return Ok(());
+    }
     if let Some(Command::Eval { command }) = &cli.command {
         use pm_agent::evaluation;
         let observation = match command {
@@ -360,119 +469,107 @@ async fn main() -> Result<()> {
             }
         }
         Command::Doctor { .. } => unreachable!("Doctor runs before acquiring a writer"),
-        Command::Chat {
-            prompt,
-            stage,
-            skills,
-            session,
-            approve,
-            deny,
-            reconcile,
-            independent,
-            answer,
-        } => {
-            if deny {
-                let id = session.as_deref().context("Use --session with --deny")?;
-                let store = Store::open(&workspace.path(".pm-agent/runtime.sqlite3")?)?;
-                let mut saved: Session = store.load(id)?;
-                let call = saved
-                    .pending
-                    .first()
-                    .context("No call awaiting approval")?
-                    .clone();
-                pm_agent::approval::deny(&workspace, &store, &mut saved, &call)?;
-                eprintln!(
-                    "Session: {}\nState: Cancelled\nTool use denied; Agent response stopped.",
-                    saved.id
-                );
-                return Ok(());
-            }
-            let config = Config::load(&config_path)?;
-            let runtime = Runtime::open(workspace, config).await?;
-            let mut s = match session {
-                Some(id) => runtime.store.load::<Session>(&id)?,
-                None => Session::new(&runtime.config, &stage)?,
+        Command::Chat(_) => unreachable!("Chat is dispatched with its own output mode"),
+        Command::Scenario { action } => {
+            use pm_agent::scenarios;
+            let outcome = match action {
+                ScenarioAction::Compare { specification, id } => {
+                    serde_json::to_value(scenarios::compare(
+                        &workspace,
+                        &lock,
+                        &id,
+                        scenarios::Spec::read(&specification)?,
+                    )?)?
+                }
+                ScenarioAction::Show { comparison } => {
+                    serde_json::to_value(scenarios::load(&workspace, &comparison)?)?
+                }
+                ScenarioAction::Review {
+                    comparison,
+                    scenario,
+                } => serde_json::to_value(scenarios::review(&workspace, &comparison, &scenario)?)?,
+                ScenarioAction::Apply {
+                    comparison,
+                    scenario,
+                    expect_review,
+                } => scenarios::apply(&workspace, &lock, &comparison, &scenario, &expect_review)?,
+                ScenarioAction::Recover => scenarios::recover(&workspace, &lock)?,
             };
-            let mut approved = None;
-            if !skills.is_empty() {
-                ensure!(
-                    s.pending.is_empty(),
-                    "Cannot change Skills while a tool is pending"
+            println!("{}", serde_json::to_string_pretty(&outcome)?);
+        }
+        Command::ChangeReview { action } => match action {
+            ReviewAction::Compare { selection } => {
+                let review = change_review::load(&workspace, &selection.into())?;
+                println!("{}", serde_json::to_string_pretty(&review)?);
+            }
+            ReviewAction::Record {
+                selection,
+                review_id,
+                expect,
+                findings,
+            } => {
+                let findings = findings
+                    .as_deref()
+                    .map(change_review::Observations::read)
+                    .transpose()?;
+                let receipt = change_review::record(
+                    &workspace,
+                    &selection.into(),
+                    &review_id,
+                    &expect,
+                    findings.as_ref(),
+                )?;
+                println!("{}", serde_json::to_string_pretty(&receipt)?);
+            }
+        },
+        Command::Goal { action } => {
+            let store = Store::open(&workspace.path(".pm-agent/runtime.sqlite3")?)?;
+            let (session, json) = match action {
+                GoalAction::Set {
+                    session,
+                    stage,
+                    objective,
+                    draft,
+                    validate,
+                    json,
+                } => {
+                    let mut session = match session {
+                        Some(id) => store.load::<Session>(&id)?,
+                        None => Session::new(&Config::read(&config_path)?, &stage)?,
+                    };
+                    goals::set(
+                        &workspace,
+                        &mut session,
+                        Criteria {
+                            objective,
+                            drafts: draft,
+                            require_validation: validate,
+                        },
+                    )?;
+                    store.save(&session.id, &session)?;
+                    (session, json)
+                }
+                GoalAction::Status { session, json } => (store.load::<Session>(&session)?, json),
+                GoalAction::Clear { session, json } => {
+                    let mut session: Session = store.load(&session)?;
+                    goals::clear(&mut session)?;
+                    store.save(&session.id, &session)?;
+                    (session, json)
+                }
+            };
+            let goal = session.goal.as_ref().map(|goal| goal.report(&workspace));
+            if json {
+                println!(
+                    "{}",
+                    serde_json::json!({"session_id": session.id,"session_status":session.status,"goal":goal})
                 );
-                pm_agent::skills::Catalog::discover(&runtime.workspace)?.resolve(&skills)?;
-                for name in skills {
-                    if !s.selected_skills.contains(&name) {
-                        s.selected_skills.push(name);
-                    }
-                }
-            }
-            if approve || deny {
-                if approve {
-                    approved = s.pending.first().map(|c| c.id.clone());
-                }
-                runtime.decision(&mut s, approve)?;
-            }
-            if let Some(result) = reconcile {
-                runtime.reconcile(&mut s, &result)?;
-            }
-            if independent {
-                runtime.continue_independent(&mut s)?;
-            } else if let Some(prompt) = prompt {
-                if let Some(id) = answer {
-                    runtime.answer(&mut s, &id, &prompt)?;
+            } else {
+                println!("Session {} · {:?}", session.id, session.status);
+                if let Some(goal) = goal {
+                    print!("\n{}", goal.markdown());
                 } else {
-                    runtime.input(&mut s, &prompt)?;
+                    println!("No saved task goal.");
                 }
-            } else if matches!(
-                s.status,
-                Status::Failed | Status::Cancelled | Status::Completed | Status::LimitReached
-            ) {
-                s.status = Status::Ready;
-            }
-            let cancel = CancellationToken::new();
-            let signal = cancel.clone();
-            tokio::spawn(async move {
-                let _ = tokio::signal::ctrl_c().await;
-                signal.cancel();
-            });
-            let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
-            let printer = tokio::spawn(async move {
-                while let Some(event) = rx.recv().await {
-                    match event {
-                        Event::Text(text) => {
-                            print!("{text}");
-                            let _ = std::io::stdout().flush();
-                        }
-                        Event::Notice(text) => eprintln!("\n{text}"),
-                        Event::Tool { call, state, .. } => {
-                            eprintln!("\nTool: {} — {state}", call.name)
-                        }
-                        Event::Progress(_)
-                        | Event::InputAccepted(_)
-                        | Event::Reasoning(_)
-                        | Event::Usage(_) => {}
-                    }
-                }
-            });
-            if !(approve && s.status == Status::WaitingApproval) {
-                runtime.run(&mut s, approved, &tx, &cancel).await?;
-            } else if let Some(error) = &s.error {
-                eprintln!("{error}");
-            }
-            drop(tx);
-            printer.await?;
-            eprintln!(
-                "\nSession: {}\nState: {:?}\nResume: pm-agent --vault <workspace> --config <config> chat --session {} [reply]",
-                s.id, s.status, s.id
-            );
-            if matches!(
-                s.status,
-                Status::Failed
-                    | Status::Cancelled
-                    | Status::NeedsReconciliation
-                    | Status::LimitReached
-            ) {
-                std::process::exit(2);
             }
         }
     }

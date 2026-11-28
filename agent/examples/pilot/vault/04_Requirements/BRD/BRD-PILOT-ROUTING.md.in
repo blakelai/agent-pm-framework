@@ -1,0 +1,15 @@
+---
+type: "brd"
+id: "BRD-PILOT-ROUTING"
+language: "zh-TW"
+title: "請購核准路由範圍"
+doc_status: "draft"
+version: 1
+owner: "採購流程產品負責人（合成）"
+contexts: ["procurement"]
+evidence: ["EVD-PILOT-WIKI", "EVD-PILOT-CODE"]
+---
+
+# 請購核准路由範圍
+
+釐清設備請購何時需要第二次核准，以及各核准角色的先後順序。[系統分析](../../03_Systems/Analysis/SYS-PILOT-PROCUREMENT.md) 記錄目前的證據差異。[待釐清問題](../../07_Decisions/QUESTION-PILOT-ROUTING.md) 追蹤未來政策。

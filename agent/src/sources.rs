@@ -3,14 +3,14 @@ use crate::{
     extraction::{self, IMAGES},
     locale::Catalog,
     records::{self, Records, string},
-    workspace::{Workspace, atomic_write, hash, note},
+    workspace::{Workspace, atomic_create as create, atomic_write, hash, note},
 };
 use anyhow::{Context, Result, ensure};
 use serde_json::{Value, json};
 use std::{
     collections::{BTreeMap, BTreeSet},
     fs,
-    io::{Read, Write},
+    io::Read,
     path::{Path, PathBuf},
     time::Duration,
 };
@@ -73,16 +73,6 @@ pub(crate) fn bytes(path: &Path, limit: u64) -> Result<Vec<u8>> {
     (&mut file).take(limit + 1).read_to_end(&mut data)?;
     ensure!(data.len() as u64 <= limit, "Source grew beyond size limit");
     Ok(data)
-}
-fn create(path: &Path, data: &[u8]) -> Result<()> {
-    let parent = path.parent().context("Missing parent directory")?;
-    fs::create_dir_all(parent)?;
-    let mut temp = tempfile::NamedTempFile::new_in(parent)?;
-    temp.write_all(data)?;
-    temp.as_file().sync_all()?;
-    temp.persist_noclobber(path)
-        .context("Record already exists; preserve history and use a new ID")?;
-    Ok(())
 }
 fn saved(workspace: &Workspace, path: &str) -> Result<Value> {
     let content = crate::profile::read_text(workspace, path)?;

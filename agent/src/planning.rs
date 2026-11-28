@@ -3,7 +3,7 @@
 use crate::workspace::{Document, Workspace, atomic_write, hash, note, parse_note};
 use anyhow::{Context, Result, bail, ensure};
 use chrono::{NaiveDate, SecondsFormat, Utc};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
@@ -33,14 +33,14 @@ const MANAGED: &[&str] = &[
     "09_Operations",
 ];
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct Period {
     pub sprint: i64,
     pub start: NaiveDate,
     pub end: NaiveDate,
     pub goal: String,
 }
-#[derive(Debug, Default, Serialize)]
+#[derive(Debug, Default, Serialize, Deserialize)]
 pub struct Capacity {
     pub sprint: i64,
     pub role: String,
@@ -48,7 +48,7 @@ pub struct Capacity {
     pub effort: f64,
     pub items: Vec<String>,
 }
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct Item {
     pub id: String,
     pub path: String,
@@ -57,7 +57,7 @@ pub struct Item {
     pub original: Option<f64>,
     pub remaining: Option<f64>,
 }
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct Forecast {
     pub as_of: NaiveDate,
     pub periods: Vec<Period>,
@@ -206,6 +206,8 @@ fn calculate_with(
     t: &Catalog,
     replacement: Option<(&str, &str)>,
 ) -> Result<Forecast> {
+    crate::scenarios::require_no_pending_apply(workspace)?;
+    check_links(workspace)?;
     let read_input = |path: &str| {
         if let Some((target, content)) = replacement.filter(|(target, _)| *target == path) {
             parse_note(content).with_context(|| target.to_owned())
@@ -213,6 +215,27 @@ fn calculate_with(
             read(workspace, path)
         }
     };
+    let documents = || {
+        let mut documents = workspace.documents()?;
+        if let Some((path, content)) = replacement {
+            let (metadata, body) = parse_note(content)?;
+            documents.retain(|d| d.path != path);
+            documents.push(Document {
+                path: path.into(),
+                title: metadata["title"].as_str().unwrap_or(path).into(),
+                kind: metadata["type"].as_str().unwrap_or("").into(),
+                id: metadata["id"].as_str().map(String::from),
+                hash: hash(content.as_bytes()),
+                metadata,
+                body,
+            });
+        }
+        Ok(documents)
+    };
+    calculate_from(t, read_input, documents)
+}
+
+fn check_links(workspace: &Workspace) -> Result<()> {
     // Do not silently omit linked PBI files from a capacity calculation.
     for folder in MANAGED {
         let path = workspace.path(folder)?;
@@ -226,6 +249,88 @@ fn calculate_with(
             );
         }
     }
+    Ok(())
+}
+
+const INPUTS: [&str; 4] = [
+    crate::schedule::ITERATIONS,
+    crate::schedule::PLANNING,
+    "00_Governance/Project.md",
+    crate::schedule::PEOPLE,
+];
+
+pub(crate) struct PinnedInputs {
+    pub pins: BTreeMap<String, String>,
+    pub items: Vec<Document>,
+    notes: BTreeMap<&'static str, String>,
+    catalog: Catalog,
+}
+
+impl PinnedInputs {
+    pub fn capture(w: &Workspace) -> Result<Self> {
+        check_links(w)?;
+        let settings = "00_Governance/Settings.md";
+        let settings_hash = hash(w.read(settings)?.as_bytes());
+        let catalog = Catalog::load(w)?;
+        let mut pins = BTreeMap::from([(settings.into(), settings_hash), catalog.source.clone()]);
+        let mut notes = BTreeMap::new();
+        for path in INPUTS {
+            let text = w.read(path)?;
+            pins.insert(path.into(), hash(text.as_bytes()));
+            notes.insert(path, text);
+        }
+        let items: Vec<_> = w
+            .documents()?
+            .into_iter()
+            .filter(|d| managed(d) && d.kind == "pbi")
+            .collect();
+        pins.extend(items.iter().map(|d| (d.path.clone(), d.hash.clone())));
+        Ok(Self {
+            pins,
+            items,
+            notes,
+            catalog,
+        })
+    }
+
+    pub fn forecast(&self, moves: &BTreeMap<String, Option<i64>>) -> Result<Forecast> {
+        self.calculate(|| {
+            let mut docs = self.items.clone();
+            for doc in &mut docs {
+                if let Some(sprint) = doc.id.as_ref().and_then(|id| moves.get(id)) {
+                    doc.metadata["sprint"] = json!(sprint);
+                }
+            }
+            Ok(docs)
+        })
+    }
+
+    pub fn forecast_edits(&self, changes: &BTreeMap<&str, &str>) -> Result<Forecast> {
+        self.calculate(|| {
+            let mut docs = self.items.clone();
+            for doc in &mut docs {
+                if let Some(content) = changes.get(doc.path.as_str()) {
+                    (doc.metadata, doc.body) = parse_note(content)?;
+                }
+            }
+            Ok(docs)
+        })
+    }
+
+    fn calculate(&self, documents: impl FnOnce() -> Result<Vec<Document>>) -> Result<Forecast> {
+        calculate_from(
+            &self.catalog,
+            |path| parse_note(&self.notes[path]).with_context(|| path.to_owned()),
+            documents,
+        )
+    }
+}
+
+fn calculate_from(
+    t: &Catalog,
+    read_input: impl Fn(&str) -> Result<(Value, String)>,
+    documents: impl FnOnce() -> Result<Vec<Document>>,
+) -> Result<Forecast> {
     let (_, body) = read_input("06_Delivery/Iterations.md")?;
     let mut periods = BTreeMap::new();
     for row in table(&body, &["Sprint", "Start", "End", "Goal"])? {
@@ -338,21 +443,7 @@ fn calculate_with(
     if caps.is_empty() {
         return Err(Incomplete("No allocations for current project").into());
     }
-    let mut documents = workspace.documents()?;
-    if let Some((path, content)) = replacement {
-        let (metadata, body) = parse_note(content)?;
-        documents.retain(|d| d.path != path);
-        documents.push(Document {
-            path: path.into(),
-            title: metadata["title"].as_str().unwrap_or(path).into(),
-            kind: metadata["type"].as_str().unwrap_or("").into(),
-            id: metadata["id"].as_str().map(String::from),
-            hash: hash(content.as_bytes()),
-            metadata,
-            body,
-        });
-    }
-    let docs: Vec<_> = documents
+    let docs: Vec<_> = documents()?
         .into_iter()
         .filter(|d| managed(d) && d.kind == "pbi" && d.id.is_some())
         .collect();
@@ -632,6 +723,7 @@ pub fn run(workspace: &Workspace, args: &[String]) -> Result<Value> {
         );
     }
     ensure!(args.is_empty(), "plan accepts no arguments (use --help)");
+    crate::scenarios::require_no_pending_apply(workspace)?;
     // Invalid or unavailable translations leave the previous report intact.
     let catalog = Catalog::load(workspace)?;
     let title = catalog.text("plan_title")?;
